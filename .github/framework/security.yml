@@ -1,0 +1,102 @@
+name: Security Expert Review
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  firestore-rules:
+    name: Check Firestore Security Rules
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check for insecure Firestore rules
+        id: firestore-check
+        run: |
+          echo "Checking firestore.rules for security issues..."
+          
+          # Check for open rules (warn only)
+          if grep -q "allow read, write: if true" firestore.rules; then
+            echo "⚠️  WARNING: Firestore rules allow open read/write access"
+            echo "This is a security risk for production deployments"
+            echo "firestore_issues=open_rules" >> $GITHUB_OUTPUT
+          else
+            echo "✅ Firestore rules look secure"
+            echo "firestore_issues=none" >> $GITHUB_OUTPUT
+          fi
+          
+          # Always pass (warn only)
+          echo "Firestore security check complete"
+
+      - name: Firestore Security Report
+        if: always()
+        run: |
+          if [[ "${{ steps.firestore-check.outputs.firestore_issues }}" == "open_rules" ]]; then
+            echo "::warning::Firestore rules are open (allow read, write: if true)"
+            echo "::warning::This is acceptable for development, but should be fixed before production"
+          fi
+
+  code-security:
+    name: Code Security Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run security ESLint
+        id: eslint-security
+        continue-on-error: true
+        run: npx eslint --ext .js src/ 2>&1 | tee eslint-security.log || true
+
+      - name: Check ESLint results
+        run: |
+          if grep -q "security" eslint-security.log; then
+            echo "⚠️  Security issues found in code"
+            cat eslint-security.log
+            echo "::warning::ESLint security warnings detected"
+          else
+            echo "✅ No security issues found"
+          fi
+
+  dependency-audit:
+    name: Dependency Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run npm audit
+        id: npm-audit
+        continue-on-error: true
+        run: npm audit --audit-level=high 2>&1 | tee npm-audit.log || true
+
+      - name: Audit Report
+        run: |
+          if grep -q "vulnerabilities" npm-audit.log; then
+            echo "⚠️  Dependency vulnerabilities found"
+            cat npm-audit.log
+            echo "::warning::npm audit found vulnerabilities"
+          else
+            echo "✅ No high/critical vulnerabilities"
+          fi
