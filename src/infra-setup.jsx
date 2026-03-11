@@ -337,7 +337,15 @@ const InfraSetup = ({ db }) => {
         
         if (!response.ok) {
           const errData = await response.json().catch(() => ({}));
-          addStep3Log(`Failed to enable ${api.displayName}: ${errData.error?.message || response.statusText}`);
+          const errorMsg = errData.error?.message || response.statusText;
+          
+          if (errorMsg.includes('Billing') || errorMsg.includes('billing')) {
+            addStep3Log(`Billing required for ${api.displayName}`);
+            addStep3Log(`ERROR: ${errorMsg}`);
+            setError('Billing must be enabled on your GCP project. Go to Google Cloud Console > Billing to link a billing account.');
+          } else {
+            addStep3Log(`Failed to enable ${api.displayName}: ${errorMsg}`);
+          }
           console.warn(`Failed to enable ${api.name}:`, errData);
         } else {
           addStep3Log(`Successfully enabled ${api.displayName}`);
@@ -365,7 +373,12 @@ const InfraSetup = ({ db }) => {
       console.error('Error enabling APIs:', err);
       setStep3Message('Failed to enable some APIs');
       addStep3Log(`Error: ${err.message}`);
-      setError('Failed to enable required APIs. You may need to enable them manually.');
+      
+      if (err.message?.includes('Billing') || err.message?.includes('billing')) {
+        setError('Billing must be enabled on your GCP project. Go to Google Cloud Console > Billing to link a billing account.');
+      } else {
+        setError('Failed to enable required APIs. You may need to enable them manually.');
+      }
     } finally {
       setEnablingApis(false);
     }
