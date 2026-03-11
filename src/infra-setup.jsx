@@ -90,6 +90,9 @@ const InfraSetup = ({ db }) => {
   const [currentStep, setCurrentStep] = useState(1);
   const [expandedSteps, setExpandedSteps] = useState([1]);
 
+  const [billingEnabled, setBillingEnabled] = useState(null);
+  const [billingChecking, setBillingChecking] = useState(false);
+
   const [step3Status, setStep3Status] = useState('idle');
   const [step3Message, setStep3Message] = useState('');
   const [step3Logs, setStep3Logs] = useState([]);
@@ -109,9 +112,28 @@ const InfraSetup = ({ db }) => {
     setStep4Logs(prev => [...prev, { time: timestamp, message }]);
   };
 
+  const checkBillingStatus = async () => {
+    if (!projectId || !gcpAccessToken) return null;
+    try {
+      const response = await fetch(`https://cloudbilling.googleapis.com/v1/projects/${projectId}/billingInfo`, {
+        headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        const enabled = !!data.billingEnabled && !!data.billingAccountName;
+        setBillingEnabled(enabled);
+        return enabled;
+      }
+    } catch (e) {
+      console.error('Error checking billing:', e);
+    }
+    setBillingEnabled(false);
+    return false;
+  };
+
   const expandNextStep = (currentStepNum) => {
     const nextStep = currentStepNum + 1;
-    if (nextStep <= 6 && !expandedSteps.includes(nextStep)) {
+    if (nextStep <= 7 && !expandedSteps.includes(nextStep)) {
       setExpandedSteps(prev => [...prev, nextStep]);
     }
   };
@@ -233,6 +255,9 @@ const InfraSetup = ({ db }) => {
         if (existingProject) {
           setProjectId(projectIdVal);
           setStep2Complete(true);
+          setBillingChecking(true);
+          await checkBillingStatus();
+          setBillingChecking(false);
           expandNextStep(2);
           setNewProjectName('');
           setCreatingProject(false);
@@ -276,6 +301,9 @@ const InfraSetup = ({ db }) => {
       }
       
       setStep2Complete(true);
+      setBillingChecking(true);
+      await checkBillingStatus();
+      setBillingChecking(false);
       expandNextStep(2);
       setNewProjectName('');
     } catch (err) {
@@ -417,7 +445,7 @@ npm install
         setVmIp(checkData.items[0].networkInterfaces[0].accessConfigs[0].natIP);
         setStep3Complete(true);
         setStep4Complete(true);
-        expandNextStep(4);
+        expandNextStep(5);
         setCreatingVm(false);
         return;
       }
@@ -478,11 +506,11 @@ npm install
         setVmIp(ip);
         setStep3Complete(true);
         setStep4Complete(true);
-        expandNextStep(4);
+        expandNextStep(5);
       } else {
         setStep3Complete(true);
         setStep4Complete(true);
-        expandNextStep(4);
+        expandNextStep(5);
       }
     } catch (err) {
       console.error('Error creating VM:', err);
@@ -1006,7 +1034,7 @@ npm install
         </div>
 
         <div className="space-y-2">
-          {getStepHeader(3, "Step 3: Enable APIs & Create VM", <Server className="text-blue-600" size={24} />, step3Complete, step2Complete && !step3Complete, !step2Complete, "Enable required Google Cloud APIs (Compute Engine, Resource Manager, Service Usage) and create a virtual machine to run the Kimaki agent listener.")}
+          {getStepHeader(3, "Step 3: Enable Billing", <Server className="text-blue-600" size={24} />, billingEnabled === true, step2Complete && billingEnabled !== true, !step2Complete, "Enable billing on your GCP project. Compute Engine and other services require a linked billing account.")}
           
           {expandedSteps.includes(3) && !step2Complete && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
@@ -1015,6 +1043,55 @@ npm install
           )}
 
           {expandedSteps.includes(3) && step2Complete && (
+            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
+              {billingEnabled === true ? (
+                <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
+                  <Check size={20} />
+                  <span className="font-medium">Billing is enabled</span>
+                </div>
+              ) : (
+                <>
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+                    <p className="text-yellow-800 mb-2">
+                      <strong>Billing must be enabled</strong> on your GCP project to use Compute Engine and create VMs.
+                    </p>
+                    <ol className="list-decimal list-inside space-y-1 text-yellow-800 text-sm">
+                      <li>Go to <a href={`https://console.cloud.google.com/billing/${projectId}`} target="_blank" rel="noopener noreferrer" className="underline">Google Cloud Billing</a></li>
+                      <li>Link a billing account to project "{projectId}"</li>
+                      <li>Return here and click "Verify Billing"</li>
+                    </ol>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      setBillingChecking(true);
+                      const result = await checkBillingStatus();
+                      setBillingChecking(false);
+                      if (result) {
+                        setStep3Complete(true);
+                        expandNextStep(3);
+                      }
+                    }}
+                    disabled={billingChecking}
+                    className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg"
+                  >
+                    {billingChecking ? 'Checking...' : 'Verify Billing'}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-2">
+          {getStepHeader(4, "Step 4: Enable APIs & Create VM", <Server className="text-blue-600" size={24} />, step3Complete, step2Complete && step3Complete && !step3Complete, !step2Complete, "Enable required Google Cloud APIs (Compute Engine, Resource Manager, Service Usage) and create a virtual machine to run the Kimaki agent listener.")}
+          
+          {expandedSteps.includes(4) && !step3Complete && (
+            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
+              Complete Step 3 first to unlock this step.
+            </div>
+          )}
+
+          {expandedSteps.includes(4) && step3Complete && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
               {step3Complete ? (
                 <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
@@ -1079,15 +1156,15 @@ npm install
         </div>
 
         <div className="space-y-2">
-          {getStepHeader(4, "Step 4: Configure Kimaki", <Server className="text-blue-600" size={24} />, step4Complete, step3Complete && !step4Complete, !step3Complete, "Verify the connection to your Kimaki VM or manually enter the IP address. This VM runs the Discord listener agent.")}
+          {getStepHeader(5, "Step 5: Configure Kimaki", <Server className="text-blue-600" size={24} />, step4Complete, step3Complete && !step4Complete, !step3Complete, "Verify the connection to your Kimaki VM or manually enter the IP address. This VM runs the Discord listener agent.")}
           
-          {expandedSteps.includes(4) && !step3Complete && (
+          {expandedSteps.includes(5) && !step3Complete && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
-              Complete Step 3 first to unlock this step.
+              Complete Step 4 first to unlock this step.
             </div>
           )}
 
-          {expandedSteps.includes(4) && step3Complete && (
+          {expandedSteps.includes(5) && step3Complete && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
               {step4Complete ? (
                 <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
@@ -1116,7 +1193,7 @@ npm install
                               setStep4Message('Connected to VM successfully!');
                               addStep4Log('VM connection verified');
                               setStep4Complete(true);
-                              expandNextStep(4);
+                              expandNextStep(6);
                             }
                           }, 1500);
                         }}
@@ -1154,15 +1231,15 @@ npm install
         </div>
 
         <div className="space-y-2">
-          {getStepHeader(5, "Step 5: GitHub App", <svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>, step5Complete, step4Complete && !step5Complete, !step4Complete, "Install the SecureAgentBase GitHub App to get repository-specific access for autonomous deployments and issue responses.")}
+          {getStepHeader(6, "Step 6: GitHub App", <svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>, step5Complete, step4Complete && !step5Complete, !step4Complete, "Install the SecureAgentBase GitHub App to get repository-specific access for autonomous deployments and issue responses.")}
           
-          {expandedSteps.includes(5) && !step4Complete && (
+          {expandedSteps.includes(7) && !step4Complete && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
-              Complete Step 4 first to unlock this step.
+              Complete Step 5 first to unlock this step.
             </div>
           )}
 
-          {expandedSteps.includes(5) && step4Complete && (
+          {expandedSteps.includes(7) && step4Complete && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
               <p className="text-gray-600 mb-4">
                 Install SecureAgentBase as a GitHub App to get isolated, repo-specific access.
@@ -1187,15 +1264,15 @@ npm install
         </div>
 
         <div className="space-y-2">
-          {getStepHeader(6, "Step 6: Discord Bot", <Bot className="text-blue-600" size={24} />, step6Complete, step5Complete && !step6Complete, !step5Complete, "Create a Discord bot to enable the Kimaki listener. This bot will receive commands and trigger autonomous agent actions.")}
+          {getStepHeader(7, "Step 7: Discord Bot", <Bot className="text-blue-600" size={24} />, step6Complete, step5Complete && !step6Complete, !step5Complete, "Create a Discord bot to enable the Kimaki listener. This bot will receive commands and trigger autonomous agent actions.")}
           
-          {expandedSteps.includes(6) && !step5Complete && (
+          {expandedSteps.includes(7) && !step5Complete && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
-              Complete Step 5 first to unlock this step.
+              Complete Step 6 first to unlock this step.
             </div>
           )}
 
-          {expandedSteps.includes(6) && step5Complete && (
+          {expandedSteps.includes(7) && step5Complete && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
               <p className="text-gray-600 mb-4">
                 Create a Discord bot for the Kimaki listener.
