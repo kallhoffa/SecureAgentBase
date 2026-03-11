@@ -1056,8 +1056,9 @@ npm install
                       <strong>Billing must be enabled</strong> on your GCP project to use Compute Engine and create VMs.
                     </p>
                     <ol className="list-decimal list-inside space-y-1 text-yellow-800 text-sm">
-                      <li>Go to <a href={`https://console.cloud.google.com/billing/${projectId}`} target="_blank" rel="noopener noreferrer" className="underline">Google Cloud Billing</a></li>
-                      <li>Link a billing account to project "{projectId}"</li>
+                      <li>Go to <a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener noreferrer" className="underline">Google Cloud Billing</a></li>
+                      <li>Click "Link a Billing Account"</li>
+                      <li>Select project "{projectId}" and a billing account</li>
                       <li>Return here and click "Verify Billing"</li>
                     </ol>
                   </div>
