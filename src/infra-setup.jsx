@@ -90,14 +90,30 @@ const InfraSetup = ({ db }) => {
   const [currentStep, setCurrentStep] = useState(1);
   const [expandedSteps, setExpandedSteps] = useState([1]);
 
+  const [step3Status, setStep3Status] = useState('idle');
+  const [step3Message, setStep3Message] = useState('');
+  const [step3Logs, setStep3Logs] = useState([]);
+
   const [step4Status, setStep4Status] = useState('idle');
   const [step4Message, setStep4Message] = useState('');
   const [step4Logs, setStep4Logs] = useState([]);
   const [step4Retrying, setStep4Retrying] = useState(false);
 
+  const addStep3Log = (message) => {
+    const timestamp = new Date().toLocaleTimeString();
+    setStep3Logs(prev => [...prev, { time: timestamp, message }]);
+  };
+
   const addStep4Log = (message) => {
     const timestamp = new Date().toLocaleTimeString();
     setStep4Logs(prev => [...prev, { time: timestamp, message }]);
+  };
+
+  const expandNextStep = (currentStepNum) => {
+    const nextStep = currentStepNum + 1;
+    if (nextStep <= 6 && !expandedSteps.includes(nextStep)) {
+      setExpandedSteps(prev => [...prev, nextStep]);
+    }
   };
 
   const toggleStep = (step) => {
@@ -190,6 +206,7 @@ const InfraSetup = ({ db }) => {
           const projects = await fetchGcpProjects(response.access_token);
           
           setStep1Complete(true);
+          expandNextStep(1);
         }
       },
     });
@@ -216,6 +233,7 @@ const InfraSetup = ({ db }) => {
         if (existingProject) {
           setProjectId(projectIdVal);
           setStep2Complete(true);
+          expandNextStep(2);
           setNewProjectName('');
           setCreatingProject(false);
           return;
@@ -258,6 +276,7 @@ const InfraSetup = ({ db }) => {
       }
       
       setStep2Complete(true);
+      expandNextStep(2);
       setNewProjectName('');
     } catch (err) {
       console.error('Error creating project:', err);
@@ -267,21 +286,48 @@ const InfraSetup = ({ db }) => {
     }
   };
 
+  const checkApiStatus = async (api) => {
+    try {
+      const response = await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/${api}`, {
+        headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        return data.config?.state === 'ENABLED';
+      }
+    } catch (e) {
+      console.error('Error checking API status:', e);
+    }
+    return false;
+  };
+
   const enableGcpApis = async () => {
     if (!projectId) return;
     
     setEnablingApis(true);
+    setStep3Status('enabling');
+    setStep3Message('Starting API enablement process...');
+    setStep3Logs([]);
     setError(null);
 
     const apis = [
-      'compute.googleapis.com',
-      'cloudresourcemanager.googleapis.com',
-      'serviceusage.googleapis.com'
+      { name: 'compute.googleapis.com', displayName: 'Compute Engine API' },
+      { name: 'cloudresourcemanager.googleapis.com', displayName: 'Cloud Resource Manager API' },
+      { name: 'serviceusage.googleapis.com', displayName: 'Service Usage API' }
     ];
 
     try {
       for (const api of apis) {
-        const response = await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/${api}:enable`, {
+        setStep3Message(`Enabling ${api.displayName}...`);
+        addStep3Log(`Attempting to enable ${api.displayName}...`);
+        
+        const isAlreadyEnabled = await checkApiStatus(api.name);
+        if (isAlreadyEnabled) {
+          addStep3Log(`${api.displayName} is already enabled`);
+          continue;
+        }
+
+        const response = await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/${api.name}:enable`, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${gcpAccessToken}`,
@@ -290,14 +336,36 @@ const InfraSetup = ({ db }) => {
         });
         
         if (!response.ok) {
-          console.warn(`Failed to enable ${api}, continuing...`);
+          const errData = await response.json().catch(() => ({}));
+          addStep3Log(`Failed to enable ${api.displayName}: ${errData.error?.message || response.statusText}`);
+          console.warn(`Failed to enable ${api.name}:`, errData);
+        } else {
+          addStep3Log(`Successfully enabled ${api.displayName}`);
         }
         
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        let attempts = 0;
+        while (attempts < 10) {
+          const enabled = await checkApiStatus(api.name);
+          if (enabled) {
+            addStep3Log(`${api.displayName} is now active`);
+            break;
+          }
+          addStep3Log(`Waiting for ${api.displayName} to activate... (${attempts + 1}/10)`);
+          await new Promise(resolve => setTimeout(resolve, 3000));
+          attempts++;
+        }
       }
+      
+      setStep3Message('All APIs enabled successfully!');
+      addStep3Log('API enablement process complete');
+      setStep3Status('complete');
     } catch (err) {
       console.error('Error enabling APIs:', err);
-      setError('Failed to enable required APIs');
+      setStep3Message('Failed to enable some APIs');
+      addStep3Log(`Error: ${err.message}`);
+      setError('Failed to enable required APIs. You may need to enable them manually.');
     } finally {
       setEnablingApis(false);
     }
@@ -334,7 +402,9 @@ npm install
       const checkData = await checkResponse.json();
       if (checkData.items?.length > 0) {
         setVmIp(checkData.items[0].networkInterfaces[0].accessConfigs[0].natIP);
+        setStep3Complete(true);
         setStep4Complete(true);
+        expandNextStep(4);
         setCreatingVm(false);
         return;
       }
@@ -393,9 +463,13 @@ npm install
       
       if (ip) {
         setVmIp(ip);
+        setStep3Complete(true);
         setStep4Complete(true);
+        expandNextStep(4);
       } else {
+        setStep3Complete(true);
         setStep4Complete(true);
+        expandNextStep(4);
       }
     } catch (err) {
       console.error('Error creating VM:', err);
@@ -670,6 +744,7 @@ npm install
       const result = await response.json();
       setDiscordBotToken(result.token);
       setStep6Complete(true);
+      expandNextStep(6);
       await saveConfig({ discord_bot_token: result.token });
       alert('Discord bot created! Token: ' + result.token.substring(0, 10) + '...');
     } catch (err) {
@@ -682,7 +757,7 @@ npm install
 
   const pendingConfig = !user && loadFromLocalStorage();
 
-  const getStepHeader = (stepNumber, title, icon, isComplete, isActive, isLocked) => {
+  const getStepHeader = (stepNumber, title, icon, isComplete, isActive, isLocked, info) => {
     const baseClasses = "flex items-center justify-between w-full p-4 rounded-lg transition-all duration-200";
     let bgClasses = "bg-gray-50";
     let borderClasses = "border border-gray-200";
@@ -714,6 +789,16 @@ npm install
           {isComplete ? <Check className={iconColor} size={24} /> : icon}
           <span className={`font-semibold ${textClasses}`}>{title}</span>
           {isLocked && <span className="text-xs text-gray-400 ml-2">(Complete previous step first)</span>}
+          {info && (
+            <div className="relative group">
+              <svg className={`w-4 h-4 ${textClasses} cursor-help`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <div className="absolute left-0 bottom-full mb-2 w-64 p-2 bg-gray-800 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
+                {info}
+              </div>
+            </div>
+          )}
         </div>
         {expandedSteps.includes(stepNumber) ? (
           <svg className={`w-5 h-5 ${textClasses}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -772,7 +857,7 @@ npm install
 
       <div className="space-y-4">
         <div className="space-y-2">
-          {getStepHeader(1, "Step 1: Connect Google Account", <Shield className="text-blue-600" size={24} />, step1Complete, !step1Complete, false)}
+          {getStepHeader(1, "Step 1: Connect Google Account", <Shield className="text-blue-600" size={24} />, step1Complete, !step1Complete, false, "Sign in with your Google account to authorize SecureAgentBase to manage GCP resources on your behalf.")}
           
           {expandedSteps.includes(1) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
@@ -805,7 +890,7 @@ npm install
         </div>
 
         <div className="space-y-2">
-          {getStepHeader(2, "Step 2: GCP Project", <Upload className="text-blue-600" size={24} />, step2Complete, step1Complete && !step2Complete, !step1Complete)}
+          {getStepHeader(2, "Step 2: GCP Project", <Upload className="text-blue-600" size={24} />, step2Complete, step1Complete && !step2Complete, !step1Complete, "Select or create a Google Cloud Platform project to host your infrastructure resources like VMs and Firestore.")}
           
           {expandedSteps.includes(2) && !step1Complete && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
@@ -908,7 +993,7 @@ npm install
         </div>
 
         <div className="space-y-2">
-          {getStepHeader(3, "Step 3: Enable APIs & Create VM", <Server className="text-blue-600" size={24} />, step3Complete, step2Complete && !step3Complete, !step2Complete)}
+          {getStepHeader(3, "Step 3: Enable APIs & Create VM", <Server className="text-blue-600" size={24} />, step3Complete, step2Complete && !step3Complete, !step2Complete, "Enable required Google Cloud APIs (Compute Engine, Resource Manager, Service Usage) and create a virtual machine to run the Kimaki agent listener.")}
           
           {expandedSteps.includes(3) && !step2Complete && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
@@ -928,30 +1013,52 @@ npm install
                   <p className="text-gray-600 mb-4">
                     Enable required APIs and create a VM to run Kimaki.
                   </p>
-                  <div className="flex gap-2 flex-wrap">
-                    {!enablingApis && !creatingVm && (
-                      <>
+                  
+                  {step3Status === 'idle' && (
+                    <div className="flex gap-2 flex-wrap">
+                      <button
+                        onClick={enableGcpApis}
+                        disabled={enablingApis}
+                        className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg"
+                      >
+                        {enablingApis ? 'Enabling APIs...' : 'Enable APIs'}
+                      </button>
+                      {projectId && !enablingApis && (
                         <button
-                          onClick={enableGcpApis}
-                          disabled={enablingApis}
-                          className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg"
+                          onClick={createVm}
+                          disabled={creatingVm}
+                          className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg"
                         >
-                          {enablingApis ? 'Enabling APIs...' : 'Enable APIs'}
+                          {creatingVm ? 'Creating VM...' : 'Create VM'}
                         </button>
-                        {projectId && (
-                          <button
-                            onClick={createVm}
-                            disabled={creatingVm}
-                            className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg"
-                          >
-                            {creatingVm ? 'Creating VM...' : 'Create VM'}
-                          </button>
-                        )}
-                      </>
-                    )}
-                    {enablingApis && <span className="text-gray-500">Enabling required APIs...</span>}
-                    {creatingVm && <span className="text-gray-500">Creating VM (may take a minute)...</span>}
-                  </div>
+                      )}
+                    </div>
+                  )}
+                  
+                  {(step3Status === 'enabling' || enablingApis) && (
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                      <div className="flex items-center gap-2 text-blue-700 mb-2">
+                        <div className="animate-spin w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full"></div>
+                        <span className="font-medium">{step3Message || 'Enabling APIs...'}</span>
+                      </div>
+                      {step3Logs.length > 0 && (
+                        <div className="mt-2 text-xs text-blue-600 font-mono max-h-32 overflow-y-auto">
+                          {step3Logs.map((log, i) => (
+                            <div key={i}>[{log.time}] {log.message}</div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
+                  {creatingVm && (
+                    <div className="bg-green-50 border border-green-200 rounded-lg p-4 mt-3">
+                      <div className="flex items-center gap-2 text-green-700">
+                        <div className="animate-spin w-4 h-4 border-2 border-green-600 border-t-transparent rounded-full"></div>
+                        <span className="font-medium">Creating VM (may take a minute)...</span>
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </div>
@@ -959,7 +1066,7 @@ npm install
         </div>
 
         <div className="space-y-2">
-          {getStepHeader(4, "Step 4: Configure Kimaki", <Server className="text-blue-600" size={24} />, step4Complete, step3Complete && !step4Complete, !step3Complete)}
+          {getStepHeader(4, "Step 4: Configure Kimaki", <Server className="text-blue-600" size={24} />, step4Complete, step3Complete && !step4Complete, !step3Complete, "Verify the connection to your Kimaki VM or manually enter the IP address. This VM runs the Discord listener agent.")}
           
           {expandedSteps.includes(4) && !step3Complete && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
@@ -996,6 +1103,7 @@ npm install
                               setStep4Message('Connected to VM successfully!');
                               addStep4Log('VM connection verified');
                               setStep4Complete(true);
+                              expandNextStep(4);
                             }
                           }, 1500);
                         }}
@@ -1033,7 +1141,7 @@ npm install
         </div>
 
         <div className="space-y-2">
-          {getStepHeader(5, "Step 5: GitHub App", <svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>, step5Complete, step4Complete && !step5Complete, !step4Complete)}
+          {getStepHeader(5, "Step 5: GitHub App", <svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>, step5Complete, step4Complete && !step5Complete, !step4Complete, "Install the SecureAgentBase GitHub App to get repository-specific access for autonomous deployments and issue responses.")}
           
           {expandedSteps.includes(5) && !step4Complete && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
@@ -1066,7 +1174,7 @@ npm install
         </div>
 
         <div className="space-y-2">
-          {getStepHeader(6, "Step 6: Discord Bot", <Bot className="text-blue-600" size={24} />, step6Complete, step5Complete && !step6Complete, !step5Complete)}
+          {getStepHeader(6, "Step 6: Discord Bot", <Bot className="text-blue-600" size={24} />, step6Complete, step5Complete && !step6Complete, !step5Complete, "Create a Discord bot to enable the Kimaki listener. This bot will receive commands and trigger autonomous agent actions.")}
           
           {expandedSteps.includes(6) && !step5Complete && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
