@@ -79,6 +79,8 @@ const InfraSetup = ({ db }) => {
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [gcpAccessToken, setGcpAccessToken] = useState(null);
   const [apiNotEnabled, setApiNotEnabled] = useState(false);
+  const [serviceAccountJson, setServiceAccountJson] = useState(null);
+  const [serviceAccountError, setServiceAccountError] = useState(null);
 
   const [step1Complete, setStep1Complete] = useState(false);
   const [step2Complete, setStep2Complete] = useState(false);
@@ -110,6 +112,78 @@ const InfraSetup = ({ db }) => {
   const addStep4Log = (message) => {
     const timestamp = new Date().toLocaleTimeString();
     setStep4Logs(prev => [...prev, { time: timestamp, message }]);
+  };
+
+  const getServiceAccountToken = async () => {
+    if (!serviceAccountJson) return null;
+    
+    const now = Math.floor(Date.now() / 1000);
+    const payload = {
+      iss: serviceAccountJson.client_email,
+      sub: serviceAccountJson.client_email,
+      aud: 'https://oauth2.googleapis.com/token',
+      iat: now,
+      exp: now + 3600,
+      scope: 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/compute https://www.googleapis.com/auth/devstorage.full_control'
+    };
+
+    const header = { alg: 'RS256', typ: 'JWT' };
+    
+    const encodeBase64Url = (str) => {
+      return btoa(JSON.stringify(str)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    };
+    
+    const encodedHeader = encodeBase64Url(header);
+    const encodedPayload = encodeBase64Url(payload);
+    const signatureInput = `${encodedHeader}.${encodedPayload}`;
+    
+    const encoder = new TextEncoder();
+    const data = encoder.encode(signatureInput);
+    
+    try {
+      const privateKey = serviceAccountJson.private_key.replace(/\\n/g, '\n');
+      const keyData = await crypto.subtle.importKey(
+        'pkcs8',
+        await importPrivateKey(privateKey),
+        { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+        false,
+        ['sign']
+      );
+      
+      const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', keyData, data);
+      const signatureBase64 = btoa(String.fromCharCode(...new Uint8Array(signature))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      const jwt = `${signatureInput}.${signatureBase64}`;
+      
+      const response = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`
+      });
+      
+      const tokenData = await response.json();
+      return tokenData.access_token;
+    } catch (e) {
+      console.error('Error getting service account token:', e);
+      return null;
+    }
+  };
+
+  const importPrivateKey = async (pem) => {
+    const pemHeader = '-----BEGIN PRIVATE KEY-----';
+    const pemFooter = '-----END PRIVATE KEY-----';
+    const pemContents = pem.substring(pem.indexOf(pemHeader) + pemHeader.length, pem.indexOf(pemFooter));
+    const binaryDerString = atob(pemContents.replace(/\s/g, ''));
+    const binaryDer = strToBuf(binaryDerString);
+    return binaryDer;
+  };
+
+  const strToBuf = (str) => {
+    const buf = new ArrayBuffer(str.length);
+    const bufView = new Uint8Array(buf);
+    for (let i = 0, strLen = str.length; i < strLen; i++) {
+      bufView[i] = str.charCodeAt(i);
+    }
+    return buf;
   };
 
   const checkBillingStatus = async () => {
@@ -528,6 +602,14 @@ npm install
   };
 
   useEffect(() => {
+    if (user) {
+      setStep1Complete(true);
+    } else {
+      setStep1Complete(false);
+    }
+  }, [user]);
+
+  useEffect(() => {
     const loadInfraConfig = async () => {
       let configData = null;
 
@@ -898,40 +980,24 @@ npm install
 
       <div className="space-y-4">
         <div className="space-y-2">
-          {getStepHeader(1, "Step 1: Connect Google Account", <Shield className="text-blue-600" size={24} />, step1Complete, !step1Complete, false, "Sign in with your Google account to authorize SecureAgentBase to manage GCP resources on your behalf.")}
+          {getStepHeader(1, "Step 1: Account", <Shield className="text-blue-600" size={24} />, step1Complete, !step1Complete, false, "Sign in to continue.")}
           
           {expandedSteps.includes(1) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {step1Complete ? (
+              {user ? (
                 <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
                   <Check size={20} />
-                  <span className="font-medium">Google account connected</span>
+                  <span className="font-medium">Signed in as {user.email}</span>
                 </div>
               ) : (
-                <>
-                  <p className="text-gray-600 mb-4">
-                    Sign in with your Google account to create and manage GCP resources.
-                  </p>
-                  <button
-                    onClick={handleConnectGoogle}
-                    className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2"
-                  >
-                    <svg className="w-5 h-5" viewBox="0 0 24 24">
-                      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-                      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-                      <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-                      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-                    </svg>
-                    Connect Google Account
-                  </button>
-                </>
+                <p className="text-gray-600">Please sign in to continue.</p>
               )}
             </div>
           )}
         </div>
 
         <div className="space-y-2">
-          {getStepHeader(2, "Step 2: GCP Project", <Upload className="text-blue-600" size={24} />, step2Complete, step1Complete && !step2Complete, !step1Complete, "Select or create a Google Cloud Platform project to host your infrastructure resources like VMs and Firestore.")}
+          {getStepHeader(2, "Step 2: Service Account", <Upload className="text-blue-600" size={24} />, step2Complete, step1Complete && !step2Complete, !step1Complete, "Create a service account in your GCP project and paste the JSON key. This lets us create VMs without accessing your personal account.")}
           
           {expandedSteps.includes(2) && !step1Complete && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
@@ -941,92 +1007,70 @@ npm install
 
           {expandedSteps.includes(2) && step1Complete && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {apiNotEnabled ? (
-                <>
-                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
-                    <p className="text-yellow-800 mb-4">
-                      The Cloud Resource Manager API needs to be enabled in your Google Cloud project before we can proceed. This is a one-time setup.
-                    </p>
-                    <ol className="list-decimal list-inside space-y-2 text-yellow-800 text-sm">
-                      <li>Click the button below to open Google Cloud Console</li>
-                      <li>Select or create a project</li>
-                      <li>Click "Enable" to enable the API</li>
-                      <li>Return here and click "I've Enabled It"</li>
-                    </ol>
-                  </div>
-                  <div className="flex gap-2">
-                    <a
-                      href="https://console.cloud.google.com/apis/library/cloudresourcemanager.googleapis.com"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2"
-                    >
-                      <ExternalLink size={18} />
-                      Open GCP Console
-                    </a>
-                    <button
-                      onClick={() => fetchGcpProjects(gcpAccessToken)}
-                      className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg"
-                    >
-                      I've Enabled It
-                    </button>
-                  </div>
-                </>
+              {step2Complete ? (
+                <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
+                  <Check size={20} />
+                  <span className="font-medium">Service account configured</span>
+                </div>
               ) : (
                 <>
-                  {step2Complete ? (
-                    <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
-                      <Check size={20} />
-                      <span className="font-medium">Project selected: {projectId}</span>
-                    </div>
-                  ) : (
-                    <>
-                      <p className="text-gray-600 mb-4">
-                        Select an existing GCP project or create a new one.
-                      </p>
-                      {gcpProjects.length > 0 && (
-                        <div className="mb-4">
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
-                            Existing Projects
-                          </label>
-                          <select
-                            value={projectId}
-                            onChange={(e) => {
-                              setProjectId(e.target.value);
-                              if (e.target.value) setStep2Complete(true);
-                            }}
-                            className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
-                          >
-                            <option value="">Select a project...</option>
-                            {gcpProjects.map((proj) => (
-                              <option key={proj.projectId} value={proj.projectId}>
-                                {proj.name} ({proj.projectId})
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                      )}
-                      <div className="border-t pt-4 mt-4">
-                        <p className="text-gray-600 mb-2">Or create a new project:</p>
-                        <div className="flex gap-2">
-                          <input
-                            type="text"
-                            value={newProjectName}
-                            onChange={(e) => setNewProjectName(e.target.value)}
-                            placeholder="my-new-project"
-                            className="flex-1 px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
-                          />
-                          <button
-                            onClick={createGcpProject}
-                            disabled={creatingProject}
-                            className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg"
-                          >
-                            {creatingProject ? 'Creating...' : 'Create'}
-                          </button>
-                        </div>
-                      </div>
-                    </>
-                  )}
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                    <p className="text-blue-800 font-medium mb-2">Create a service account in your GCP project:</p>
+                    <ol className="list-decimal list-inside space-y-1 text-blue-800 text-sm">
+                      <li>Go to <a href="https://console.cloud.google.com/iam-admin/service-accounts" target="_blank" rel="noopener noreferrer" className="underline">Google Cloud IAM → Service Accounts</a></li>
+                      <li>Select your project from the dropdown at the top</li>
+                      <li>Click "+ Create Service Account"</li>
+                      <li>Name: <code className="bg-blue-100 px-1">secureagent</code></li>
+                      <li>Grant roles: <strong>Compute Instance Admin (v1)</strong> and <strong>Service Account User</strong></li>
+                      <li>Check "Furnish a new private key" → select <strong>JSON</strong></li>
+                      <li>Download JSON, open it, copy all content, paste below</li>
+                    </ol>
+                  </div>
+                  
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Paste service account JSON key:</label>
+                    <textarea
+                      value={serviceAccountJson ? JSON.stringify(serviceAccountJson, null, 2) : ''}
+                      onChange={(e) => {
+                        setServiceAccountError(null);
+                        try {
+                          const parsed = JSON.parse(e.target.value);
+                          if (!parsed.private_key) throw new Error('Invalid');
+                          setServiceAccountJson(parsed);
+                        } catch (err) {
+                          setServiceAccountError('Invalid JSON. Paste the complete service account JSON file.');
+                        }
+                      }}
+                      placeholder='{"type": "service_account", "project_id": "...", "private_key": "..."}'
+                      className="w-full h-40 px-4 py-2 border-2 border-gray-200 rounded-lg font-mono text-sm focus:outline-none focus:border-blue-400"
+                    />
+                    {serviceAccountError && <p className="text-red-600 text-sm mt-1">{serviceAccountError}</p>}
+                  </div>
+                  
+                  <button
+                    onClick={() => {
+                      if (serviceAccountJson && serviceAccountJson.project_id) {
+                        setStep2Complete(true);
+                        setExpandedSteps(prev => [...prev, 3]);
+                      } else {
+                        setServiceAccountError('Please paste a valid service account JSON');
+                      }
+                    }}
+                    disabled={!serviceAccountJson}
+                    className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg"
+                  >
+                    Continue
+                  </button>
+                  
+                  <div className="mt-4 pt-4 border-t">
+                    <p className="text-gray-600 text-sm">Don't want to create a service account?</p>
+                    <button
+                      onClick={() => { setStep2Complete(true); setExpandedSteps(prev => [...prev, 3]); }}
+                      className="text-blue-600 hover:text-blue-700 text-sm underline"
+                    >
+                      Skip to manual VM setup
+                    </button>
+                  </div>
                 </>
               )}
             </div>
@@ -1034,7 +1078,7 @@ npm install
         </div>
 
         <div className="space-y-2">
-          {getStepHeader(3, "Step 3: Enable Billing", <Server className="text-blue-600" size={24} />, billingEnabled === true, step2Complete && billingEnabled !== true, !step2Complete, "Enable billing on your GCP project. Compute Engine and other services require a linked billing account.")}
+          {getStepHeader(3, "Step 3: GCP Project", <Server className="text-blue-600" size={24} />, step3Complete, step2Complete && !step3Complete, !step2Complete, "Select or create a GCP project for your VM.")}
           
           {expandedSteps.includes(3) && !step2Complete && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
@@ -1044,40 +1088,50 @@ npm install
 
           {expandedSteps.includes(3) && step2Complete && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {billingEnabled === true ? (
+              {step3Complete ? (
                 <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
                   <Check size={20} />
-                  <span className="font-medium">Billing is enabled</span>
+                  <span className="font-medium">Project configured: {projectId}</span>
                 </div>
               ) : (
                 <>
-                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
-                    <p className="text-yellow-800 mb-2">
-                      <strong>Billing must be enabled</strong> on your GCP project to use Compute Engine and create VMs.
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                    <p className="text-blue-800 font-medium mb-2">Enter your GCP Project ID:</p>
+                    <p className="text-blue-700 text-sm mb-3">
+                      This is the project where your VM will be created. It should match the <code className="bg-blue-100 px-1">project_id</code> in your service account JSON.
                     </p>
-                    <ol className="list-decimal list-inside space-y-1 text-yellow-800 text-sm">
-                      <li>Go to <a href="https://console.cloud.google.com/billing/projects" target="_blank" rel="noopener noreferrer" className="underline">Google Cloud Billing Projects</a></li>
-                      <li>Find your project "{projectId}" in the list</li>
-                      <li>Click the 3-dot "Actions" menu → "Change billing account"</li>
-                      <li>Select a billing account and click "Set account"</li>
-                      <li><strong>No billing account?</strong> Go to <a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener noreferrer" className="underline">Billing</a> to create a new one, then return here</li>
-                      <li>Return here and click "Verify Billing"</li>
-                    </ol>
+                    <input
+                      type="text"
+                      value={projectId}
+                      onChange={(e) => setProjectId(e.target.value)}
+                      placeholder="my-gcp-project-123"
+                      className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
+                    />
+                    {serviceAccountJson?.project_id && (
+                      <p className="text-blue-600 text-sm mt-2">
+                        From your service account: <code className="bg-blue-100 px-1">{serviceAccountJson.project_id}</code>
+                        <button
+                          onClick={() => setProjectId(serviceAccountJson.project_id)}
+                          className="ml-2 text-blue-600 underline text-xs"
+                        >
+                          Use this
+                        </button>
+                      </p>
+                    )}
                   </div>
                   <button
-                    onClick={async () => {
-                      setBillingChecking(true);
-                      const result = await checkBillingStatus();
-                      setBillingChecking(false);
-                      if (result) {
+                    onClick={() => {
+                      if (projectId.trim()) {
                         setStep3Complete(true);
                         expandNextStep(3);
+                      } else {
+                        setError('Please enter a GCP project ID');
                       }
                     }}
-                    disabled={billingChecking}
+                    disabled={!projectId.trim()}
                     className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg"
                   >
-                    {billingChecking ? 'Checking...' : 'Verify Billing'}
+                    Continue
                   </button>
                 </>
               )}
@@ -1086,7 +1140,7 @@ npm install
         </div>
 
         <div className="space-y-2">
-          {getStepHeader(4, "Step 4: Enable APIs & Create VM", <Server className="text-blue-600" size={24} />, step3Complete, step2Complete && step3Complete && !step3Complete, !step2Complete, "Enable required Google Cloud APIs (Compute Engine, Resource Manager, Service Usage) and create a virtual machine to run the Kimaki agent listener.")}
+          {getStepHeader(4, "Step 4: Enable APIs & Create VM", <Server className="text-blue-600" size={24} />, step4Complete, step3Complete && !step4Complete, !step3Complete, "Enable required Google Cloud APIs and create a VM to run the Kimaki listener.")}
           
           {expandedSteps.includes(4) && !step3Complete && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
@@ -1096,10 +1150,10 @@ npm install
 
           {expandedSteps.includes(4) && step3Complete && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {step3Complete ? (
+              {step4Complete ? (
                 <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
                   <Check size={20} />
-                  <span className="font-medium">VM created at {vmIp}</span>
+                  <span className="font-medium">VM created and ready at {vmIp}</span>
                 </div>
               ) : (
                 <>
@@ -1107,36 +1161,150 @@ npm install
                     Enable required APIs and create a VM to run Kimaki.
                   </p>
                   
-                  {step3Status === 'idle' && (
+                  {step4Status === 'idle' && (
                     <div className="flex gap-2 flex-wrap">
                       <button
-                        onClick={enableGcpApis}
-                        disabled={enablingApis}
-                        className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg"
+                        onClick={async () => {
+                          if (!serviceAccountJson || !projectId) {
+                            setError('Service account and project ID required');
+                            return;
+                          }
+                          setStep4Status('enabling');
+                          setStep4Message('Getting service account token...');
+                          addStep4Log('Starting API enablement process...');
+                          
+                          const token = await getServiceAccountToken();
+                          if (!token) {
+                            setError('Failed to authenticate with service account');
+                            setStep4Status('error');
+                            return;
+                          }
+                          addStep4Log('Service account authenticated');
+                          
+                          const apis = [
+                            { name: 'compute.googleapis.com', displayName: 'Compute Engine API' },
+                            { name: 'cloudresourcemanager.googleapis.com', displayName: 'Cloud Resource Manager API' },
+                            { name: 'serviceusage.googleapis.com', displayName: 'Service Usage API' }
+                          ];
+                          
+                          for (const api of apis) {
+                            setStep4Message(`Enabling ${api.displayName}...`);
+                            addStep4Log(`Enabling ${api.displayName}...`);
+                            
+                            try {
+                              const response = await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/${api.name}:enable`, {
+                                method: 'POST',
+                                headers: {
+                                  'Authorization': `Bearer ${token}`,
+                                  'Content-Type': 'application/json'
+                                }
+                              });
+                              
+                              if (response.ok) {
+                                addStep4Log(`${api.displayName} enabled`);
+                              } else {
+                                const err = await response.json();
+                                if (err.error?.message?.includes('billing')) {
+                                  setError('Billing must be enabled on your GCP project');
+                                  addStep4Log(`ERROR: Billing required for ${api.displayName}`);
+                                } else {
+                                  addStep4Log(`Note: ${err.error?.message || 'API may already be enabled'}`);
+                                }
+                              }
+                            } catch (e) {
+                              addStep4Log(`Error enabling ${api.displayName}: ${e.message}`);
+                            }
+                            
+                            await new Promise(r => setTimeout(r, 1500));
+                          }
+                          
+                          setStep4Message('Creating VM...');
+                          addStep4Log('Creating VM...');
+                          
+                          const zone = 'us-central1-a';
+                          const instanceName = 'kimaki-manager';
+                          
+                          try {
+                            const vmResponse = await fetch(
+                              `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances`,
+                              {
+                                method: 'POST',
+                                headers: {
+                                  'Authorization': `Bearer ${token}`,
+                                  'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({
+                                  name: instanceName,
+                                  machineType: `zones/${zone}/machineTypes/e2-micro`,
+                                  disks: [{
+                                    boot: true,
+                                    autoDelete: true,
+                                    initializeParams: {
+                                      diskSizeGb: '10',
+                                      sourceImage: 'projects/debian-cloud/global/images/family/debian-11',
+                                    },
+                                  }],
+                                  networkInterfaces: [{
+                                    network: 'global/networks/default',
+                                    accessConfigs: [{ type: 'ONE_TO_ONE_NAT' }],
+                                  }],
+                                  metadata: {
+                                    items: [{
+                                      key: 'startup-script',
+                                      value: '#!/bin/bash\napt-get update\napt-get install -y nodejs npm git curl\ncd /opt\ngit clone https://github.com/argbase/kimaki.git\ncd kimaki\nnpm install\n'
+                                    }]
+                                  }
+                                })
+                              }
+                            );
+                            
+                            if (vmResponse.ok) {
+                              addStep4Log('VM creation started, waiting for completion...');
+                              await new Promise(r => setTimeout(r, 15000));
+                              
+                              const instanceResp = await fetch(
+                                `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances/${instanceName}`,
+                                { headers: { 'Authorization': `Bearer ${token}` } }
+                              );
+                              const instanceData = await instanceResp.json();
+                              const ip = instanceData.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP;
+                              
+                              if (ip) {
+                                setVmIp(ip);
+                                addStep4Log(`VM ready at ${ip}`);
+                              }
+                              setStep4Complete(true);
+                              setStep4Status('complete');
+                              setStep4Message('VM created successfully!');
+                              expandNextStep(4);
+                            } else {
+                              const err = await vmResponse.json();
+                              addStep4Log(`VM creation failed: ${err.error?.message || 'Unknown error'}`);
+                              setError(`Failed to create VM: ${err.error?.message}`);
+                              setStep4Status('error');
+                            }
+                          } catch (e) {
+                            addStep4Log(`Error: ${e.message}`);
+                            setError(e.message);
+                            setStep4Status('error');
+                          }
+                        }}
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
                       >
-                        {enablingApis ? 'Enabling APIs...' : 'Enable APIs'}
+                        Enable APIs & Create VM
                       </button>
-                      {projectId && !enablingApis && (
-                        <button
-                          onClick={createVm}
-                          disabled={creatingVm}
-                          className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg"
-                        >
-                          {creatingVm ? 'Creating VM...' : 'Create VM'}
-                        </button>
-                      )}
                     </div>
                   )}
                   
-                  {(step3Status === 'enabling' || enablingApis) && (
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                  {(step4Status === 'enabling' || step4Status === 'complete') && (
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mt-3">
                       <div className="flex items-center gap-2 text-blue-700 mb-2">
                         <div className="animate-spin w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full"></div>
-                        <span className="font-medium">{step3Message || 'Enabling APIs...'}</span>
+                        <span className="font-medium">{step4Message}</span>
                       </div>
-                      {step3Logs.length > 0 && (
+                      {step4Logs.length > 0 && (
                         <div className="mt-2 text-xs text-blue-600 font-mono max-h-32 overflow-y-auto">
-                          {step3Logs.map((log, i) => (
+                          {step4Logs.map((log, i) => (
                             <div key={i}>[{log.time}] {log.message}</div>
                           ))}
                         </div>
@@ -1144,12 +1312,15 @@ npm install
                     </div>
                   )}
                   
-                  {creatingVm && (
-                    <div className="bg-green-50 border border-green-200 rounded-lg p-4 mt-3">
-                      <div className="flex items-center gap-2 text-green-700">
-                        <div className="animate-spin w-4 h-4 border-2 border-green-600 border-t-transparent rounded-full"></div>
-                        <span className="font-medium">Creating VM (may take a minute)...</span>
-                      </div>
+                  {step4Status === 'error' && (
+                    <div className="bg-red-50 border border-red-200 rounded-lg p-4 mt-3">
+                      <p className="text-red-700">{error}</p>
+                      <button
+                        onClick={() => { setStep4Status('idle'); setError(null); }}
+                        className="mt-2 text-blue-600 underline text-sm"
+                      >
+                        Try again
+                      </button>
                     </div>
                   )}
                 </>
