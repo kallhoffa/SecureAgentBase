@@ -61,13 +61,13 @@ jobs:
           sleep 30
           npx playwright test tests/e2e/smoke.spec.js --retries=2
         env:
-          TEST_URL: https://argbase-staging.web.app
+          TEST_URL: https://${{ vars.FIREBASE_PROJECT_ID_STAGING }}.web.app
 
       - name: Run Full E2E Tests on Staging
         run: |
           npx playwright test tests/e2e --retries=2
         env:
-          TEST_URL: https://argbase-staging.web.app
+          TEST_URL: https://${{ vars.FIREBASE_PROJECT_ID_STAGING }}.web.app
 
       - name: Upload logs on failure
         if: failure()

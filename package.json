@@ -1,5 +1,5 @@
 {
-  "name": "argbase",
+  "name": "secureagentbase",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -15,7 +15,8 @@
     "e2e": "playwright test",
     "e2e:ci": "playwright test --config=playwright.ci.config.js",
     "e2e:smoke": "playwright test tests/e2e/smoke.spec.js",
-    "e2e:smoke:ci": "playwright test tests/e2e/smoke.spec.js --config=playwright.ci.config.js"
+    "e2e:smoke:ci": "playwright test tests/e2e/smoke.spec.js --config=playwright.ci.config.js",
+    "setup": "node scripts/setup.js"
   },
   "dependencies": {
     "@sentry/react": "^10.40.0",

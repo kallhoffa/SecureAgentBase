@@ -1,14 +1,13 @@
 export const frameworkManifest = {
   name: 'SecureAgentBase',
   version: '0.1.0',
-  description: 'React + Firebase app framework with autonomous agent workflow',
+  description: 'React + Firebase app framework with autonomous agent workflow - a deployable Q&A starter template',
   
   extract: {
     directories: [
       'src/framework',
       'scripts/framework',
       '.github/framework',
-      'tests/framework',
     ],
     files: [
       'vitest.config.js',
@@ -35,15 +34,14 @@ export const frameworkManifest = {
       'VITE_SENTRY_DSN',
       'VITE_SENTRY_ORG',
       'VITE_SENTRY_PROJECT',
-      'VITE_FEATURE_FLAG_KEY',
       'VITE_APP_ENV',
     ],
   },
   
   customizationPoints: [
-    { file: 'src/shared/config/app.config.js', description: 'App name, feature flags, Firestore schema' },
-    { file: '.env.example', description: 'Firebase config, Sentry DSN, feature flag key' },
-    { file: 'firebase.json', description: 'Firebase project configuration' },
-    { file: 'firestore.rules', description: 'Firestore security rules' },
+    { file: 'src/posts.jsx', description: 'Post list page - customize search, sorting, display' },
+    { file: 'src/post.jsx', description: 'Single post page - customize reply display, voting' },
+    { file: 'firestore.rules', description: 'Firestore security rules - customize permissions' },
+    { file: 'src/navigation-bar.jsx', description: 'Navigation - add new links, change branding' },
   ],
 };

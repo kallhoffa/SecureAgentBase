@@ -76,9 +76,9 @@ Individual deployments may take longer, but we reduce babysitting. Every failure
 │    └─> npm run e2e:smoke:ci                               │
 │        ├─> Home page loads                                  │
 │        ├─> Navigation bar visible                           │
-│        ├─> Search bar visible                               │
 │        ├─> Login page accessible                            │
-│        └─> Signup page accessible                           │
+│        ├─> Signup page accessible                           │
+│        └─> About page accessible                           │
 │                                                             │
 │    RETRY 2x on failure → Fast feedback                     │
 │    FAILS → No full E2E run                                  │
@@ -89,8 +89,8 @@ Individual deployments may take longer, but we reduce babysitting. Every failure
 │ CI Stage 4: Full E2E Suite (~2min)                        │
 │    └─> npm run e2e:ci                                     │
 │        ├─> Auth tests                                       │
-│        ├─> Home tests                                       │
-│        └─> Question tests                                   │
+│        ├─> Post tests                                      │
+│        └─> Profile tests                                   │
 │                                                             │
 │    RETRY 2x on failure                                     │
 │    FAILS → Upload failure logs                              │
@@ -98,8 +98,8 @@ Individual deployments may take longer, but we reduce babysitting. Every failure
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│ Staging Deployed Successfully                                │
-│    URL: ${VITE_STAGING_URL}                               │
+│ Staging Deployed Successfully                               │
+│    URL: https://${PROJECT_ID}-staging.web.app             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -138,7 +138,7 @@ Individual deployments may take longer, but we reduce babysitting. Every failure
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │ Production Deployed Successfully                             │
-│    URL: ${VITE_PRODUCTION_URL}                             │
+│    URL: https://${PROJECT_ID}.web.app                      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -162,7 +162,7 @@ Individual deployments may take longer, but we reduce babysitting. Every failure
 ### Full E2E Tests (`npm run e2e:ci`)
 - **Location**: `tests/e2e/*.spec.js`
 - **Framework**: Playwright
-- **Coverage**: Auth, Home, Questions
+- **Coverage**: Auth, Posts, Profile
 - **Speed**: ~2 minutes
 - **Retries**: 2x automatically
 
