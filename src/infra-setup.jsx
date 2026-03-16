@@ -738,6 +738,7 @@ npm install
 
       if (configData) {
         setProjectId(configData.gcp_project_id || '');
+        setGcpAccessToken(configData.gcp_access_token || null);
         setGithubAppInstalled(configData.github_app_installed || false);
         setVmIp(configData.vm_ip || '');
         setDiscordBotToken(configData.discord_bot_token || '');
@@ -773,10 +774,17 @@ npm install
         if (!formProgress?.step8Complete && configData.github_pat) {
           setStep8Complete(true);
         }
+        if (!formProgress?.step9Complete && configData.discord_bot_token) {
+          setStep9Complete(true);
+        }
         if (!formProgress?.step5Complete && configData.github_app_installed) setStep5Complete(true);
         
         if (configData.vm_ip && !expandedSteps.includes(6)) {
           setExpandedSteps(prev => [...prev, 6]);
+        }
+
+        if (configData.gcp_project_id && !configData.gcp_access_token) {
+          setGcpConfigLost(true);
         }
       }
 
