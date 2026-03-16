@@ -350,6 +350,19 @@ const InfraSetup = ({ db }) => {
           
           setStep1Complete(true);
           expandNextStep(1);
+          
+          if (user) {
+            try {
+              const infraRef = doc(db, INFRA_COLLECTION, user.uid);
+              await setDoc(infraRef, {
+                gcp_access_token: response.access_token,
+                gcp_connected: true,
+                updated_at: new Date().toISOString(),
+              }, { merge: true });
+            } catch (err) {
+              console.error('Error auto-saving GCP token:', err);
+            }
+          }
         }
       },
     });
@@ -821,6 +834,19 @@ npm install
       }
 
       setServiceAccountKey(parsed);
+      
+      if (user) {
+        try {
+          const infraRef = doc(db, INFRA_COLLECTION, user.uid);
+          await setDoc(infraRef, {
+            service_account_key: parsed,
+            service_account_configured: true,
+            updated_at: new Date().toISOString(),
+          }, { merge: true });
+        } catch (err) {
+          console.error('Error auto-saving service account:', err);
+        }
+      }
     } catch (err) {
       setError('Invalid JSON or missing required fields');
       console.error('Error parsing key file:', err);
@@ -1079,9 +1105,19 @@ npm install
     }
   };
 
+  const getAccessToken = async () => {
+    if (gcpAccessToken) return gcpAccessToken;
+    if (serviceAccountJson) {
+      const saToken = await getServiceAccountToken();
+      if (saToken) return saToken;
+    }
+    return null;
+  };
+
   const saveSecretToGCP = async (secretName, secretValue) => {
-    if (!projectId || !gcpAccessToken) {
-      throw new Error('GCP not configured');
+    const accessToken = await getAccessToken();
+    if (!accessToken) {
+      throw new Error('GCP not configured. Please connect Google and upload service account key.');
     }
 
     const secretId = `secureagent-${secretName}`;
@@ -1091,7 +1127,7 @@ npm install
       {
         method: 'POST',
         headers: {
-          'Authorization': `Bearer ${gcpAccessToken}`,
+          'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -1116,8 +1152,9 @@ npm install
       return;
     }
 
-    if (!projectId || !gcpAccessToken) {
-      setError('Please configure GCP project first');
+    const accessToken = await getAccessToken();
+    if (!projectId || !accessToken) {
+      setError('Please configure GCP project and service account first');
       return;
     }
 
