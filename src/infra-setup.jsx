@@ -1377,13 +1377,13 @@ npm install
         <div className="space-y-2">
           {getStepHeader(2, "Step 2: Service Account", <Upload className="text-blue-600" size={24} />, isStepCompleted(2), isStepActive(2), isStepLocked(2), "Create a service account in your GCP project and paste the JSON key. This lets us create VMs without accessing your personal account.", isStepWarning(2))}
           
-          {expandedSteps.includes(2) && !step1Complete && (
+          {expandedSteps.includes(2) && !isStepCompleted(1) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
               Complete Step 1 first to unlock this step.
             </div>
           )}
 
-          {expandedSteps.includes(2) && step1Complete && (
+          {expandedSteps.includes(2) && isStepCompleted(1) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
               {step2Complete ? (
                 <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
@@ -1459,13 +1459,13 @@ npm install
         <div className="space-y-2">
           {getStepHeader(3, "Step 3: GCP Project", <Server className="text-blue-600" size={24} />, isStepCompleted(3), isStepActive(3), isStepLocked(3), "Select or create a GCP project for your VM.")}
           
-          {expandedSteps.includes(3) && !step2Complete && (
+          {expandedSteps.includes(3) && !isStepCompleted(2) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
               Complete Step 2 first to unlock this step.
             </div>
           )}
 
-          {expandedSteps.includes(3) && step2Complete && (
+          {expandedSteps.includes(3) && isStepCompleted(2) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
               {step3Complete ? (
                 <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
@@ -1521,13 +1521,13 @@ npm install
         <div className="space-y-2">
           {getStepHeader(4, "Step 4: Enable APIs & Create VM", <Server className="text-blue-600" size={24} />, isStepCompleted(4), isStepActive(4), isStepLocked(4), "Enable required Google Cloud APIs and create a VM to run the Kimaki listener.")}
           
-          {expandedSteps.includes(4) && !step3Complete && (
+          {expandedSteps.includes(4) && !isStepCompleted(3) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
               Complete Step 3 first to unlock this step.
             </div>
           )}
 
-          {expandedSteps.includes(4) && step3Complete && (
+          {expandedSteps.includes(4) && isStepCompleted(3) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
               {step4Complete ? (
                 <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
@@ -1883,13 +1883,13 @@ echo "GitHub repo: \${GITHUB_OWNER}/\${GITHUB_REPO}"
         <div className="space-y-2">
           {getStepHeader(5, "Step 5: Configure Kimaki", <Server className="text-blue-600" size={24} />, isStepCompleted(5), isStepActive(5), isStepLocked(5), "Verify the connection to your Kimaki VM or manually enter the IP address. This VM runs the Discord listener agent.")}
           
-          {expandedSteps.includes(5) && !step3Complete && (
+          {expandedSteps.includes(5) && !isStepCompleted(3) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
               Complete Step 4 first to unlock this step.
             </div>
           )}
 
-          {expandedSteps.includes(5) && step3Complete && (
+          {expandedSteps.includes(5) && isStepCompleted(3) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
               {step4Complete ? (
                 <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
@@ -1958,15 +1958,15 @@ echo "GitHub repo: \${GITHUB_OWNER}/\${GITHUB_REPO}"
         <div className="space-y-2">
           {getStepHeader(6, "Step 6: Firebase Setup", <svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M3.89 15.672L6.255.461A.542.542 0 0 1 7.27.288l2.543 4.771zm16.794 3.692l-2.25-14a.54.54 0 0 0-.919-.295L3.316 19.365l7.856 4.427a1.621 1.621 0 0 0 1.588 0zM14.3 7.147l-1.82-3.482a.542.542 0 0 0-.96 0L3.53 17.984z"/></svg>, isStepCompleted(6), isStepActive(6), isStepLocked(6), "Configure Firebase hosting for your app deployment.")}
           
-          {expandedSteps.includes(6) && !step5Complete && (
+          {expandedSteps.includes(6) && !isStepCompleted(5) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
               Complete Step 5 first to unlock this step.
             </div>
           )}
 
-          {expandedSteps.includes(6) && step5Complete && (
+          {expandedSteps.includes(6) && isStepCompleted(5) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {(step6Complete && (firebaseStagingData.projectId || firebaseConfigStaging)) ? (
+              {isStepCompleted(6) ? (
                 <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
                   <Check size={20} />
                   <span className="font-medium">Firebase configured: Staging ({firebaseStagingData.projectId}), Production ({firebaseProductionData.projectId})</span>
@@ -2026,13 +2026,13 @@ echo "GitHub repo: \${GITHUB_OWNER}/\${GITHUB_REPO}"
         <div className="space-y-2">
           {getStepHeader(7, "Step 7: GitHub Fork", <svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>, isStepCompleted(7), isStepActive(7), isStepLocked(7), "Fork SecureAgentBase to your GitHub account for upstream updates.")}
           
-          {expandedSteps.includes(7) && !step6Complete && (
+          {expandedSteps.includes(7) && !isStepCompleted(6) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
               Complete Step 6 first to unlock this step.
             </div>
           )}
 
-          {expandedSteps.includes(7) && step6Complete && (
+          {expandedSteps.includes(7) && isStepCompleted(6) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
               {step7Complete ? (
                 <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
@@ -2111,13 +2111,13 @@ echo "GitHub repo: \${GITHUB_OWNER}/\${GITHUB_REPO}"
         <div className="space-y-2">
           {getStepHeader(8, "Step 8: GitHub Auth (VM)", <svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>, isStepCompleted(8), isStepActive(8), isStepLocked(8), "Create a GitHub PAT for the VM to authenticate with GitHub.")}
           
-          {expandedSteps.includes(8) && !step7Complete && (
+          {expandedSteps.includes(8) && !isStepCompleted(7) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
               Complete Step 7 first to unlock this step.
             </div>
           )}
 
-          {expandedSteps.includes(8) && step7Complete && (
+          {expandedSteps.includes(8) && isStepCompleted(7) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
               {step8Complete ? (
                 <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
@@ -2199,13 +2199,13 @@ echo "GitHub repo: \${GITHUB_OWNER}/\${GITHUB_REPO}"
         <div className="space-y-2">
           {getStepHeader(9, "Step 9: Discord Bot", <Bot className="text-blue-600" size={24} />, isStepCompleted(9), isStepActive(9), isStepLocked(9), "Create a Discord bot to enable the Kimaki listener.", isStepWarning(9))}
           
-          {expandedSteps.includes(9) && !step8Complete && (
+          {expandedSteps.includes(9) && !isStepCompleted(8) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
               Complete Step 8 first to unlock this step.
             </div>
           )}
 
-          {expandedSteps.includes(9) && step8Complete && (
+          {expandedSteps.includes(9) && isStepCompleted(8) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
               {gcpConfigLost && (
                 <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
