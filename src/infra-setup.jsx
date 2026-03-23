@@ -974,11 +974,36 @@ npm install
       }
       localStorage.removeItem(LOCALSTORAGE_KEY);
       localStorage.removeItem(FORM_PROGRESS_KEY);
+      
       setProjectId('');
-      setGithubAppInstalled(false);
+      setGcpConnected(false);
+      setGcpAccessToken(null);
       setServiceAccountKey(null);
+      setServiceAccountError(null);
       setVmIp('');
       setDiscordBotToken('');
+      setGithubAppInstalled(false);
+      setGithubRepoUrl('');
+      setGithubPat('');
+      setFirebaseConfigStaging('');
+      setFirebaseConfigProduction('');
+      setFirebaseStagingData({});
+      setFirebaseProductionData({});
+      
+      setStep1Complete(false);
+      setStep2Complete(false);
+      setStep3Complete(false);
+      setStep4Complete(false);
+      setStep5Complete(false);
+      setStep6Complete(false);
+      setStep7Complete(false);
+      setStep8Complete(false);
+      setStep9Complete(false);
+      setGcpConfigLost(false);
+      
+      setExpandedSteps([]);
+      setError(null);
+      
       alert('Infrastructure disconnected');
     } catch (err) {
       console.error('Error disconnecting:', err);
