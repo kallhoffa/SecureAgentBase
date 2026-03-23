@@ -275,6 +275,10 @@ const InfraSetup = ({ db }) => {
     return !isStepCompleted(step);
   };
 
+  const hasGcpAccess = () => {
+    return !!(projectId && (gcpAccessToken || serviceAccountJson));
+  };
+
   const isStepCompleted = (step) => {
     if (step === 1) return !!user;
     if (step === 2) return !!(serviceAccountJson || (projectId && gcpConnected));
@@ -286,8 +290,7 @@ const InfraSetup = ({ db }) => {
     if (step === 8) return !!githubPat;
     if (step === 9) {
       if (!discordBotToken) return false;
-      const hasGcpAccess = !!(projectId && (gcpAccessToken || serviceAccountJson));
-      return hasGcpAccess;
+      return hasGcpAccess();
     }
     return false;
   };
@@ -301,7 +304,11 @@ const InfraSetup = ({ db }) => {
     if (step === 6) return !isStepCompleted(5);
     if (step === 7) return !isStepCompleted(6);
     if (step === 8) return !isStepCompleted(7);
-    if (step === 9) return !isStepCompleted(8);
+    if (step === 9) {
+      if (!isStepCompleted(8)) return true;
+      if (!hasGcpAccess()) return true;
+      return false;
+    }
     return false;
   };
 
@@ -1177,9 +1184,17 @@ npm install
       return;
     }
 
+    if (!hasGcpAccess()) {
+      const missing = [];
+      if (!projectId) missing.push('GCP Project ID');
+      if (!serviceAccountJson) missing.push('Service Account Key');
+      setError(`Missing: ${missing.join(', ')}. Complete Step 2 to configure.`);
+      return;
+    }
+
     const accessToken = await getAccessToken();
-    if (!projectId || !accessToken) {
-      setError('Please configure GCP project and service account first');
+    if (!accessToken) {
+      setError('Failed to get GCP access token. Please re-authenticate in Step 2.');
       return;
     }
 
@@ -2173,6 +2188,18 @@ echo "GitHub repo: \${GITHUB_OWNER}/\${GITHUB_REPO}"
                   <p className="text-yellow-700 text-sm">We don't save your sensitive info, so you need to complete this step again to continue.</p>
                 </div>
               )}
+              
+              {!hasGcpAccess() && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
+                  <p className="text-red-800 font-medium mb-2">Missing Prerequisites:</p>
+                  <ul className="text-red-700 text-sm space-y-1">
+                    {!projectId && <li>• GCP Project ID (complete Step 3)</li>}
+                    {!serviceAccountJson && <li>• Service Account Key (complete Step 2)</li>}
+                  </ul>
+                  <p className="text-red-600 text-sm mt-2">You must complete Steps 2-3 before configuring Discord bot.</p>
+                </div>
+              )}
+              
               <p className="text-gray-600 mb-4">
                 Configure Discord bot token. The VM will read this from GCP Secret Manager to connect Kimaki to Discord.
               </p>
@@ -2207,7 +2234,8 @@ echo "GitHub repo: \${GITHUB_OWNER}/\${GITHUB_REPO}"
                       value={discordBotTokenInput}
                       onChange={(e) => setDiscordBotTokenInput(e.target.value)}
                       placeholder="Paste your Discord bot token here"
-                      className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
+                      disabled={!hasGcpAccess()}
+                      className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 disabled:bg-gray-100 disabled:cursor-not-allowed"
                     />
                   </div>
                   {error && (
@@ -2217,8 +2245,8 @@ echo "GitHub repo: \${GITHUB_OWNER}/\${GITHUB_REPO}"
                   )}
                   <button
                     onClick={handleCreateDiscordBot}
-                    disabled={saving || !discordBotTokenInput.trim()}
-                    className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 disabled:opacity-50"
+                    disabled={saving || !discordBotTokenInput.trim() || !hasGcpAccess()}
+                    className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Bot size={18} />
                     {saving ? 'Saving...' : 'Save Token'}
