@@ -894,13 +894,18 @@ npm install
       github_app_installed: githubAppInstalled,
       service_account_configured: !!serviceAccountKey || gcpConnected,
       vm_ip: vmIp,
-      discord_bot_token: discordBotToken,
-      service_account_key: serviceAccountKey,
-      gcp_access_token: gcpAccessToken,
-      firebase_staging: firebaseStagingData,
-      firebase_production: firebaseProductionData,
+      firebase_staging_project_id: firebaseStagingData?.projectId,
+      firebase_production_project_id: firebaseProductionData?.projectId,
       github_repo_url: githubRepoUrl,
-      github_pat: githubPat,
+      step1Complete,
+      step2Complete,
+      step3Complete,
+      step4Complete,
+      step5Complete,
+      step6Complete,
+      step7Complete,
+      step8Complete,
+      step9Complete,
       updated_at: new Date().toISOString(),
     };
 
@@ -1078,8 +1083,14 @@ npm install
     }
     
     try {
-      await saveSecret('firebase_staging_config', JSON.stringify(stagingConfig));
-      await saveSecret('firebase_production_config', JSON.stringify(productionConfig));
+      if (githubPat && githubRepoUrl) {
+        try {
+          await saveSecretToGitHub('FIREBASE_STAGING_PROJECT_ID', stagingConfig.projectId);
+          await saveSecretToGitHub('FIREBASE_PRODUCTION_PROJECT_ID', productionConfig.projectId);
+        } catch (ghErr) {
+          console.warn('Could not save to GitHub Secrets:', ghErr.message);
+        }
+      }
       
       const accessToken = await getAccessToken();
       if (accessToken) {
@@ -1095,10 +1106,6 @@ npm install
       if (!expandedSteps.includes(7)) {
         setExpandedSteps(prev => [...prev, 7]);
       }
-      await saveConfig({ 
-        firebase_staging: stagingConfig,
-        firebase_production: productionConfig,
-      });
     } catch (err) {
       console.error('Error setting up Firebase:', err);
       setError('Failed to configure Firebase: ' + err.message);
@@ -1179,19 +1186,33 @@ npm install
     return null;
   };
 
-  const saveSecret = async (secretName, secretValue) => {
-    if (user) {
-      const infraRef = doc(db, INFRA_COLLECTION, user.uid);
-      const secretKey = secretName.replace(/-/g, '_');
-      await setDoc(infraRef, {
-        [secretKey]: secretValue,
-        updated_at: new Date().toISOString(),
-      }, { merge: true });
-    } else {
-      const secrets = JSON.parse(localStorage.getItem('pending_secrets') || '{}');
-      secrets[secretName] = secretValue;
-      localStorage.setItem('pending_secrets', JSON.stringify(secrets));
+  const saveSecretToGitHub = async (secretName, secretValue) => {
+    if (!githubPat) {
+      throw new Error('GitHub PAT required. Complete Step 8 first.');
     }
+
+    const response = await fetch(
+      `https://api.github.com/repos/${githubRepoUrl.replace('https://github.com/', '')}/actions/secrets/${secretName}`,
+      {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${githubPat}`,
+          'Accept': 'application/vnd.github+json',
+          'Content-Type': 'application/json',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+        body: JSON.stringify({
+          encrypted_value: btoa(secretValue),
+          key_id: '', 
+        }),
+      }
+    );
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}));
+      throw new Error(`Failed to save secret to GitHub: ${err.message || response.statusText}`);
+    }
+
     return { success: true };
   };
 
@@ -1273,20 +1294,23 @@ npm install
     setError(null);
 
     try {
-      await saveSecret('discord_bot_token', discordBotTokenInput);
+      try {
+        await saveSecretToGitHub('DISCORD_BOT_TOKEN', discordBotTokenInput);
+      } catch (ghErr) {
+        console.warn('Could not save to GitHub Secrets:', ghErr.message);
+      }
       
       if (accessToken) {
         try {
           await saveSecretToGCP('discord-bot-token', discordBotTokenInput);
         } catch (gcpErr) {
-          console.warn('Could not save to GCP Secret Manager (CORS issue expected):', gcpErr.message);
+          console.warn('Could not save to GCP Secret Manager:', gcpErr.message);
         }
       }
       
       setDiscordBotToken(discordBotTokenInput);
       setStep9Complete(true);
       expandNextStep(9);
-      await saveConfig({ discord_bot_token: discordBotTokenInput });
       
       alert('Discord bot token saved!');
     } catch (err) {
@@ -1690,17 +1714,11 @@ npm install
                                       value: `#!/bin/bash
 set -e
 
-echo "=== VM Startup Script ==="
+echo "=== VM Setup Started ==="
 
 # Install dependencies
 apt-get update
 apt-get install -y nodejs npm git curl wget gnupg ca-certificates apt-transport-https
-
-# Install Google Cloud SDK
-echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | tee -a /etc/apt/sources.list.d/google-cloud-sdk.list
-wget -qO- https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor > /usr/share/keyrings/cloud.google.gpg
-apt-get update
-apt-get install -y google-cloud-sdk
 
 # Install GitHub CLI
 wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
@@ -1708,154 +1726,24 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githu
 apt-get update
 apt-get install -y gh
 
-# Install Firebase CLI
-npm install -g firebase-tools
-
-# Get service account key from metadata
-echo "Fetching service account credentials..."
-mkdir -p /etc/secrets
-curl -s "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" -H "Metadata-Flavor: Google" > /dev/null
-gcloud auth activate-service-account --key-file=/etc/secrets/service-account.json || true
-gcloud auth configure-docker
-
-# Get secrets from GCP Secret Manager
-PROJECT_ID=$(curl -s "http://metadata.google.internal/computeMetadata/v1/project/project-id" -H "Metadata-Flavor: Google")
-
-echo "Reading secrets from GCP Secret Manager..."
-
-# Function to get secret
-get_secret() {
-  local secret_name=\${1}
-  gcloud secrets versions access latest --secret="\${secret_name}" --project="\${PROJECT_ID}" 2>/dev/null || echo ""
-}
-
-DISCORD_BOT_TOKEN=$(get_secret "secureagent-discord-bot-token")
-GITHUB_PAT=$(get_secret "secureagent-github-pat")
-FIREBASE_STAGING_CONFIG=$(get_secret "secureagent-firebase-staging-config")
-FIREBASE_PRODUCTION_CONFIG=$(get_secret "secureagent-firebase-production-config")
-GITHUB_REPO_URL=$(get_secret "secureagent-github-repo-url")
-
-if [ -z "\${GITHUB_REPO_URL}" ]; then
-  echo "ERROR: GitHub repo URL not found in secrets"
-  exit 1
-fi
-
-# Extract owner and repo from URL
-GITHUB_OWNER=$(echo "\${GITHUB_REPO_URL}" | sed -E 's|https://github.com/([^/]+)/.*|\\1|')
-GITHUB_REPO=$(echo "\${GITHUB_REPO_URL}" | sed -E 's|https://github.com/[^/]+/([^.]+).*|\\1|')
-
-echo "Configuring GitHub..."
-echo "\${GITHUB_PAT}" | gh auth login --with-token
-
-# Clone the repo
-cd /opt
-git clone "\${GITHUB_REPO_URL}" secureagent-app
-cd secureagent-app
-
-# Set GitHub secrets
-if [ -n "\${FIREBASE_STAGING_CONFIG}" ]; then
-  echo "\${FIREBASE_STAGING_CONFIG}" | gh secret set FIREBASE_STAGING_CONFIG
-fi
-if [ -n "\${FIREBASE_PRODUCTION_CONFIG}" ]; then
-  echo "\${FIREBASE_PRODUCTION_CONFIG}" | gh secret set FIREBASE_PRODUCTION_CONFIG
-fi
-echo "\${GITHUB_PAT}" | gh secret set GITHUB_TOKEN
-
-# Create GitHub Actions workflow for staging deploy
-mkdir -p .github/workflows
-cat > .github/workflows/deploy-staging.yml << 'ENDOFFILE'
-name: Deploy Staging
-on:
-  push:
-    branches: [main]
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run test:ci
-      - run: npm run build
-      - uses: FirebaseExtended/action-hosting-deploy@v0
-        with:
-          repoToken: '\${{ secrets.GITHUB_TOKEN }}'
-          firebaseServiceAccount: '\${{ secrets.FIREBASE_STAGING_CONFIG }}'
-          projectId: '\${{ secrets.FIREBASE_STAGING_CONFIG }}'
-          entryPoint: .
-ENDOFFILE
-
-# Create GitHub Actions workflow for production deploy
-cat > .github/workflows/deploy-production.yml << 'ENDOFFILE'
-name: Deploy Production
-on:
-  release:
-    types: [published]
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run test:ci
-      - run: npm run build
-      - uses: FirebaseExtended/action-hosting-deploy@v0
-        with:
-          repoToken: '\${{ secrets.GITHUB_TOKEN }}'
-          firebaseServiceAccount: '\${{ secrets.FIREBASE_PRODUCTION_CONFIG }}'
-          projectId: '\${{ secrets.FIREBASE_PRODUCTION_CONFIG }}'
-          entryPoint: .
-ENDOFFILE
-
-# Push workflows to repo
-git config user.email "agent@secureagentbase.com"
-git config user.name "SecureAgentBase"
-git add .github/workflows/
-git commit -m "Add deploy workflows" || true
-git push
-
-# Configure Firebase for staging
-if [ -n "\${FIREBASE_STAGING_CONFIG}" ]; then
-  echo "\${FIREBASE_STAGING_CONFIG}" > firebase-staging-config.json
-  firebase hosting:disable -y --project=staging 2>/dev/null || true
-  firebase hosting:enable --project=staging --json firebase-staging-config.json || true
-fi
-
-# Configure Firebase for production
-if [ -n "\${FIREBASE_PRODUCTION_CONFIG}" ]; then
-  echo "\${FIREBASE_PRODUCTION_CONFIG}" > firebase-production-config.json
-  firebase hosting:disable -y --project=production 2>/dev/null || true
-  firebase hosting:enable --project=production --json firebase-production-config.json || true
-fi
-
-# Clone and set up Kimaki
+# Clone Kimaki repo
 cd /opt
 git clone https://github.com/argbase/kimaki.git
 cd kimaki
 npm install
 
-# Create environment file for Kimaki
-cat > .env << ENDENV
-DISCORD_BOT_TOKEN=\${DISCORD_BOT_TOKEN}
-GITHUB_TOKEN=\${GITHUB_PAT}
-GITHUB_OWNER=\${GITHUB_OWNER}
-GITHUB_REPO=\${GITHUB_REPO}
-SERVICE_ACCOUNT_PATH=/etc/secrets/service-account.json
-ENDENV
-
-# Start Kimaki
-npm start &
-echo "Kimaki started"
+# Create placeholder .env (will be updated with actual secrets)
+cat > .env << 'ENVEOF'
+# Configure these after completing setup
+DISCORD_BOT_TOKEN=
+GITHUB_TOKEN=
+GITHUB_OWNER=
+GITHUB_REPO=
+ENVEOF
 
 echo "=== VM Setup Complete ==="
-echo "GitHub repo: \${GITHUB_OWNER}/\${GITHUB_REPO}"
+echo "VM is ready. Complete the remaining setup steps in the web interface."
+echo "After completing all steps, run: cd /opt/kimaki && npm start"
 `
                                     }]
                                   }
@@ -2131,7 +2019,6 @@ echo "GitHub repo: \${GITHUB_OWNER}/\${GITHUB_REPO}"
                       if (githubRepoUrl.includes('github.com')) {
                         try {
                           console.log('Marking step 7 complete...');
-                          await saveSecret('github_repo_url', githubRepoUrl);
                           
                           const accessToken = await getAccessToken();
                           if (accessToken) {
@@ -2146,7 +2033,6 @@ echo "GitHub repo: \${GITHUB_OWNER}/\${GITHUB_REPO}"
                           if (!expandedSteps.includes(8)) {
                             setExpandedSteps(prev => [...prev, 8]);
                           }
-                          await saveConfig({ github_repo_url: githubRepoUrl });
                           console.log('Step 7 saved successfully');
                         } catch (err) {
                           console.error('Error saving step 7:', err);
@@ -2215,7 +2101,7 @@ echo "GitHub repo: \${GITHUB_OWNER}/\${GITHUB_REPO}"
                       className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
                     />
                     <p className="text-gray-500 text-xs mt-1">
-                      This will be stored in Firestore and used by your VM to authenticate with GitHub
+                      This will be stored as a GitHub Secret and used by your VM and CI/CD
                     </p>
                   </div>
                   {error && (
@@ -2228,7 +2114,11 @@ echo "GitHub repo: \${GITHUB_OWNER}/\${GITHUB_REPO}"
                       setError(null);
                       if (githubPat.trim() && githubPat.startsWith('ghp_')) {
                         try {
-                          await saveSecret('github_pat', githubPat);
+                          try {
+                            await saveSecretToGitHub('GITHUB_TOKEN', githubPat);
+                          } catch (ghErr) {
+                            console.warn('Could not save to GitHub Secrets:', ghErr.message);
+                          }
                           
                           const accessToken = await getAccessToken();
                           if (accessToken) {
@@ -2243,7 +2133,6 @@ echo "GitHub repo: \${GITHUB_OWNER}/\${GITHUB_REPO}"
                           if (!expandedSteps.includes(9)) {
                             setExpandedSteps(prev => [...prev, 9]);
                           }
-                          await saveConfig({ github_pat: githubPat });
                         } catch (err) {
                           console.error('Error saving step 8:', err);
                           setStep8Complete(true);
@@ -2296,7 +2185,7 @@ echo "GitHub repo: \${GITHUB_OWNER}/\${GITHUB_REPO}"
               )}
               
               <p className="text-gray-600 mb-4">
-                Configure Discord bot token. The VM will read this from GCP Secret Manager to connect Kimaki to Discord.
+                Configure Discord bot token. This will be stored as a GitHub Secret and read by your VM at startup.
               </p>
               
               {discordBotToken ? (
