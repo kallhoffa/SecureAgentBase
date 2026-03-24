@@ -1312,7 +1312,7 @@ npm install
       setStep9Complete(true);
       expandNextStep(9);
       
-      alert('Discord bot token saved!');
+      alert('Discord bot token saved! See the checklist below to complete VM setup.');
     } catch (err) {
       console.error('Error saving discord bot token:', err);
       setError(err.message);
@@ -2189,9 +2189,75 @@ echo "After completing all steps, run: cd /opt/kimaki && npm start"
               </p>
               
               {discordBotToken ? (
-                <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
-                  <Check size={20} />
-                  <span className="font-medium">Discord bot token configured</span>
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
+                    <Check size={20} />
+                    <span className="font-medium">Discord bot token configured</span>
+                  </div>
+                  
+                  <div className="bg-amber-50 border-2 border-amber-300 rounded-lg p-4">
+                    <h3 className="font-bold text-amber-800 mb-3 flex items-center gap-2">
+                      <AlertTriangle className="text-amber-600" size={20} />
+                      Setup Complete - Manual Steps Remaining
+                    </h3>
+                    <p className="text-amber-700 text-sm mb-4">
+                      Your secrets are saved to GitHub Secrets. Complete these steps to get Kimaki running:
+                    </p>
+                    
+                    <div className="space-y-4">
+                      <div className="bg-white rounded-lg p-3 border border-amber-200">
+                        <h4 className="font-semibold text-gray-800 mb-2">1. Connect to your VM</h4>
+                        <p className="text-sm text-gray-600 mb-2">SSH into your VM using GCP Console or gcloud CLI:</p>
+                        <code className="block bg-gray-100 p-2 rounded text-xs">
+                          gcloud compute ssh kimaki-manager --zone=us-central1-a
+                        </code>
+                      </div>
+                      
+                      <div className="bg-white rounded-lg p-3 border border-amber-200">
+                        <h4 className="font-semibold text-gray-800 mb-2">2. Update Kimaki's .env file</h4>
+                        <p className="text-sm text-gray-600 mb-2">Edit the .env file with your secrets:</p>
+                        <code className="block bg-gray-100 p-2 rounded text-xs">
+                          sudo nano /opt/kimaki/.env
+                        </code>
+                        <p className="text-xs text-gray-500 mt-2">Required values:</p>
+                        <ul className="text-xs text-gray-600 list-disc list-inside mt-1 space-y-1">
+                          <li>DISCORD_BOT_TOKEN={'{your discord bot token}'}</li>
+                          <li>GITHUB_TOKEN={'{your GitHub PAT}'}</li>
+                          <li>GITHUB_OWNER={'{your github username}'}</li>
+                          <li>GITHUB_REPO=SecureAgentBase</li>
+                        </ul>
+                      </div>
+                      
+                      <div className="bg-white rounded-lg p-3 border border-amber-200">
+                        <h4 className="font-semibold text-gray-800 mb-2">3. Start Kimaki</h4>
+                        <code className="block bg-gray-100 p-2 rounded text-xs">
+                          cd /opt/kimaki && npm start
+                        </code>
+                        <p className="text-sm text-green-600 mt-2 flex items-center gap-1">
+                          <Check size={14} /> Kimaki should respond to your Discord bot commands
+                        </p>
+                      </div>
+                      
+                      <div className="bg-white rounded-lg p-3 border border-amber-200">
+                        <h4 className="font-semibold text-gray-800 mb-2">4. (Optional) Set up GitHub Actions for Firebase deploys</h4>
+                        <p className="text-sm text-gray-600 mb-2">Enable automatic deployments on push to main:</p>
+                        <ol className="text-xs text-gray-600 list-decimal list-inside space-y-1">
+                          <li>Go to your repo Settings → Secrets and variables → Actions</li>
+                          <li>Add FIREBASE_STAGING_PROJECT_ID and FIREBASE_PRODUCTION_PROJECT_ID</li>
+                          <li>Enable GitHub Actions in your Firebase projects</li>
+                          <li>Push to main to trigger staging deploy</li>
+                        </ol>
+                        <a 
+                          href="https://github.com/features/actions" 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-blue-600 underline text-xs mt-2 inline-block"
+                        >
+                          GitHub Actions Documentation →
+                        </a>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               ) : (
                 <>
