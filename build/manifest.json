@@ -1,0 +1,10 @@
+{
+  "name": "SecureAgentBase",
+  "short_name": "SecureAgentBase",
+  "description": "Autonomous agent platform for secure deployments",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#2563eb",
+  "icons": []
+}

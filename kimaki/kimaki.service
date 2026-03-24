@@ -1,0 +1,20 @@
+[Unit]
+Description=Kimaki Discord Listener
+After=network.target
+
+[Service]
+Type=simple
+User=kimaki
+WorkingDirectory=/opt/kimaki
+ExecStart=/usr/bin/node /opt/kimaki/src/index.js
+Restart=always
+RestartSec=10
+
+Environment=NODE_ENV=production
+Environment=PORT=3000
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

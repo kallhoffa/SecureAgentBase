@@ -1200,6 +1200,28 @@ npm install
       throw new Error('GCP not configured. Please complete Steps 2-3 first.');
     }
 
+    const functionUrl = import.meta.env.VITE_CREATE_SECRET_FUNCTION_URL;
+    
+    if (functionUrl && serviceAccountJson) {
+      const response = await fetch(functionUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          projectId,
+          secretName,
+          secretValue,
+          serviceAccountKey: serviceAccountJson,
+        }),
+      });
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({ error: { message: response.statusText } }));
+        throw new Error(`Failed to save secret: ${err.error?.message || response.statusText}`);
+      }
+
+      return response.json();
+    }
+
     const accessToken = await getAccessToken();
     if (!accessToken) {
       throw new Error('GCP access token not available. Please re-authenticate.');

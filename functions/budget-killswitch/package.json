@@ -1,0 +1,16 @@
+{
+  "name": "budget-killswitch",
+  "version": "1.0.0",
+  "description": "Cloud Function that monitors billing and kills resources at budget threshold",
+  "main": "index.js",
+  "dependencies": {
+    "@google-cloud/functions-framework": "^3.4.0",
+    "@google-cloud/pubsub": "^4.5.0",
+    "@google-cloud/compute": "^1.7.0",
+    "@google-cloud/run": "^0.10.0",
+    "discord.js": "^14.15.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
