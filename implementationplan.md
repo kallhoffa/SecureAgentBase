@@ -7,7 +7,7 @@
 
 ## 1. System Architecture
 
-The platform enables users to create apps entirely through Discord - no terminal required. All provisioning happens from the browser via OAuth APIs.
+The platform enables users to create apps entirely through Discord - no terminal required. All provisioning happens from the browser.
 
 ### 1.1 Components
 
@@ -22,345 +22,272 @@ The platform enables users to create apps entirely through Discord - no terminal
 ### 1.2 Data Flow
 
 ```
-User (Browser)
-    │
-    ├─→ GitHub OAuth ──→ Create public repo (Apache 2.0)
-    │                   ├─→ Install GitHub App
-    │                   └─→ Add Actions workflow
-    │
-    └─→ GCP OAuth ──→ Create e2-micro VM └─→ Deploy
-                        Kimaki listener
-
-User (Discord)
-    │
-    ├─→ Kimaki (e2-micro) receives command
-    │       │
-    │       ├─→ Rate limiting check
-    │       │
-    │       └─→ Trigger GitHub Actions workflow
-    │               │
-    │               ├─→ Architect creates spec
-    │               ├─→ Critic reviews
-    │               ├─→ Coder implements
-    │               ├─→ Verifier tests
-    │               └─→ Creates PR
-    │
-    └─→ On PR merge → Deploy to staging (Firebase)
-            │
-            └─→ On release → Deploy to production (Firebase)
+User (Browser) ──> GCP VM ──> Firebase Hosting
+     │              │
+     │              ▼
+     │         GitHub Actions
+     │              │
+     ▼              ▼
+Discord Bot    Kimaki (Discord listener)
 ```
 
 ---
 
-## 2. End-to-End User Flow
+## 2. Infrastructure Setup Flow (7 Steps)
 
-### 2.1 Create New App
+The `/infra-setup` page guides users through a 7-step setup wizard:
 
-User clicks "Create New App" in the web UI:
+### Step 1: Account
+- User signs in with Firebase authentication
+- Creates their user profile
 
-1. **GitHub OAuth** - User authorizes, app creates a new public repo with Apache 2.0 license
-2. **GitHub App Install** - App installs GitHub App on the new repo with `contents:write` permission
-3. **GCP OAuth** - User authorizes, app provisions e2-micro VM via Compute API
-4. **Kimaki Deploy** - App pushes Kimaki config to VM, starts listener
-5. **Workflow Setup** - App adds Actions workflow to the new repo
-6. **Discord Config** - User creates Discord channel/bot, configures in app
+### Step 2: Service Account
+- User creates GCP service account with required roles
+- Downloads JSON key, pastes into app
+- App validates authentication
 
-### 2.2 Build Flow
+### Step 3: GCP Project
+- User enters GCP project ID
+- Optionally auto-detected from service account
 
-User interacts via Discord:
+### Step 4: Firebase Setup
+- User creates staging and production Firebase projects manually
+- Pastes Firebase SDK configs
+- App stores project IDs for GitHub Secrets
 
-1. User sends prompt in Discord channel (e.g., "Add a login page")
-2. Kimaki receives webhook, validates rate limits
-3. Kimaki triggers GitHub Actions via API (`workflow_dispatch`)
-4. Actions clone repo, run Multi-Agent pipeline
-5. Pipeline creates feature branch, opens PR
-6. Kimaki posts PR link to Discord
+### Step 5: GitHub Auth
+- User creates GitHub PAT with `repo` scope
+- VM uses PAT to:
+  - Fork SecureAgentBase
+  - Set GitHub Secrets
+  - Push GitHub Actions workflows
 
-### 2.3 Deploy Flow
+### Step 6: Discord Bot
+- User creates Discord bot in Developer Portal
+- Adds bot to their Discord server
+- Pastes bot token
+- VM uses this to send welcome message
 
-1. **Staging**: On PR merge to `main` → Actions deploys to Firebase staging
-2. **Production**: On GitHub release → Actions deploys to Firebase production
-
----
-
-## 3. Browser-Based Provisioning
-
-All resource creation happens from the user's browser using OAuth access tokens.
-
-### 3.1 GitHub Provisioning
-
-```javascript
-// Create repo via Octokit
-const repo = await octokit.repos.createForAuthenticatedUser({
-  name: appName,
-  description: 'Created with SecureAgentBase',
-  license_template: 'apache-2.0',
-  private: false,
-  auto_init: true
-});
-
-// Install GitHub App
-await octokit.apps.installations.createInstallationAccessToken({
-  installation_id: installationId,
-  repositories: [repo.data.name]
-});
-```
-
-### 3.2 GCP Provisioning
-
-Using Google Identity Services OAuth:
-
-```javascript
-// Initialize OAuth client
-google.accounts.oauth2.initTokenClient({
-  client_id: GCP_CLIENT_ID,
-  scope: 'https://www.googleapis.com/auth/compute',
-  callback: (response) => {
-    // response.access_token available
-  }
-});
-
-// Create e2-micro VM
-await gcp.compute.instances.insert({
-  project: projectId,
-  zone: 'us-central1-a',
-  resource: {
-    name: 'kimaki-vm',
-    machineType: 'zones/us-central1-a/machineTypes/e2-micro',
-    // ... boot disk, network, startup script
-  }
-});
-```
+### Step 7: Create VM
+- App enables required GCP APIs
+- Creates VM with comprehensive startup script
+- VM automatically:
+  1. Forks SecureAgentBase
+  2. Sets GitHub Secrets
+  3. Creates GitHub Actions workflows
+  4. Downloads Kimaki
+  5. Creates #secureagent channel
+  6. Sends welcome message
 
 ---
 
-## 4. The Listener (Kimaki)
+## 3. VM Startup Script
 
-Runs on free GCP e2-micro VM. Responsibilities:
+```bash
+#!/bin/bash
+set -e
 
-### 4.1 Core Functions
+# Read secrets from VM metadata
+DISCORD_TOKEN=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/discord_bot_token")
+GITHUB_PAT=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/github_pat")
+FIREBASE_STAGING=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_staging_project_id")
+FIREBASE_PRODUCTION=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_production_project_id")
 
-- **Discord Webhook Receiver**: Receive commands from Discord channel
-- **Rate Limiting**: Enforce token quota (50k/hr) and build limits (5/hr)
-- **Actions Trigger**: Call GitHub API to trigger workflow dispatch
-- **Discord Notifier**: Post results back to Discord
+# Install dependencies
+apt-get update && apt-get install -y nodejs npm git curl wget gh jq
 
-### 4.2 Rate Limits
+# Authenticate GitHub
+echo "$GITHUB_PAT" | gh auth login --with-token
 
-| Limit | Value | Window |
-|-------|-------|--------|
-| Tokens | 50,000 | Per hour |
-| Builds | 5 | Per hour |
+# Get GitHub username
+GH_USER=$(gh api user --jq .login)
 
-### 4.3 Discord Commands
+# Fork SecureAgentBase
+gh repo fork kallhoffa/SecureAgentBase --clone
 
-```
-@kimaki help           - Show available commands
-@kimaki build <prompt> - Build a feature
-@kimaki status         - Show current build status
-@kimaki stop           - Cancel current build
-```
+# Set GitHub Secrets for Firebase deployment
+cd SecureAgentBase
+gh secret set FIREBASE_STAGING_PROJECT_ID -b"$FIREBASE_STAGING"
+gh secret set FIREBASE_PRODUCTION_PROJECT_ID -b"$FIREBASE_PRODUCTION"
 
----
-
-## 5. The Brain (GitHub Actions)
-
-The Multi-Agent pipeline runs in GitHub Actions on public repos (free).
-
-### 5.1 Workflow Trigger
-
-```yaml
+# Create GitHub Actions workflow for staging
+mkdir -p .github/workflows
+cat > .github/workflows/deploy-staging.yml << 'EOF'
+name: Deploy Staging
 on:
-  workflow_dispatch:
-    inputs:
-      prompt:
-        description: 'Feature to build'
-        required: true
-      userId:
-        description: 'Discord user ID'
-        required: true
-```
-
-### 5.2 Specialized Agents
-
-* **The Architect**: Receives user prompt, creates `specification.md`
-* **The Critic**: Reviews spec for security/sustainability issues, rejects bad designs
-* **The Coder**: Implements approved spec in the repo
-* **The Verifier**: Runs tests, retries on failure
-
-### 5.3 Agent Prompts
-
-Prompts are defined in `.github/agent-prompts/`:
-- `architect.md` - System prompt for spec creation
-- `critic.md` - System prompt for adversarial review
-- `coder.md` - System prompt for implementation
-- `verifier.md` - System prompt for testing
-
----
-
-## 6. Deployment Pipeline
-
-Each user app gets its own GitHub Actions workflows.
-
-### 6.1 Staging Deploy
-
-```yaml
-on:
-  pull_request:
+  push:
     branches: [main]
-    types: [closed]
-
 jobs:
-  deploy-staging:
-    if: github.event.pull_request.merged == true
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: npm install && npm run build
-      - uses: w9jds/firebase-action@master
+      - uses: actions/setup-node@v4
         with:
-          args: deploy --only hosting --project=${{ vars.STAGING_PROJECT_ID }}
-```
+          node-version: '20'
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run test:ci
+      - run: npm run build
+      - uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_STAGING_PROJECT_ID }}
+          projectId: ${{ secrets.FIREBASE_STAGING_PROJECT_ID }}
+          entryPoint: .
+EOF
 
-### 6.2 Production Deploy
-
-```yaml
+# Create GitHub Actions workflow for production
+cat > .github/workflows/deploy-production.yml << 'EOF'
+name: Deploy Production
 on:
   release:
     types: [published]
-
 jobs:
-  deploy-production:
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: npm install && npm run build
-      - uses: w9jds/firebase-action@master
+      - uses: actions/setup-node@v4
         with:
-          args: deploy --only hosting --project=${{ vars.PRODUCTION_PROJECT_ID }}
+          node-version: '20'
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run test:ci
+      - run: npm run build
+      - uses: FirebaseExtended/action-hosting-deploy@v0
+        with:
+          repoToken: ${{ secrets.GITHUB_TOKEN }}
+          firebaseServiceAccount: ${{ secrets.FIREBASE_PRODUCTION_PROJECT_ID }}
+          projectId: ${{ secrets.FIREBASE_PRODUCTION_PROJECT_ID }}
+          entryPoint: .
+EOF
+
+# Push workflows to GitHub
+git config user.email "bot@secureagent"
+git config user.name "SecureAgent"
+git add .github/workflows/
+git commit -m "Add deploy workflows"
+git push
+
+# Download and configure Kimaki
+cd /opt
+npx -y kimaki@latest project add SecureAgentBase
+
+# Wait for Kimaki to start
+sleep 30
+
+# Get bot's guild ID
+GUILD_ID=$(curl -s "https://discord.com/api/v10/users/@me/guilds" \
+  -H "Authorization: Bot $DISCORD_TOKEN" | jq -r '.[0].id')
+
+# Create #secureagent channel
+CHANNEL=$(curl -s -X POST "https://discord.com/api/v10/guilds/$GUILD_ID/channels" \
+  -H "Authorization: Bot $DISCORD_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"Name": "secureagent", "type": 0}')
+CHANNEL_ID=$(echo $CHANNEL | jq -r '.id')
+
+# Send welcome message
+sleep 5
+curl -s -X POST "https://discord.com/api/v10/channels/$CHANNEL_ID/messages" \
+  -H "Authorization: Bot $DISCORD_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"content\": \"✅ **SecureAgent Setup Complete!**\n\n📦 **Your Infrastructure:**\n• GitHub Repo: https://github.com/$GH_USER/SecureAgentBase\n• Staging: https://$FIREBASE_STAGING.web.app\n• Production: https://$FIREBASE_PRODUCTION.web.app\n\n🚀 Kimaki is now listening for commands.\"}"
+
+echo "Setup complete!"
 ```
 
 ---
 
-## 7. Implementation Safety & Git Integrity
+## 4. Secrets Storage
 
-### 7.1 Bypass Prevention
+**NOT stored in agentbase Firestore:**
+- Discord bot token
+- GitHub PAT
+- Service account key
+- Firebase configs
 
-- **Branch Protection**: All repos have protected `main` branch
-- **Required Checks**: CI must pass before merge
-- **Branch-by-Default**: All AI work on feature branches
-- **No Auto-Merge**: Agent never auto-merges
+**Stored in user's GitHub Secrets:**
+- `DISCORD_BOT_TOKEN`
+- `GITHUB_TOKEN`
+- `FIREBASE_STAGING_PROJECT_ID`
+- `FIREBASE_PRODUCTION_PROJECT_ID`
 
-### 7.2 Conflict Resolution
-
-If agent encounters merge conflict with user code:
-- Push changes to `conflict-resolution/feature-name` branch
-- Notify user via Discord: "Conflict detected in `file.tsx`. Please merge manually."
-
----
-
-## 8. Security Model
-
-### 8.1 OAuth Scopes
-
-| Provider | Scopes |
-|----------|---------|
-| GitHub | `repo`, `read:user` |
-| GCP | `cloud-platform` (limited via VM service account) |
-
-### 8.2 Service Account (for VM)
-
-The e2-micro VM runs with a dedicated service account:
-- `roles/compute.instanceAdmin.v1`
-- `roles/iam.serviceAccountUser`
-
-### 8.3 GitHub App
-
-Uses GitHub App with repo-scoped permissions instead of PAT tokens.
+**Stored in VM metadata (transient):**
+- All secrets passed during VM creation
+- Deleted when VM is terminated
 
 ---
 
-## 9. Cost Analysis
+## 5. GCP Service Account Roles
 
-| Component | Free Tier | Notes |
-|-----------|-----------|-------|
-| **e2-micro VM** | 1/month always free | Listener only |
-| **GitHub Actions** | Unlimited | Public repos |
-| **Firestore** | 1GB storage | Config storage |
-| **Firebase Hosting** | 1GB/10GB transfer | User apps |
-| **Firebase Auth** | Unlimited | User auth |
-
-**Total: $0/month** (per user app)
+- Compute Admin
+- Service Account User
+- Project Billing Manager
+- Service Usage Admin
 
 ---
 
-## 10. Execution Instructions for the Building Agent
+## 6. Troubleshooting Guide
 
-### Phase 1: Web App Enhancement (✅ IN PROGRESS)
-1. **[DONE]** Add "Create New App" UI flow (`/create-app`)
-2. **[DONE]** Add Infrastructure Setup UI flow (`/infra-setup`)
-3. **[DONE]** Implement Service Account JSON Auth for GCP APIs
-4. **[DONE]** Implement GCP API Enablement + e2-micro VM Provisioning via JWT auth
-5. **[DONE]** Add Discord configuration UI step
-6. *[BLOCKED]* Fix Firebase env vars (User must run `npm run setup`)
-7. *[TODO]* Implement GitHub OAuth + repo creation
-8. *[TODO]* Finalize App Template generation
+### VM Creation Fails
+1. Check billing is enabled on GCP project
+2. Verify service account has required roles
+3. Check quota limits in GCP console
+4. Review startup script logs: `sudo cat /var/log/syslog | grep startup`
 
-### Phase 2: Kimaki Listener (⏳ PENDING)
-1. Update existing Kimaki code for new architecture
-2. Add GitHub Actions API trigger (`workflow_dispatch`)
-3. Add Discord command parsing
-4. Test webhook integration
-5. Implement endpoints for web UI to communicate with Kimaki (e.g. provisioning Discord bots)
+### GitHub Fork Fails
+1. Verify PAT has `repo` scope
+2. Check if repo already forked: `gh repo list`
+3. Ensure no rate limiting issues
 
-### Phase 3: GitHub Actions Workflow (⏳ PENDING)
-1. Create agent workflow template (`.github/workflows/agent.yml`)
-2. Add Multi-Agent pipeline (Architect, Critic, Coder, Verifier)
-3. Write agent system prompts (`.github/agent-prompts/`)
-4. Automate adding these to user repos during provisioning
+### Discord Message Fails
+1. Verify bot is in the server
+2. Check bot has "Send Messages" permission
+3. Validate bot token is correct
 
-### Phase 4: End-to-End Testing (⏳ PENDING)
-1. Test full user flow in dev mode
-2. Verify Discord commands work
-3. Verify deployments trigger on PR/release
-4. Verify rate limiting mechanisms work
+### Kimaki Not Responding
+1. Check Kimaki is running: `ps aux | grep kimaki`
+2. View logs: `cat /var/log/kimaki.log`
+3. Restart: `cd /opt && npx -y kimaki@latest`
 
 ---
 
-## 11. Current Status & Known Issues
+## 7. Current Status
 
-1. **Authentication:** The app is deployed to `agentbase-8c022.web.app` but Firebase authentication is broken in production because `.env.local` was pushed with placeholder values (`your_api_key_here`). **Fix:** Run `npm run setup` locally and redeploy.
-2. **Infra Setup:** The `/infra-setup` page is fully functional. It successfully takes a GCP Service Account JSON key, exchanges it for an OAuth token, enables required GCP APIs (Compute, Resource Manager, Service Usage), and provisions the Kimaki listener VM (e2-micro) autonomously.
-3. **Kimaki API:** Step 7 in `/infra-setup` calls out to the Kimaki VM (`http://<vm_ip>:3000/api/create-discord-bot`) which doesn't exist yet on the VM side. Needs Phase 2 completion.
+### Completed
+- ✅ Infrastructure Setup UI (7 steps)
+- ✅ GCP Service Account validation
+- ✅ API enablement
+- ✅ VM provisioning
+- ✅ GitHub PAT storage in GitHub Secrets
+- ✅ Firebase project ID storage
+- ✅ Comprehensive startup script
+- ✅ Discord welcome message
+
+### Pending
+- ⏳ End-to-end testing with real GCP/Firebase/GitHub/Discord
 
 ---
 
-## 11. File Structure
+## 8. File Structure
 
 ```
 secureagentbase/
 ├── src/
-│   ├── infra-setup.jsx      # GCP + GitHub provisioning UI
+│   ├── infra-setup.jsx      # 7-step infrastructure setup UI
 │   ├── github-callback.jsx  # OAuth callback handler
-│   ├── create-app.jsx       # "Create New App" flow
 │   └── ...
-├── kimaki/
-│   ├── src/index.js         # Discord listener
-│   ├── Dockerfile
-│   └── scripts/
-│       └── setup-vm.sh      # VM startup (reference)
-└── .github/
-    └── workflows/
-        ├── agent.yml        # Multi-agent pipeline
-        ├── staging-deploy.yml
-        └── prod-deploy.yml
+├── implementationplan.md     # This document
+└── AGENTS.md                 # Developer guide
 ```
 
 ---
 
-## 12. Open Questions
+## 9. Key References
 
-- [ ] Discord bot creation: Manual or API-based?
-- [ ] App template: Clone from template or start empty?
-- [ ] Custom domains: In scope or Firebase defaults only?
-- [ ] Framework updates: How to sync framework updates to user repos?
+- [Kimaki GitHub](https://github.com/remorses/kimaki)
+- [Firebase Hosting Deploy Action](https://github.com/FirebaseExtended/action-hosting-deploy)
+- [GitHub Actions Documentation](https://docs.github.com/en/actions)
+- [Discord API Documentation](https://discord.com/developers/docs)

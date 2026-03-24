@@ -23,12 +23,14 @@ npm run dev
 - **React 19** with Vite for fast development
 - **Firebase Authentication** (email/password + Google)
 - **Firestore** for real-time data
-- **Infrastructure Setup Flow** (`/infra-setup`) to configure:
-  - GCP Service Accounts
-  - GCP Project Selection
-  - Compute Engine VM Provisioning (Kimaki Listener)
-  - GitHub App Integration
-  - Discord Bot Configuration
+- **Infrastructure Setup Flow** (`/infra-setup`) - 7-step automated wizard:
+  1. Account (Firebase Auth)
+  2. Service Account (GCP JSON key upload)
+  3. GCP Project (select/create project)
+  4. Firebase Setup (staging + production configs)
+  5. GitHub Auth (PAT for VM access)
+  6. Discord Bot (bot token + add to server)
+  7. Create VM (automated - forks repo, sets up GitHub Actions, downloads Kimaki, creates Discord channel)
 - **TailwindCSS** for styling
 - **GitHub Actions** CI/CD for automated deployment
 

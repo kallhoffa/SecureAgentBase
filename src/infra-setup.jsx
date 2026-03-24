@@ -112,12 +112,6 @@ const InfraSetup = ({ db }) => {
   const [step1Complete, setStep1Complete] = useState(false);
   const [step2Complete, setStep2Complete] = useState(false);
   const [step3Complete, setStep3Complete] = useState(false);
-  const [step4Complete, setStep4Complete] = useState(false);
-  const [step5Complete, setStep5Complete] = useState(false);
-  const [step6Complete, setStep6Complete] = useState(false);
-  const [step7Complete, setStep7Complete] = useState(false);
-  const [step8Complete, setStep8Complete] = useState(false);
-  const [step9Complete, setStep9Complete] = useState(false);
   const [gcpConfigLost, setGcpConfigLost] = useState(false);
   const [checkingCompletion, setCheckingCompletion] = useState(true);
 
@@ -276,22 +270,17 @@ const InfraSetup = ({ db }) => {
   };
 
   const hasGcpAccess = () => {
-    return !!(projectId && (gcpAccessToken || serviceAccountJson));
+    return !!(projectId && serviceAccountJson);
   };
 
   const isStepCompleted = (step) => {
     if (step === 1) return !!user;
-    if (step === 2) return !!(serviceAccountJson || (projectId && gcpConnected));
+    if (step === 2) return !!serviceAccountJson;
     if (step === 3) return !!projectId;
-    if (step === 4) return !!vmIp;
-    if (step === 5) return !!vmIp;
-    if (step === 6) return !!(firebaseStagingData?.projectId && firebaseProductionData?.projectId);
-    if (step === 7) return !!githubRepoUrl;
-    if (step === 8) return !!githubPat;
-    if (step === 9) {
-      if (!discordBotToken) return false;
-      return hasGcpAccess();
-    }
+    if (step === 4) return !!(firebaseStagingData?.projectId && firebaseProductionData?.projectId);
+    if (step === 5) return !!githubPat;
+    if (step === 6) return !!discordBotToken;
+    if (step === 7) return !!vmIp;
     return false;
   };
 
@@ -303,19 +292,10 @@ const InfraSetup = ({ db }) => {
     if (step === 5) return !isStepCompleted(4);
     if (step === 6) return !isStepCompleted(5);
     if (step === 7) return !isStepCompleted(6);
-    if (step === 8) return !isStepCompleted(7);
-    if (step === 9) {
-      if (!isStepCompleted(8)) return true;
-      if (!hasGcpAccess()) return true;
-      return false;
-    }
     return false;
   };
 
   const isStepWarning = (step) => {
-    if (step === 9) {
-      return !!(discordBotToken && projectId && !gcpAccessToken && !serviceAccountJson);
-    }
     if (step === 2) {
       return !!(projectId && gcpConnected && !serviceAccountJson);
     }
@@ -593,7 +573,7 @@ const InfraSetup = ({ db }) => {
 apt-get update
 apt-get install -y nodejs npm git curl
 cd /opt
-git clone https://github.com/argbase/kimaki.git
+git clone https://github.com/remorses/kimaki.git
 cd kimaki
 npm install
 `;
@@ -610,7 +590,6 @@ npm install
       if (checkData.items?.length > 0) {
         setVmIp(checkData.items[0].networkInterfaces[0].accessConfigs[0].natIP);
         setStep3Complete(true);
-        setStep4Complete(true);
         expandNextStep(5);
         setCreatingVm(false);
         return;
@@ -671,11 +650,9 @@ npm install
       if (ip) {
         setVmIp(ip);
         setStep3Complete(true);
-        setStep4Complete(true);
         expandNextStep(5);
       } else {
         setStep3Complete(true);
-        setStep4Complete(true);
         expandNextStep(5);
       }
     } catch (err) {
@@ -724,11 +701,7 @@ npm install
       if (formProgress.expandedSteps) setExpandedSteps(formProgress.expandedSteps);
       if (formProgress.step2Complete) setStep2Complete(formProgress.step2Complete);
       if (formProgress.serviceAccountJson) setServiceAccountJson(formProgress.serviceAccountJson);
-      if (formProgress.step6Complete) setStep6Complete(formProgress.step6Complete);
-      if (formProgress.step7Complete) setStep7Complete(formProgress.step7Complete);
-      if (formProgress.step8Complete) setStep8Complete(formProgress.step8Complete);
       if (formProgress.projectId) setProjectId(formProgress.projectId);
-      if (formProgress.step9Complete) setStep9Complete(formProgress.step9Complete);
       if (formProgress.projectId && !formProgress.gcpAccessToken) {
         setGcpConfigLost(true);
       }
@@ -742,22 +715,16 @@ npm install
     const formData = {
       firebaseConfigStaging,
       firebaseConfigProduction,
-      githubRepoUrl,
       githubPat,
-      vmHttpsUrl,
       expandedSteps,
       step2Complete,
       serviceAccountJson,
-      step6Complete,
-      step7Complete,
-      step8Complete,
       projectId,
       gcpAccessToken: gcpAccessToken ? 'saved' : null,
-      step9Complete,
     };
     console.log('Saving form progress:', formData);
     saveFormProgress(formData);
-  }, [formProgressLoaded, firebaseConfigStaging, firebaseConfigProduction, githubRepoUrl, githubPat, vmHttpsUrl, expandedSteps, step2Complete, serviceAccountJson, step6Complete, step7Complete, step8Complete, projectId, gcpAccessToken, step9Complete]);
+  }, [formProgressLoaded, firebaseConfigStaging, firebaseConfigProduction, githubPat, expandedSteps, step2Complete, serviceAccountJson, projectId, gcpAccessToken]);
 
   useEffect(() => {
     const loadInfraConfig = async () => {
@@ -803,28 +770,10 @@ npm install
         if (!formProgress?.step2Complete && configData.gcp_project_id && configData.service_account_configured) setStep2Complete(true);
         if (!formProgress?.step3Complete && configData.vm_ip) {
           setStep3Complete(true);
-          setStep4Complete(true);
-          setStep5Complete(true);
         }
-        if (!formProgress?.step6Complete && configData.firebase_staging && configData.firebase_production) {
-          setStep6Complete(true);
-          if (!expandedSteps.includes(7)) {
-            setExpandedSteps(prev => [...prev, 7]);
-          }
-        }
-        if (!formProgress?.step7Complete && configData.github_repo_url) {
-          setStep7Complete(true);
-        }
-        if (!formProgress?.step8Complete && configData.github_pat) {
-          setStep8Complete(true);
-        }
-        if (!formProgress?.step9Complete && configData.discord_bot_token) {
-          setStep9Complete(true);
-        }
-        if (!formProgress?.step5Complete && configData.github_app_installed) setStep5Complete(true);
         
-        if (configData.vm_ip && !expandedSteps.includes(6)) {
-          setExpandedSteps(prev => [...prev, 6]);
+        if (configData.vm_ip && !expandedSteps.includes(7)) {
+          setExpandedSteps(prev => [...prev, 7]);
         }
 
         if (configData.gcp_project_id && !configData.gcp_access_token) {
@@ -897,15 +846,6 @@ npm install
       firebase_staging_project_id: firebaseStagingData?.projectId,
       firebase_production_project_id: firebaseProductionData?.projectId,
       github_repo_url: githubRepoUrl,
-      step1Complete,
-      step2Complete,
-      step3Complete,
-      step4Complete,
-      step5Complete,
-      step6Complete,
-      step7Complete,
-      step8Complete,
-      step9Complete,
       updated_at: new Date().toISOString(),
     };
 
@@ -998,12 +938,6 @@ npm install
       setStep1Complete(false);
       setStep2Complete(false);
       setStep3Complete(false);
-      setStep4Complete(false);
-      setStep5Complete(false);
-      setStep6Complete(false);
-      setStep7Complete(false);
-      setStep8Complete(false);
-      setStep9Complete(false);
       setGcpConfigLost(false);
       
       setExpandedSteps([]);
@@ -1102,9 +1036,8 @@ npm install
         }
       }
       
-      setStep6Complete(true);
-      if (!expandedSteps.includes(7)) {
-        setExpandedSteps(prev => [...prev, 7]);
+      if (!expandedSteps.includes(5)) {
+        setExpandedSteps(prev => [...prev, 5]);
       }
     } catch (err) {
       console.error('Error setting up Firebase:', err);
@@ -1309,10 +1242,9 @@ npm install
       }
       
       setDiscordBotToken(discordBotTokenInput);
-      setStep9Complete(true);
-      expandNextStep(9);
+      expandNextStep(6);
       
-      alert('Discord bot token saved! See the checklist below to complete VM setup.');
+      alert('Discord bot token saved! You can now create your VM.');
     } catch (err) {
       console.error('Error saving discord bot token:', err);
       setError(err.message);
@@ -1463,7 +1395,7 @@ npm install
 
           {expandedSteps.includes(2) && isStepCompleted(1) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {step2Complete ? (
+              {isStepCompleted(2) ? (
                 <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
                   <Check size={20} />
                   <span className="font-medium">Service account configured</span>
@@ -1597,7 +1529,7 @@ npm install
         </div>
 
         <div className="space-y-2">
-          {getStepHeader(4, "Step 4: Enable APIs & Create VM", <Server className="text-blue-600" size={24} />, isStepCompleted(4), isStepActive(4), isStepLocked(4), "Enable required Google Cloud APIs and create a VM to run the Kimaki listener.")}
+          {getStepHeader(4, "Step 4: Firebase Setup", <svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M3.89 15.672L6.255.461A.542.542 0 0 1 7.27.288l2.543 4.771zm16.794 3.692l-2.25-14a.54.54 0 0 0-.919-.295L3.316 19.365l7.856 4.427a1.621 1.621 0 0 0 1.588 0zM14.3 7.147l-1.82-3.482a.542.542 0 0 0-.96 0L3.53 17.984z"/></svg>, isStepCompleted(4), isStepActive(4), isStepLocked(4), "Configure Firebase hosting for your staging and production environments.")}
           
           {expandedSteps.includes(4) && !isStepCompleted(3) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
@@ -1607,308 +1539,7 @@ npm install
 
           {expandedSteps.includes(4) && isStepCompleted(3) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {step4Complete ? (
-                <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
-                  <Check size={20} />
-                  <span className="font-medium">VM created and ready at {vmIp}</span>
-                </div>
-              ) : (
-                <>
-                  <p className="text-gray-600 mb-4">
-                    Enable required APIs and create a VM to run Kimaki.
-                  </p>
-                  
-                  {step4Status === 'idle' && (
-                    <div className="flex gap-2 flex-wrap">
-                      <button
-                        onClick={async () => {
-                          if (!serviceAccountJson || !projectId) {
-                            setError('Service account and project ID required');
-                            return;
-                          }
-                          setStep4Status('enabling');
-                          setStep4Message('Getting service account token...');
-                          addStep4Log('Starting API enablement process...');
-                          
-                          const token = await getServiceAccountToken();
-                          if (!token) {
-                            setError('Failed to authenticate with service account');
-                            setStep4Status('error');
-                            return;
-                          }
-                          addStep4Log('Service account authenticated');
-                          
-                          const apis = [
-                            { name: 'compute.googleapis.com', displayName: 'Compute Engine API' },
-                            { name: 'cloudresourcemanager.googleapis.com', displayName: 'Cloud Resource Manager API' },
-                            { name: 'serviceusage.googleapis.com', displayName: 'Service Usage API' }
-                          ];
-                          
-                          for (const api of apis) {
-                            setStep4Message(`Enabling ${api.displayName}...`);
-                            addStep4Log(`Enabling ${api.displayName}...`);
-                            
-                            try {
-                              const response = await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/${api.name}:enable`, {
-                                method: 'POST',
-                                headers: {
-                                  'Authorization': `Bearer ${token}`,
-                                  'Content-Type': 'application/json'
-                                }
-                              });
-                              
-                              if (response.ok) {
-                                addStep4Log(`${api.displayName} enabled`);
-                              } else {
-                                const errData = await response.json().catch(() => ({}));
-                                const errMsg = errData.error?.message || '';
-                                if (errMsg.includes('billing')) {
-                                  setError('Billing must be enabled on your GCP project');
-                                  addStep4Log(`ERROR: Billing required for ${api.displayName}`);
-                                } else if (errMsg.includes('already') || errMsg.includes('enabled')) {
-                                  addStep4Log(`${api.displayName} already enabled`);
-                                } else {
-                                  addStep4Log(`Note: ${errMsg || 'Continuing anyway...'}`);
-                                }
-                              }
-                            } catch (e) {
-                              addStep4Log(`Error enabling ${api.displayName}: ${e.message}`);
-                            }
-                            
-                            await new Promise(r => setTimeout(r, 1500));
-                          }
-                          
-                          setStep4Message('Creating VM...');
-                          addStep4Log('Creating VM...');
-                          
-                          const zone = 'us-central1-a';
-                          const instanceName = 'kimaki-manager';
-                          
-                          try {
-                            const vmResponse = await fetch(
-                              `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances`,
-                              {
-                                method: 'POST',
-                                headers: {
-                                  'Authorization': `Bearer ${token}`,
-                                  'Content-Type': 'application/json'
-                                },
-                                body: JSON.stringify({
-                                  name: instanceName,
-                                  machineType: `zones/${zone}/machineTypes/e2-micro`,
-                                  disks: [{
-                                    boot: true,
-                                    autoDelete: true,
-                                    initializeParams: {
-                                      diskSizeGb: '10',
-                                      sourceImage: 'projects/debian-cloud/global/images/family/debian-11',
-                                    },
-                                  }],
-                                  networkInterfaces: [{
-                                    network: 'global/networks/default',
-                                    accessConfigs: [{ type: 'ONE_TO_ONE_NAT' }],
-                                  }],
-                                  metadata: {
-                                    items: [{
-                                      key: 'startup-script',
-                                      value: `#!/bin/bash
-set -e
-
-echo "=== VM Setup Started ==="
-
-# Install dependencies
-apt-get update
-apt-get install -y nodejs npm git curl wget gnupg ca-certificates apt-transport-https
-
-# Install GitHub CLI
-wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null
-apt-get update
-apt-get install -y gh
-
-# Clone Kimaki repo
-cd /opt
-git clone https://github.com/argbase/kimaki.git
-cd kimaki
-npm install
-
-# Create placeholder .env (will be updated with actual secrets)
-cat > .env << 'ENVEOF'
-# Configure these after completing setup
-DISCORD_BOT_TOKEN=
-GITHUB_TOKEN=
-GITHUB_OWNER=
-GITHUB_REPO=
-ENVEOF
-
-echo "=== VM Setup Complete ==="
-echo "VM is ready. Complete the remaining setup steps in the web interface."
-echo "After completing all steps, run: cd /opt/kimaki && npm start"
-`
-                                    }]
-                                  }
-                                })
-                              }
-                            );
-                            
-                            if (vmResponse.ok) {
-                              addStep4Log('VM creation started, waiting for completion...');
-                              await new Promise(r => setTimeout(r, 15000));
-                              
-                              const instanceResp = await fetch(
-                                `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances/${instanceName}`,
-                                { headers: { 'Authorization': `Bearer ${token}` } }
-                              );
-                              const instanceData = await instanceResp.json();
-                              const ip = instanceData.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP;
-                              
-                              if (ip) {
-                                setVmIp(ip);
-                                addStep4Log(`VM ready at ${ip}`);
-                              }
-                              setStep4Complete(true);
-                              setStep4Status('complete');
-                              setStep4Message('VM created successfully!');
-                              expandNextStep(4);
-                            } else {
-                              const err = await vmResponse.json();
-                              addStep4Log(`VM creation failed: ${err.error?.message || 'Unknown error'}`);
-                              setError(`Failed to create VM: ${err.error?.message}`);
-                              setStep4Status('error');
-                            }
-                          } catch (e) {
-                            addStep4Log(`Error: ${e.message}`);
-                            setError(e.message);
-                            setStep4Status('error');
-                          }
-                        }}
-                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
-                      >
-                        Enable APIs & Create VM
-                      </button>
-                    </div>
-                  )}
-                  
-                  {(step4Status === 'enabling' || step4Status === 'complete') && (
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mt-3">
-                      <div className="flex items-center gap-2 text-blue-700 mb-2">
-                        <div className="animate-spin w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full"></div>
-                        <span className="font-medium">{step4Message}</span>
-                      </div>
-                      {step4Logs.length > 0 && (
-                        <div className="mt-2 text-xs text-blue-600 font-mono max-h-32 overflow-y-auto">
-                          {step4Logs.map((log, i) => (
-                            <div key={i}>[{log.time}] {log.message}</div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                  
-                  {step4Status === 'error' && (
-                    <div className="bg-red-50 border border-red-200 rounded-lg p-4 mt-3">
-                      <p className="text-red-700">{error}</p>
-                      <button
-                        onClick={() => { setStep4Status('idle'); setError(null); }}
-                        className="mt-2 text-blue-600 underline text-sm"
-                      >
-                        Try again
-                      </button>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className="space-y-2">
-          {getStepHeader(5, "Step 5: Configure Kimaki", <Server className="text-blue-600" size={24} />, isStepCompleted(5), isStepActive(5), isStepLocked(5), "Verify the connection to your Kimaki VM or manually enter the IP address. This VM runs the Discord listener agent.")}
-          
-          {expandedSteps.includes(5) && !isStepCompleted(3) && (
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
-              Complete Step 4 first to unlock this step.
-            </div>
-          )}
-
-          {expandedSteps.includes(5) && isStepCompleted(3) && (
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {step4Complete ? (
-                <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
-                  <Check size={20} />
-                  <span className="font-medium">VM configured and ready at {vmIp}</span>
-                </div>
-              ) : (
-                <>
-                  <p className="text-gray-600 mb-4">
-                    Configure your Kimaki VM connection.
-                  </p>
-                  {step4Status === 'idle' && (
-                    <div className="flex gap-2 flex-wrap">
-                      <button
-                        onClick={() => {
-                          setStep4Status('connecting');
-                          setStep4Message('Attempting to connect to VM...');
-                          addStep4Log('User initiated connection');
-                          setTimeout(() => {
-                            if (!vmIp) {
-                              setStep4Status('error');
-                              setStep4Message('No VM IP found. Please create VM in Step 3 or enter IP manually.');
-                              addStep4Log('No VM IP available');
-                            } else {
-                              setStep4Status('ready');
-                              setStep4Message('Connected to VM successfully!');
-                              addStep4Log('VM connection verified');
-                              setStep5Complete(true);
-                              setExpandedSteps(prev => prev.includes(6) ? prev : [...prev, 6]);
-                            }
-                          }, 1500);
-                        }}
-                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
-                      >
-                        Verify VM Connection
-                      </button>
-                      <button
-                        onClick={handleManualVMIP}
-                        className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded-lg"
-                      >
-                        Enter VM IP Manually
-                      </button>
-                    </div>
-                  )}
-                  {step4Status === 'connecting' && (
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-                      <div className="flex items-center gap-2 text-blue-700 mb-2">
-                        <div className="animate-spin w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full"></div>
-                        <span className="font-medium">{step4Message}</span>
-                      </div>
-                      {step4Logs.length > 0 && (
-                        <div className="mt-2 text-xs text-blue-600 font-mono">
-                          {step4Logs.map((log, i) => (
-                            <div key={i}>[{log.time}] {log.message}</div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className="space-y-2">
-          {getStepHeader(6, "Step 6: Firebase Setup", <svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M3.89 15.672L6.255.461A.542.542 0 0 1 7.27.288l2.543 4.771zm16.794 3.692l-2.25-14a.54.54 0 0 0-.919-.295L3.316 19.365l7.856 4.427a1.621 1.621 0 0 0 1.588 0zM14.3 7.147l-1.82-3.482a.542.542 0 0 0-.96 0L3.53 17.984z"/></svg>, isStepCompleted(6), isStepActive(6), isStepLocked(6), "Configure Firebase hosting for your app deployment.")}
-          
-          {expandedSteps.includes(6) && !isStepCompleted(5) && (
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
-              Complete Step 5 first to unlock this step.
-            </div>
-          )}
-
-          {expandedSteps.includes(6) && isStepCompleted(5) && (
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {isStepCompleted(6) ? (
+              {isStepCompleted(4) ? (
                 <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
                   <Check size={20} />
                   <span className="font-medium">Firebase configured: Staging ({firebaseStagingData.projectId}), Production ({firebaseProductionData.projectId})</span>
@@ -1966,108 +1597,17 @@ echo "After completing all steps, run: cd /opt/kimaki && npm start"
         </div>
 
         <div className="space-y-2">
-          {getStepHeader(7, "Step 7: GitHub Fork", <svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>, isStepCompleted(7), isStepActive(7), isStepLocked(7), "Fork SecureAgentBase to your GitHub account for upstream updates.")}
+          {getStepHeader(5, "Step 5: GitHub Auth", <svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>, isStepCompleted(5), isStepActive(5), isStepLocked(5), "Create a GitHub Personal Access Token for the VM to authenticate with GitHub.")}
           
-          {expandedSteps.includes(7) && !isStepCompleted(6) && (
+          {expandedSteps.includes(5) && !isStepCompleted(4) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
-              Complete Step 6 first to unlock this step.
+              Complete Step 4 first to unlock this step.
             </div>
           )}
 
-          {expandedSteps.includes(7) && isStepCompleted(6) && (
+          {expandedSteps.includes(5) && isStepCompleted(4) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {step7Complete ? (
-                <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
-                  <Check size={20} />
-                  <span className="font-medium">Forked: {githubRepoUrl}</span>
-                </div>
-              ) : (
-                <>
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                    <p className="text-blue-800 font-medium mb-2">Fork SecureAgentBase:</p>
-                    <p className="text-blue-700 text-sm mb-3">
-                      Go to GitHub and fork SecureAgentBase to your account. This gives you your own copy to iterate on.
-                    </p>
-                    <a 
-                      href="https://github.com/kallhoffa/SecureAgentBase/fork" 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      className="text-blue-600 underline text-sm"
-                    >
-                      Fork on GitHub
-                    </a>
-                  </div>
-                  <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Enter your forked repo URL:</label>
-                    <input
-                      type="text"
-                      value={githubRepoUrl}
-                      onChange={(e) => setGithubRepoUrl(e.target.value)}
-                      placeholder="https://github.com/yourname/SecureAgentBase"
-                      className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
-                    />
-                  </div>
-                  {error && (
-                    <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-                      {error}
-                    </div>
-                  )}
-                  <button
-                    onClick={async () => {
-                      console.log('Continue button clicked, URL:', githubRepoUrl);
-                      setError(null);
-                      if (githubRepoUrl.includes('github.com')) {
-                        try {
-                          console.log('Marking step 7 complete...');
-                          
-                          const accessToken = await getAccessToken();
-                          if (accessToken) {
-                            try {
-                              await saveSecretToGCP('github-repo-url', githubRepoUrl);
-                            } catch (gcpErr) {
-                              console.warn('Could not save to GCP Secret Manager:', gcpErr.message);
-                            }
-                          }
-                          
-                          setStep7Complete(true);
-                          if (!expandedSteps.includes(8)) {
-                            setExpandedSteps(prev => [...prev, 8]);
-                          }
-                          console.log('Step 7 saved successfully');
-                        } catch (err) {
-                          console.error('Error saving step 7:', err);
-                          setStep7Complete(true);
-                          if (!expandedSteps.includes(8)) {
-                            setExpandedSteps(prev => [...prev, 8]);
-                          }
-                        }
-                      } else {
-                        setError('Please enter a valid GitHub repo URL');
-                      }
-                    }}
-                    disabled={!githubRepoUrl.trim() || !githubRepoUrl.includes('github.com')}
-                    className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg"
-                  >
-                    Continue
-                  </button>
-                </>
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className="space-y-2">
-          {getStepHeader(8, "Step 8: GitHub Auth (VM)", <svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>, isStepCompleted(8), isStepActive(8), isStepLocked(8), "Create a GitHub PAT for the VM to authenticate with GitHub.")}
-          
-          {expandedSteps.includes(8) && !isStepCompleted(7) && (
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
-              Complete Step 7 first to unlock this step.
-            </div>
-          )}
-
-          {expandedSteps.includes(8) && isStepCompleted(7) && (
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {step8Complete ? (
+              {isStepCompleted(5) ? (
                 <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
                   <Check size={20} />
                   <span className="font-medium">GitHub auth configured</span>
@@ -2129,15 +1669,13 @@ echo "After completing all steps, run: cd /opt/kimaki && npm start"
                             }
                           }
                           
-                          setStep8Complete(true);
-                          if (!expandedSteps.includes(9)) {
-                            setExpandedSteps(prev => [...prev, 9]);
+                          if (!expandedSteps.includes(6)) {
+                            setExpandedSteps(prev => [...prev, 6]);
                           }
                         } catch (err) {
-                          console.error('Error saving step 8:', err);
-                          setStep8Complete(true);
-                          if (!expandedSteps.includes(9)) {
-                            setExpandedSteps(prev => [...prev, 9]);
+                          console.error('Error saving step 5:', err);
+                          if (!expandedSteps.includes(6)) {
+                            setExpandedSteps(prev => [...prev, 6]);
                           }
                         }
                       } else {
@@ -2147,7 +1685,7 @@ echo "After completing all steps, run: cd /opt/kimaki && npm start"
                     disabled={!githubPat.trim()}
                     className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg"
                   >
-                    Save & Configure VM
+                    Save GitHub PAT
                   </button>
                 </>
               )}
@@ -2156,15 +1694,15 @@ echo "After completing all steps, run: cd /opt/kimaki && npm start"
         </div>
 
         <div className="space-y-2">
-          {getStepHeader(9, "Step 9: Discord Bot", <Bot className="text-blue-600" size={24} />, isStepCompleted(9), isStepActive(9), isStepLocked(9), "Create a Discord bot to enable the Kimaki listener.", isStepWarning(9))}
+          {getStepHeader(6, "Step 6: Discord Bot", <Bot className="text-blue-600" size={24} />, isStepCompleted(6), isStepActive(6), isStepLocked(6), "Create a Discord bot and add it to your server. The VM will use this bot to create channels and send messages.")}
           
-          {expandedSteps.includes(9) && !isStepCompleted(8) && (
+          {expandedSteps.includes(6) && !isStepCompleted(5) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
-              Complete Step 8 first to unlock this step.
+              Complete Step 5 first to unlock this step.
             </div>
           )}
 
-          {expandedSteps.includes(9) && isStepCompleted(8) && (
+          {expandedSteps.includes(6) && isStepCompleted(5) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
               {gcpConfigLost && (
                 <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
@@ -2185,79 +1723,13 @@ echo "After completing all steps, run: cd /opt/kimaki && npm start"
               )}
               
               <p className="text-gray-600 mb-4">
-                Configure Discord bot token. This will be stored as a GitHub Secret and read by your VM at startup.
+                Configure Discord bot token. <strong>Important:</strong> Add the bot to your Discord server before creating the VM.
               </p>
               
               {discordBotToken ? (
-                <div className="space-y-4">
-                  <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
-                    <Check size={20} />
-                    <span className="font-medium">Discord bot token configured</span>
-                  </div>
-                  
-                  <div className="bg-amber-50 border-2 border-amber-300 rounded-lg p-4">
-                    <h3 className="font-bold text-amber-800 mb-3 flex items-center gap-2">
-                      <AlertTriangle className="text-amber-600" size={20} />
-                      Setup Complete - Manual Steps Remaining
-                    </h3>
-                    <p className="text-amber-700 text-sm mb-4">
-                      Your secrets are saved to GitHub Secrets. Complete these steps to get Kimaki running:
-                    </p>
-                    
-                    <div className="space-y-4">
-                      <div className="bg-white rounded-lg p-3 border border-amber-200">
-                        <h4 className="font-semibold text-gray-800 mb-2">1. Connect to your VM</h4>
-                        <p className="text-sm text-gray-600 mb-2">SSH into your VM using GCP Console or gcloud CLI:</p>
-                        <code className="block bg-gray-100 p-2 rounded text-xs">
-                          gcloud compute ssh kimaki-manager --zone=us-central1-a
-                        </code>
-                      </div>
-                      
-                      <div className="bg-white rounded-lg p-3 border border-amber-200">
-                        <h4 className="font-semibold text-gray-800 mb-2">2. Update Kimaki's .env file</h4>
-                        <p className="text-sm text-gray-600 mb-2">Edit the .env file with your secrets:</p>
-                        <code className="block bg-gray-100 p-2 rounded text-xs">
-                          sudo nano /opt/kimaki/.env
-                        </code>
-                        <p className="text-xs text-gray-500 mt-2">Required values:</p>
-                        <ul className="text-xs text-gray-600 list-disc list-inside mt-1 space-y-1">
-                          <li>DISCORD_BOT_TOKEN={'{your discord bot token}'}</li>
-                          <li>GITHUB_TOKEN={'{your GitHub PAT}'}</li>
-                          <li>GITHUB_OWNER={'{your github username}'}</li>
-                          <li>GITHUB_REPO=SecureAgentBase</li>
-                        </ul>
-                      </div>
-                      
-                      <div className="bg-white rounded-lg p-3 border border-amber-200">
-                        <h4 className="font-semibold text-gray-800 mb-2">3. Start Kimaki</h4>
-                        <code className="block bg-gray-100 p-2 rounded text-xs">
-                          cd /opt/kimaki && npm start
-                        </code>
-                        <p className="text-sm text-green-600 mt-2 flex items-center gap-1">
-                          <Check size={14} /> Kimaki should respond to your Discord bot commands
-                        </p>
-                      </div>
-                      
-                      <div className="bg-white rounded-lg p-3 border border-amber-200">
-                        <h4 className="font-semibold text-gray-800 mb-2">4. (Optional) Set up GitHub Actions for Firebase deploys</h4>
-                        <p className="text-sm text-gray-600 mb-2">Enable automatic deployments on push to main:</p>
-                        <ol className="text-xs text-gray-600 list-decimal list-inside space-y-1">
-                          <li>Go to your repo Settings → Secrets and variables → Actions</li>
-                          <li>Add FIREBASE_STAGING_PROJECT_ID and FIREBASE_PRODUCTION_PROJECT_ID</li>
-                          <li>Enable GitHub Actions in your Firebase projects</li>
-                          <li>Push to main to trigger staging deploy</li>
-                        </ol>
-                        <a 
-                          href="https://github.com/features/actions" 
-                          target="_blank" 
-                          rel="noopener noreferrer"
-                          className="text-blue-600 underline text-xs mt-2 inline-block"
-                        >
-                          GitHub Actions Documentation →
-                        </a>
-                      </div>
-                    </div>
-                  </div>
+                <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
+                  <Check size={20} />
+                  <span className="font-medium">Discord bot token configured</span>
                 </div>
               ) : (
                 <>
@@ -2270,7 +1742,7 @@ echo "After completing all steps, run: cd /opt/kimaki && npm start"
                       <li>Scroll down to "Privileged Gateway Intents" → enable <strong>Message Content Intent</strong> (required for Kimaki to read messages)</li>
                       <li>Go to "OAuth2" → "URL Generator"</li>
                       <li>Under "Scopes", check <code className="bg-blue-100 px-1">bot</code></li>
-                      <li>Under "Bot Permissions", check <strong>Send Messages</strong>, <strong>Read Message History</strong>, and <strong>Use Slash Commands</strong></li>
+                      <li>Under "Bot Permissions", check <strong>Send Messages</strong>, <strong>Read Message History</strong>, <strong>Manage Channels</strong>, and <strong>Use Slash Commands</strong></li>
                       <li>Copy the generated URL at the bottom, open it in a new tab, and select your server to invite the bot</li>
                       <li>Go back to "Bot" → click "Reset Token" → copy the token</li>
                     </ol>
@@ -2301,6 +1773,261 @@ echo "After completing all steps, run: cd /opt/kimaki && npm start"
                     <Bot size={18} />
                     {saving ? 'Saving...' : 'Save Token'}
                   </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-2">
+          {getStepHeader(7, "Step 7: Create VM", <Server className="text-blue-600" size={24} />, isStepCompleted(7), isStepActive(7), isStepLocked(7), "Create a GCP VM that will fork SecureAgentBase, set up GitHub Actions, download Kimaki, and configure your Discord bot.")}
+          
+          {expandedSteps.includes(7) && !isStepCompleted(6) && (
+            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
+              Complete Step 6 first to unlock this step.
+            </div>
+          )}
+
+          {expandedSteps.includes(7) && isStepCompleted(6) && (
+            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
+              {isStepCompleted(7) ? (
+                <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
+                  <Check size={20} />
+                  <span className="font-medium">VM created and ready at {vmIp}</span>
+                </div>
+              ) : (
+                <>
+                  <p className="text-gray-600 mb-4">
+                    Enable required APIs and create a VM. The VM will automatically fork SecureAgentBase, set up GitHub Actions, download Kimaki, and create a Discord channel.
+                  </p>
+                  
+                  {step4Status === 'idle' && (
+                    <div className="flex gap-2 flex-wrap">
+                      <button
+                        onClick={async () => {
+                          if (!serviceAccountJson || !projectId) {
+                            setError('Service account and project ID required');
+                            return;
+                          }
+                          setStep4Status('enabling');
+                          setStep4Message('Getting service account token...');
+                          addStep4Log('Starting VM creation process...');
+                          
+                          const token = await getServiceAccountToken();
+                          if (!token) {
+                            setError('Failed to authenticate with service account');
+                            setStep4Status('error');
+                            return;
+                          }
+                          addStep4Log('Service account authenticated');
+                          
+                          const apis = [
+                            { name: 'compute.googleapis.com', displayName: 'Compute Engine API' },
+                            { name: 'cloudresourcemanager.googleapis.com', displayName: 'Cloud Resource Manager API' },
+                            { name: 'serviceusage.googleapis.com', displayName: 'Service Usage API' }
+                          ];
+                          
+                          for (const api of apis) {
+                            setStep4Message(`Enabling ${api.displayName}...`);
+                            addStep4Log(`Enabling ${api.displayName}...`);
+                            
+                            try {
+                              const response = await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/${api.name}:enable`, {
+                                method: 'POST',
+                                headers: {
+                                  'Authorization': `Bearer ${token}`,
+                                  'Content-Type': 'application/json'
+                                }
+                              });
+                              
+                              if (response.ok) {
+                                addStep4Log(`${api.displayName} enabled`);
+                              } else {
+                                const errData = await response.json().catch(() => ({}));
+                                const errMsg = errData.error?.message || '';
+                                if (errMsg.includes('billing')) {
+                                  setError('Billing must be enabled on your GCP project');
+                                  addStep4Log(`ERROR: Billing required for ${api.displayName}`);
+                                } else if (errMsg.includes('already') || errMsg.includes('enabled')) {
+                                  addStep4Log(`${api.displayName} already enabled`);
+                                } else {
+                                  addStep4Log(`Note: ${errMsg || 'Continuing anyway...'}`);
+                                }
+                              }
+                            } catch (e) {
+                              addStep4Log(`Error enabling ${api.displayName}: ${e.message}`);
+                            }
+                            
+                            await new Promise(r => setTimeout(r, 1500));
+                          }
+                          
+                          setStep4Message('Creating VM...');
+                          addStep4Log('Creating VM...');
+                          
+                          const zone = 'us-central1-a';
+                          const instanceName = 'secureagent-manager';
+                          
+                          const startupScript = `#!/bin/bash
+set -e
+echo "=== VM Setup Started ==="
+
+# Read secrets from metadata
+GITHUB_TOKEN=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/github_token" -H "Metadata-Flavor: Google")
+DISCORD_BOT_TOKEN=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/discord_bot_token" -H "Metadata-Flavor: Google")
+GITHUB_OWNER=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/github_owner" -H "Metadata-Flavor: Google")
+FIREBASE_STAGING=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_staging" -H "Metadata-Flavor: Google")
+FIREBASE_PRODUCTION=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_production" -H "Metadata-Flavor: Google")
+
+echo "Secrets loaded from metadata"
+
+# Install dependencies
+apt-get update
+apt-get install -y nodejs npm git curl wget gnupg ca-certificates apt-transport-https jq
+
+# Install GitHub CLI
+wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+apt-get update
+apt-get install -y gh
+
+# Authenticate GitHub
+echo $GITHUB_TOKEN | gh auth login --with-token
+gh auth setup-git
+
+# Fork SecureAgentBase
+cd /opt
+gh repo fork kallhoffa/SecureAgentBase --clone
+cd SecureAgentBase
+
+# Set GitHub Secrets
+gh secret set FIREBASE_STAGING_PROJECT_ID --body "$FIREBASE_STAGING"
+gh secret set FIREBASE_PRODUCTION_PROJECT_ID --body "$FIREBASE_PRODUCTION"
+
+# Download Kimaki
+npm install -g kimaki@latest
+
+# Create Discord channel
+CHANNEL_DATA=$(curl -s -X POST "https://discord.com/api/v10/guilds/\${DISCORD_GUILD_ID}/channels" \\
+  -H "Authorization: Bot $DISCORD_BOT_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{"name": "secureagent", "type": 0}')
+
+CHANNEL_ID=$(echo $CHANNEL_DATA | jq -r '.id')
+GUILD_ID=$(echo $CHANNEL_DATA | jq -r '.guild_id')
+
+# Send welcome message
+curl -s -X POST "https://discord.com/api/v10/channels/$CHANNEL_ID/messages" \\
+  -H "Authorization: Bot $DISCORD_BOT_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "content": "Welcome to SecureAgent! Setup complete. Your VM is ready at: https://github.com/'"$GITHUB_OWNER"'/SecureAgentBase"
+  }'
+
+echo "=== VM Setup Complete ==="
+`;
+
+                          try {
+                            const vmResponse = await fetch(
+                              `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances`,
+                              {
+                                method: 'POST',
+                                headers: {
+                                  'Authorization': `Bearer ${token}`,
+                                  'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({
+                                  name: instanceName,
+                                  machineType: `zones/${zone}/machineTypes/e2-micro`,
+                                  disks: [{
+                                    boot: true,
+                                    autoDelete: true,
+                                    initializeParams: {
+                                      diskSizeGb: '10',
+                                      sourceImage: 'projects/debian-cloud/global/images/family/debian-11',
+                                    },
+                                  }],
+                                  networkInterfaces: [{
+                                    network: 'global/networks/default',
+                                    accessConfigs: [{ type: 'ONE_TO_ONE_NAT' }],
+                                  }],
+                                  metadata: {
+                                    items: [
+                                      { key: 'startup-script', value: startupScript },
+                                      { key: 'github_token', value: githubPat },
+                                      { key: 'discord_bot_token', value: discordBotToken },
+                                      { key: 'github_owner', value: user?.reloadUserInfo?.screenName || 'user' },
+                                      { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
+                                      { key: 'firebase_production', value: firebaseProductionData?.projectId || '' }
+                                    ]
+                                  }
+                                })
+                              }
+                            );
+                            
+                            if (vmResponse.ok) {
+                              addStep4Log('VM creation started, waiting for completion...');
+                              await new Promise(r => setTimeout(r, 15000));
+                              
+                              const instanceResp = await fetch(
+                                `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances/${instanceName}`,
+                                { headers: { 'Authorization': `Bearer ${token}` } }
+                              );
+                              const instanceData = await instanceResp.json();
+                              const ip = instanceData.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP;
+                              
+                              if (ip) {
+                                setVmIp(ip);
+                                addStep4Log(`VM ready at ${ip}`);
+                              }
+                              setStep4Status('complete');
+                              setStep4Message('VM created successfully!');
+                              expandNextStep(7);
+                            } else {
+                              const err = await vmResponse.json();
+                              addStep4Log(`VM creation failed: ${err.error?.message || 'Unknown error'}`);
+                              setError(`Failed to create VM: ${err.error?.message}`);
+                              setStep4Status('error');
+                            }
+                          } catch (e) {
+                            addStep4Log(`Error: ${e.message}`);
+                            setError(e.message);
+                            setStep4Status('error');
+                          }
+                        }}
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
+                      >
+                        Enable APIs & Create VM
+                      </button>
+                    </div>
+                  )}
+                  
+                  {(step4Status === 'enabling' || step4Status === 'complete') && (
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mt-3">
+                      <div className="flex items-center gap-2 text-blue-700 mb-2">
+                        <div className="animate-spin w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full"></div>
+                        <span className="font-medium">{step4Message}</span>
+                      </div>
+                      {step4Logs.length > 0 && (
+                        <div className="mt-2 text-xs text-blue-600 font-mono max-h-32 overflow-y-auto">
+                          {step4Logs.map((log, i) => (
+                            <div key={i}>[{log.time}] {log.message}</div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  
+                  {step4Status === 'error' && (
+                    <div className="bg-red-50 border border-red-200 rounded-lg p-4 mt-3">
+                      <p className="text-red-700">{error}</p>
+                      <button
+                        onClick={() => { setStep4Status('idle'); setError(null); }}
+                        className="mt-2 text-blue-600 underline text-sm"
+                      >
+                        Try again
+                      </button>
+                    </div>
+                  )}
                 </>
               )}
             </div>
