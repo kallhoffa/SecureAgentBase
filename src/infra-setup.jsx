@@ -1078,9 +1078,17 @@ npm install
     }
     
     try {
-      if (projectId && gcpAccessToken) {
-        await saveSecretToGCP('firebase-staging-config', JSON.stringify(stagingConfig));
-        await saveSecretToGCP('firebase-production-config', JSON.stringify(productionConfig));
+      await saveSecret('firebase_staging_config', JSON.stringify(stagingConfig));
+      await saveSecret('firebase_production_config', JSON.stringify(productionConfig));
+      
+      const accessToken = await getAccessToken();
+      if (accessToken) {
+        try {
+          await saveSecretToGCP('firebase-staging-config', JSON.stringify(stagingConfig));
+          await saveSecretToGCP('firebase-production-config', JSON.stringify(productionConfig));
+        } catch (gcpErr) {
+          console.warn('Could not save to GCP Secret Manager:', gcpErr.message);
+        }
       }
       
       setStep6Complete(true);
@@ -1171,10 +1179,30 @@ npm install
     return null;
   };
 
+  const saveSecret = async (secretName, secretValue) => {
+    if (user) {
+      const infraRef = doc(db, INFRA_COLLECTION, user.uid);
+      const secretKey = secretName.replace(/-/g, '_');
+      await setDoc(infraRef, {
+        [secretKey]: secretValue,
+        updated_at: new Date().toISOString(),
+      }, { merge: true });
+    } else {
+      const secrets = JSON.parse(localStorage.getItem('pending_secrets') || '{}');
+      secrets[secretName] = secretValue;
+      localStorage.setItem('pending_secrets', JSON.stringify(secrets));
+    }
+    return { success: true };
+  };
+
   const saveSecretToGCP = async (secretName, secretValue) => {
+    if (!hasGcpAccess()) {
+      throw new Error('GCP not configured. Please complete Steps 2-3 first.');
+    }
+
     const accessToken = await getAccessToken();
     if (!accessToken) {
-      throw new Error('GCP not configured. Please connect Google and upload service account key.');
+      throw new Error('GCP access token not available. Please re-authenticate.');
     }
 
     const secretId = `secureagent-${secretName}`;
@@ -1218,23 +1246,27 @@ npm install
     }
 
     const accessToken = await getAccessToken();
-    if (!accessToken) {
-      setError('Failed to get GCP access token. Please re-authenticate in Step 2.');
-      return;
-    }
-
+    
     setSaving(true);
     setError(null);
 
     try {
-      await saveSecretToGCP('discord-bot-token', discordBotTokenInput);
+      await saveSecret('discord_bot_token', discordBotTokenInput);
+      
+      if (accessToken) {
+        try {
+          await saveSecretToGCP('discord-bot-token', discordBotTokenInput);
+        } catch (gcpErr) {
+          console.warn('Could not save to GCP Secret Manager (CORS issue expected):', gcpErr.message);
+        }
+      }
       
       setDiscordBotToken(discordBotTokenInput);
       setStep9Complete(true);
       expandNextStep(9);
       await saveConfig({ discord_bot_token: discordBotTokenInput });
       
-      alert('Discord bot token saved to GCP Secret Manager!');
+      alert('Discord bot token saved!');
     } catch (err) {
       console.error('Error saving discord bot token:', err);
       setError(err.message);
@@ -2077,9 +2109,17 @@ echo "GitHub repo: \${GITHUB_OWNER}/\${GITHUB_REPO}"
                       if (githubRepoUrl.includes('github.com')) {
                         try {
                           console.log('Marking step 7 complete...');
-                          if (projectId && gcpAccessToken) {
-                            await saveSecretToGCP('github-repo-url', githubRepoUrl);
+                          await saveSecret('github_repo_url', githubRepoUrl);
+                          
+                          const accessToken = await getAccessToken();
+                          if (accessToken) {
+                            try {
+                              await saveSecretToGCP('github-repo-url', githubRepoUrl);
+                            } catch (gcpErr) {
+                              console.warn('Could not save to GCP Secret Manager:', gcpErr.message);
+                            }
                           }
+                          
                           setStep7Complete(true);
                           if (!expandedSteps.includes(8)) {
                             setExpandedSteps(prev => [...prev, 8]);
@@ -2166,9 +2206,17 @@ echo "GitHub repo: \${GITHUB_OWNER}/\${GITHUB_REPO}"
                       setError(null);
                       if (githubPat.trim() && githubPat.startsWith('ghp_')) {
                         try {
-                          if (projectId && gcpAccessToken) {
-                            await saveSecretToGCP('github-pat', githubPat);
+                          await saveSecret('github_pat', githubPat);
+                          
+                          const accessToken = await getAccessToken();
+                          if (accessToken) {
+                            try {
+                              await saveSecretToGCP('github-pat', githubPat);
+                            } catch (gcpErr) {
+                              console.warn('Could not save to GCP Secret Manager:', gcpErr.message);
+                            }
                           }
+                          
                           setStep8Complete(true);
                           if (!expandedSteps.includes(9)) {
                             setExpandedSteps(prev => [...prev, 9]);
