@@ -153,6 +153,12 @@ const InfraSetup = ({ db }) => {
   const getServiceAccountToken = async () => {
     if (!serviceAccountJson) return null;
     
+    if (!serviceAccountJson.private_key) {
+      console.error('Service account private key is missing. Please re-upload your service account JSON file.');
+      setError('Service account private key is missing. Please re-upload your service account JSON file.');
+      return null;
+    }
+    
     const now = Math.floor(Date.now() / 1000);
     const payload = {
       iss: serviceAccountJson.client_email,
@@ -700,7 +706,8 @@ npm install
       if (formProgress.vmHttpsUrl) setVmHttpsUrl(formProgress.vmHttpsUrl);
       if (formProgress.expandedSteps) setExpandedSteps(formProgress.expandedSteps);
       if (formProgress.step2Complete) setStep2Complete(formProgress.step2Complete);
-      if (formProgress.serviceAccountJson) setServiceAccountJson(formProgress.serviceAccountJson);
+      // Note: serviceAccountJson is NOT restored from storage since it contains sensitive private_key
+      // User must re-upload the service account JSON each session
       if (formProgress.projectId) setProjectId(formProgress.projectId);
       if (formProgress.projectId && !formProgress.gcpAccessToken) {
         setGcpConfigLost(true);
@@ -760,9 +767,8 @@ npm install
         setGithubRepoUrl(configData.github_repo_url || '');
         setGithubPat(configData.github_pat || '');
         
-        if (configData.service_account_key) {
-          setServiceAccountKey(configData.service_account_key);
-        }
+        // Note: service_account_key is NOT restored (private_key sensitive)
+        // User must re-upload service account JSON each session
 
         const formProgress = loadFormProgress();
         
@@ -815,12 +821,14 @@ npm install
       }
 
       setServiceAccountKey(parsed);
+      setServiceAccountJson(parsed);
       
       if (user) {
         try {
           const infraRef = doc(db, INFRA_COLLECTION, user.uid);
           await setDoc(infraRef, {
-            service_account_key: parsed,
+            service_account_email: parsed.client_email,
+            service_account_project_id: parsed.project_id,
             service_account_configured: true,
             updated_at: new Date().toISOString(),
           }, { merge: true });
@@ -924,6 +932,7 @@ npm install
       setGcpConnected(false);
       setGcpAccessToken(null);
       setServiceAccountKey(null);
+      setServiceAccountJson(null);
       setServiceAccountError(null);
       setVmIp('');
       setDiscordBotToken('');
@@ -1057,7 +1066,7 @@ npm install
     const redirectUri = encodeURIComponent(window.location.origin + '/github-callback');
     const state = user?.uid || 'anonymous';
     
-    const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&scope=repo&state=${state}`;
+    const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&scope=repo,workflow,read:org&state=${state}`;
     window.location.href = githubAuthUrl;
   };
 
@@ -1620,10 +1629,10 @@ npm install
                       The VM needs this to push/pull code from your repo. Go to GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token.
                     </p>
                     <p className="text-blue-700 text-sm mb-2">
-                      <strong>Required scopes:</strong> <code className="bg-blue-100 px-1">repo</code>
+                      <strong>Required scopes:</strong> <code className="bg-blue-100 px-1">repo</code>, <code className="bg-blue-100 px-1">workflow</code>, <code className="bg-blue-100 px-1">read:org</code>
                     </p>
                     <a 
-                      href="https://github.com/settings/tokens/new?scopes=repo" 
+                      href="https://github.com/settings/tokens/new?scopes=repo,workflow,read:org" 
                       target="_blank" 
                       rel="noopener noreferrer"
                       className="text-blue-600 underline text-sm"
