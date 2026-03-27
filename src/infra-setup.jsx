@@ -297,8 +297,13 @@ if ! command -v gh &> /dev/null; then
 fi
 
 # Authenticate GitHub
-echo $GITHUB_TOKEN | gh auth login --with-token 2>/dev/null || true
-gh auth setup-git 2>/dev/null || true
+echo $GITHUB_TOKEN | gh auth login --with-token
+gh auth setup-git
+
+# Get authenticated user to verify correct owner
+GH_USER=$(gh api user --jq .login)
+echo "Authenticated as: $GH_USER"
+echo "Expected owner: $GITHUB_OWNER"
 
 # Clone SecureAgentBase and set up upstream
 cd /opt
@@ -318,27 +323,35 @@ fi
 git remote remove upstream 2>/dev/null || true
 git remote remove origin 2>/dev/null || true
 
+# Use the authenticated user if owner not set
+if [ -n "$GH_USER" ]; then
+  REPO_OWNER="$GH_USER"
+else
+  REPO_OWNER="$GITHUB_OWNER"
+fi
+echo "Using repo owner: $REPO_OWNER"
+
 # Check if repo exists, create if not
 REPO_EXISTS=false
-if gh repo view "$GITHUB_OWNER/$FIREBASE_STAGING" &>/dev/null; then
+if gh repo view "\${REPO_OWNER}/\${FIREBASE_STAGING}" 2>/dev/null; then
   REPO_EXISTS=true
 fi
 
 if [ "$REPO_EXISTS" = true ]; then
   echo "Repo exists, pushing..."
-  git remote add origin "https://github.com/$GITHUB_OWNER/$FIREBASE_STAGING.git" 2>/dev/null || true
+  git remote add origin "https://github.com/\${REPO_OWNER}/\${FIREBASE_STAGING}.git" 2>/dev/null || true
   git push -u origin main --force || { echo "Push failed!"; exit 1; }
 else
   echo "Creating new repo..."
   gh repo create "$FIREBASE_STAGING" --public --source=. --push || { echo "Repo create failed!"; exit 1; }
 fi
 
+# Set GitHub Secrets
+gh secret set FIREBASE_STAGING_PROJECT_ID --body "$FIREBASE_STAGING" -R "\${REPO_OWNER}/\${FIREBASE_STAGING}" 2>/dev/null || true
+gh secret set FIREBASE_PRODUCTION_PROJECT_ID --body "$FIREBASE_PRODUCTION" -R "\${REPO_OWNER}/\${FIREBASE_STAGING}" 2>/dev/null || true
+
 # Add upstream back for future syncing
 git remote add upstream https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
-
-# Set GitHub Secrets
-gh secret set FIREBASE_STAGING_PROJECT_ID --body "$FIREBASE_STAGING" -R "$GITHUB_OWNER/$FIREBASE_STAGING" 2>/dev/null || true
-gh secret set FIREBASE_PRODUCTION_PROJECT_ID --body "$FIREBASE_PRODUCTION" -R "$GITHUB_OWNER/$FIREBASE_STAGING" 2>/dev/null || true
 
 # Download Kimaki
 npm install -g kimaki@latest 2>/dev/null || true
@@ -1011,9 +1024,6 @@ const InfraSetup = ({ db }) => {
   useEffect(() => {
     if (user) {
       setStep1Complete(true);
-      if (!expandedSteps.includes(2)) {
-        setExpandedSteps(prev => [...prev, 2]);
-      }
     } else {
       setStep1Complete(false);
     }
@@ -1718,11 +1728,7 @@ const InfraSetup = ({ db }) => {
 
     const handleHeaderClick = () => {
       if (isLocked) return;
-      if (isComplete && onEdit) {
-        onEdit();
-      } else {
-        toggleStep(stepNumber);
-      }
+      toggleStep(stepNumber);
     };
 
     return (
@@ -1919,16 +1925,13 @@ const InfraSetup = ({ db }) => {
                     if (!decryptPassphrase) return;
                     try {
                       const decrypted = await decryptData(pendingDecryptProject.encryptedData, decryptPassphrase);
-                      const newExpanded = [1];
                       if (decrypted.gcp) {
                         setProjectId(decrypted.gcp.projectId || '');
                         setServiceAccountJson(decrypted.gcp.serviceAccountJson || null);
                         setDiscordBotToken(decrypted.gcp.discordBotToken || '');
-                        newExpanded.push(2, 3);
                       }
                       if (decrypted.github) {
                         setGithubPat(decrypted.github.pat || '');
-                        if (decrypted.gcp) newExpanded.push(4, 5);
                       }
                       if (decrypted.firebase) {
                         setFirebaseConfigStaging(decrypted.firebase.staging || '');
@@ -1941,8 +1944,16 @@ const InfraSetup = ({ db }) => {
                       if (decrypted.vm) {
                         setVmIp(decrypted.vm.ip || '');
                         setVmZone(decrypted.vm.zone || 'us-east1-b');
-                        newExpanded.push(6, 7);
                       }
+                      const newExpanded = [];
+                      if (!isStepCompleted(1)) newExpanded.push(1);
+                      else if (!isStepCompleted(2)) newExpanded.push(2);
+                      else if (!isStepCompleted(3)) newExpanded.push(3);
+                      else if (!isStepCompleted(4)) newExpanded.push(4);
+                      else if (!isStepCompleted(5)) newExpanded.push(5);
+                      else if (!isStepCompleted(6)) newExpanded.push(6);
+                      else if (!isStepCompleted(7)) newExpanded.push(7);
+                      if (vmIp) newExpanded.push(7);
                       setExpandedSteps(newExpanded);
                       setGcpConfigLost(false);
                       setPendingDecryptProject(null);
@@ -2493,7 +2504,7 @@ const InfraSetup = ({ db }) => {
 
           {expandedSteps.includes(7) && isStepCompleted(6) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {(isStepCompleted(7) && !expandedSteps.includes(7)) ? (
+              {isStepCompleted(7) ? (
                 <div className="space-y-4">
                   <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
                     <Check size={20} />
@@ -2532,12 +2543,199 @@ const InfraSetup = ({ db }) => {
                         return;
                       }
                       setVmIp('');
-                      setStep4Status('idle');
-                      setStep4Message('');
-                      setStep4Logs([]);
-                      setTimeout(() => {
-                        document.getElementById('recreate-vm-trigger')?.click();
-                      }, 100);
+                      setStep4Status('enabling');
+                      setStep4Message('Getting service account token...');
+                      addStep4Log('Starting VM recreation process...');
+                      
+                      const token = await getServiceAccountToken();
+                      if (!token) {
+                        setError('Failed to authenticate with service account');
+                        setStep4Status('error');
+                        return;
+                      }
+                      addStep4Log('Service account authenticated');
+                      
+                      const apis = [
+                        { name: 'compute.googleapis.com', displayName: 'Compute Engine API' },
+                        { name: 'cloudresourcemanager.googleapis.com', displayName: 'Cloud Resource Manager API' },
+                        { name: 'serviceusage.googleapis.com', displayName: 'Service Usage API' }
+                      ];
+                      
+                      for (const api of apis) {
+                        setStep4Message(`Enabling ${api.displayName}...`);
+                        addStep4Log(`Enabling ${api.displayName}...`);
+                        
+                        try {
+                          const response = await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/${api.name}:enable`, {
+                            method: 'POST',
+                            headers: {
+                              'Authorization': `Bearer ${token}`,
+                              'Content-Type': 'application/json'
+                            }
+                          });
+                          
+                          if (response.ok) {
+                            addStep4Log(`${api.displayName} enabled`);
+                          } else {
+                            const errData = await response.json().catch(() => ({}));
+                            const errMsg = errData.error?.message || '';
+                            if (errMsg.includes('billing')) {
+                              setError('Billing must be enabled on your GCP project');
+                              addStep4Log(`ERROR: Billing required for ${api.displayName}`);
+                            } else if (errMsg.includes('already') || errMsg.includes('enabled')) {
+                              addStep4Log(`${api.displayName} already enabled`);
+                            } else {
+                              addStep4Log(`Note: ${errMsg || 'Continuing...'}`);
+                            }
+                          }
+                        } catch (e) {
+                          addStep4Log(`Error enabling ${api.displayName}: ${e.message}`);
+                        }
+                        
+                        await new Promise(r => setTimeout(r, 1500));
+                      }
+                      
+                      setStep4Message('Creating VM...');
+                      addStep4Log('Creating VM...');
+                      
+                      const zone = vmZone;
+                      const instanceName = 'secureagent-manager';
+                      const startupScript = getStartupScript(useOptimizedBundle);
+
+                      const zones = [vmZone, 'us-central1-b', 'us-central1-c', 'us-west1-a', 'us-west1-b', 'us-east1-c', 'us-east1-d', 'europe-west1-d', 'asia-east1-a'];
+                      let vmCreated = false;
+                      
+                      for (const tryZone of zones) {
+                        try {
+                          setStep4Message(`Creating VM in ${tryZone}...`);
+                          addStep4Log(`Attempting VM creation in ${tryZone}...`);
+                          
+                          const vmResponse = await fetch(
+                            `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances`,
+                            {
+                              method: 'POST',
+                              headers: {
+                                'Authorization': `Bearer ${token}`,
+                                'Content-Type': 'application/json'
+                              },
+                              body: JSON.stringify({
+                                name: instanceName,
+                                machineType: `zones/${tryZone}/machineTypes/e2-micro`,
+                                disks: [{
+                                  boot: true,
+                                  autoDelete: true,
+                                  initializeParams: {
+                                    diskSizeGb: '10',
+                                    sourceImage: 'projects/debian-cloud/global/images/family/debian-11',
+                                  },
+                                }],
+                                networkInterfaces: [{
+                                  network: 'global/networks/default',
+                                  accessConfigs: [{ type: 'ONE_TO_ONE_NAT' }],
+                                }],
+                                metadata: {
+                                  items: [
+                                    { key: 'startup-script', value: startupScript },
+                                    { key: 'github_token', value: githubPat },
+                                    { key: 'discord_bot_token', value: discordBotToken },
+                                    { key: 'github_owner', value: user?.reloadUserInfo?.screenName || 'user' },
+                                    { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
+                                    { key: 'firebase_production', value: firebaseProductionData?.projectId || '' }
+                                  ]
+                                }
+                              })
+                            }
+                          );
+                          
+                          if (vmResponse.ok) {
+                            setVmZone(tryZone);
+                            addStep4Log(`VM creation started in ${tryZone}, waiting for completion...`);
+                            await new Promise(r => setTimeout(r, 15000));
+                            
+                            const instanceResp = await fetch(
+                              `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances/${instanceName}`,
+                              { headers: { 'Authorization': `Bearer ${token}` } }
+                            );
+                            const instanceData = await instanceResp.json();
+                            const vmStatus = instanceData.status;
+                            const ip = instanceData.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP;
+                            
+                            if (vmStatus !== 'RUNNING') {
+                              addStep4Log(`VM status: ${vmStatus} - waiting for startup...`);
+                              
+                              await new Promise(r => setTimeout(r, 10000));
+                              
+                              const recheckResp = await fetch(
+                                `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances/${instanceName}`,
+                                { headers: { 'Authorization': `Bearer ${token}` } }
+                              );
+                              const recheckData = await recheckResp.json();
+                              const recheckStatus = recheckData.status;
+                              
+                              if (recheckStatus !== 'RUNNING') {
+                                addStep4Log(`VM failed to start. Status: ${recheckStatus}`);
+                                if (recheckStatus === 'TERMINATED') {
+                                  setError('VM terminated. Check startup script logs in GCP Console for errors.');
+                                } else {
+                                  setError(`VM is in "${recheckStatus}" state. Please check GCP Console.`);
+                                }
+                                setStep4Status('error');
+                                break;
+                              }
+                            }
+                            
+                            if (ip) {
+                              setVmIp(ip);
+                              addStep4Log(`VM ready at ${ip}`);
+                            }
+                            vmCreated = true;
+                            setStep4Status('complete');
+                            setStep4Message('VM created successfully!');
+                            expandNextStep(7);
+                            break;
+                          } else {
+                            const err = await vmResponse.json();
+                            const errStr = JSON.stringify(err);
+                            const errMsg = err.error?.message || '';
+                            const errStatus = err.error?.status || '';
+                            const statusMsg = err.status?.message || '';
+                            
+                            addStep4Log(`VM response not ok: ${errMsg || statusMsg || errStr}`);
+                            
+                            if (errStr.toLowerCase().includes('zone') && 
+                                (errStr.toLowerCase().includes('exhausted') || 
+                                 errStr.toLowerCase().includes('unavailable') ||
+                                 errStr.toLowerCase().includes('resource'))) {
+                              addStep4Log(`Zone ${tryZone} may be out of capacity, trying next zone...`);
+                              continue;
+                            }
+                            
+                            if (errMsg.includes('ZONE_RESOURCE_POOL_EXHAUSTED') || 
+                                errStr.includes('RESOURCE_EXHAUSTED') ||
+                                errStr.includes('resource_availability') ||
+                                errStatus === 'RESOURCE_EXHAUSTED' ||
+                                statusMsg.includes('ZONE_RESOURCE_POOL_EXHAUSTED') ||
+                                (errMsg.includes('unavailable') && errMsg.includes('zone'))) {
+                              addStep4Log(`Zone ${tryZone} out of capacity, trying next zone...`);
+                              continue;
+                            }
+                            
+                            addStep4Log(`VM creation failed: ${errMsg || statusMsg || errStr}`);
+                            setError(`Failed to create VM: ${errMsg || statusMsg}`);
+                            setStep4Status('error');
+                            break;
+                          }
+                        } catch (e) {
+                          addStep4Log(`Error creating VM in ${tryZone}: ${e.message}, trying next zone...`);
+                          continue;
+                        }
+                      }
+                      
+                      if (!vmCreated && step4Status !== 'error') {
+                        addStep4Log('All zones exhausted, could not create VM');
+                        setError('All zones are out of capacity. Please try again later.');
+                        setStep4Status('error');
+                      }
                     }}
                     className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg"
                   >

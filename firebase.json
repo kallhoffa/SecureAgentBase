@@ -15,6 +15,7 @@
     "singleProjectMode": true
   },
   "hosting": {
+    "site": "agentbase",
     "public": "build",
     "ignore": [
       "firebase.json",
