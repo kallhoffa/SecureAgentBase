@@ -475,6 +475,7 @@ const InfraSetup = ({ db }) => {
   const [githubRepoUrl, setGithubRepoUrl] = useState('');
   const [discordBotTokenInput, setDiscordBotTokenInput] = useState('');
   const [discordGuildId, setDiscordGuildId] = useState('');
+  const [detectedGuilds, setDetectedGuilds] = useState([]);
   const [vmHttpsUrl, setVmHttpsUrl] = useState('');
   const [formProgressLoaded, setFormProgressLoaded] = useState(false);
   const [useOptimizedBundle, setUseOptimizedBundle] = useState(false);
@@ -1720,6 +1721,31 @@ const InfraSetup = ({ db }) => {
     setError(null);
 
     try {
+      // Auto-detect Discord servers the bot is in
+      if (!discordGuildId) {
+        try {
+          const guildsResponse = await fetch('https://discord.com/api/v10/users/@me/guilds', {
+            headers: {
+              'Authorization': `Bot ${discordBotTokenInput}`,
+            },
+          });
+          
+          if (guildsResponse.ok) {
+            const guilds = await guildsResponse.json();
+            setDetectedGuilds(guilds);
+            
+            if (guilds.length === 1) {
+              setDiscordGuildId(guilds[0].id);
+              console.log('Auto-detected Discord server:', guilds[0].name);
+            } else if (guilds.length > 1) {
+              console.log(`Bot is in ${guilds.length} servers. Please select one.`);
+            }
+          }
+        } catch (guildErr) {
+          console.warn('Could not detect Discord servers:', guildErr.message);
+        }
+      }
+      
       try {
         await saveSecretToGitHub('DISCORD_BOT_TOKEN', discordBotTokenInput);
       } catch (ghErr) {
@@ -1735,9 +1761,6 @@ const InfraSetup = ({ db }) => {
       }
       
       setDiscordBotToken(discordBotTokenInput);
-      if (discordGuildId) {
-        setDiscordGuildId(discordGuildId);
-      }
       expandNextStep(6);
     } catch (err) {
       console.error('Error saving discord bot token:', err);
@@ -2527,16 +2550,38 @@ const InfraSetup = ({ db }) => {
                   </div>
                   <div className="mb-4">
                     <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Discord Server ID <span className="text-gray-400 font-normal">(right-click your server name → Copy Server ID)</span>
+                      Discord Server ID <span className="text-gray-400 font-normal">(optional - auto-detected)</span>
                     </label>
-                    <input
-                      type="text"
-                      value={discordGuildId}
-                      onChange={(e) => setDiscordGuildId(e.target.value)}
-                      placeholder="Enter your Discord server ID"
-                      disabled={!hasGcpAccess()}
-                      className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 disabled:bg-gray-100 disabled:cursor-not-allowed"
-                    />
+                    {detectedGuilds.length > 1 ? (
+                      <select
+                        value={discordGuildId}
+                        onChange={(e) => setDiscordGuildId(e.target.value)}
+                        disabled={!hasGcpAccess()}
+                        className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                      >
+                        <option value="">Select a server...</option>
+                        {detectedGuilds.map(guild => (
+                          <option key={guild.id} value={guild.id}>
+                            {guild.name}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        value={discordGuildId}
+                        onChange={(e) => setDiscordGuildId(e.target.value)}
+                        placeholder="Will be auto-detected after saving token"
+                        disabled={!hasGcpAccess()}
+                        className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                      />
+                    )}
+                    {detectedGuilds.length > 0 && (
+                      <p className="text-xs text-green-600 mt-1">
+                        ✓ Auto-detected {detectedGuilds.length} server{detectedGuilds.length > 1 ? 's' : ''}
+                        {detectedGuilds.length === 1 && ` - will use: ${detectedGuilds[0].name}`}
+                      </p>
+                    )}
                   </div>
                   {error && (
                     <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
@@ -2545,7 +2590,7 @@ const InfraSetup = ({ db }) => {
                   )}
                   <button
                     onClick={handleCreateDiscordBot}
-                    disabled={saving || !discordBotTokenInput.trim() || !discordGuildId.trim() || !hasGcpAccess()}
+                    disabled={saving || !discordBotTokenInput.trim() || !hasGcpAccess()}
                     className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Bot size={18} />
