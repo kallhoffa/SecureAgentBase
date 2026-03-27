@@ -1,6 +1,5 @@
 import './App.css';
 import React from 'react';
-
 import { BrowserRouter, Routes, Route, Outlet } from 'react-router-dom';
 import { LandingPage } from './posts';
 import { useAuth } from './firestore-utils/auth-context';
@@ -16,6 +15,7 @@ import Profile from './profile';
 import InfraSetup from './infra-setup';
 import CreateApp from './create-app';
 import GitHubCallback from './github-callback';
+import { NotificationProvider } from './firestore-utils/notification-context';
 
 
 const RootLayout = ({ db }) => {
@@ -48,23 +48,25 @@ const HomePage = () => {
 function App({ db }) {
   
   return (
-    <BrowserRouter>
-      <Routes>
+    <NotificationProvider>
+      <BrowserRouter>
+        <Routes>
           <Route element={<RootLayout db={db} />}>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/post" element={<Post db={db}/>} />
-          <Route path="/compose-post" element={<ComposePost db={db} />} />
-          <Route path="/compose-reply" element={<ComposeReply db={db} />} />
-          <Route path="/about" element={<About/>} />
-          <Route path="/login" element={<Login />} />
-          <Route path="/signup" element={<Signup />} />
-          <Route path="/profile" element={<Profile db={db} />} />
-          <Route path="/infra-setup" element={<InfraSetup db={db} />} />
-          <Route path="/create-app" element={<CreateApp db={db} />} />
-        </Route>
-        <Route path="/github-callback" element={<GitHubCallback db={db} />} />
-      </Routes>
-    </BrowserRouter>
+            <Route path="/" element={<HomePage />} />
+            <Route path="/post" element={<Post db={db}/>} />
+            <Route path="/compose-post" element={<ComposePost db={db} />} />
+            <Route path="/compose-reply" element={<ComposeReply db={db} />} />
+            <Route path="/about" element={<About/>} />
+            <Route path="/login" element={<Login />} />
+            <Route path="/signup" element={<Signup />} />
+            <Route path="/profile" element={<Profile db={db} />} />
+            <Route path="/infra-setup" element={<InfraSetup db={db} />} />
+            <Route path="/create-app" element={<CreateApp db={db} />} />
+          </Route>
+          <Route path="/github-callback" element={<GitHubCallback db={db} />} />
+        </Routes>
+      </BrowserRouter>
+    </NotificationProvider>
   );
 }
 

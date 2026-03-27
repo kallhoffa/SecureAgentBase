@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from './firestore-utils/auth-context';
 import { useNavigate } from 'react-router-dom';
+import { useNotification } from './firestore-utils/notification-context';
 import { getUserPreferences, setUserBetaPreference } from './firestore-utils/user-preferences';
 import { Shield, ExternalLink, Plus } from 'lucide-react';
 
 const Profile = ({ db }) => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const { addNotification } = useNotification();
   const [betaEnabled, setBetaEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -38,7 +40,7 @@ const Profile = ({ db }) => {
       localStorage.setItem(`beta_enabled_${user.uid}`, newValue ? 'true' : 'false');
     } catch (error) {
       console.error('Error updating beta preference:', error);
-      alert('Failed to update beta preference');
+      addNotification('Failed to update beta preference', 'error');
     }
     setSaving(false);
   };
@@ -48,7 +50,7 @@ const Profile = ({ db }) => {
       await logout();
       navigate('/');
     } catch (error) {
-      alert('Logout failed: ' + error.message);
+      addNotification('Logout failed: ' + error.message, 'error');
     }
   };
 

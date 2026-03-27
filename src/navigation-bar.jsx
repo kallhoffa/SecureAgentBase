@@ -2,17 +2,19 @@ import React from 'react';
 import { LogOut, User } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from './firestore-utils/auth-context';
+import { useNotification } from './firestore-utils/notification-context';
 
 const NavigationBar = ({ navigate: navigationOverride }) => {
   const defaultNavigate = useNavigate();
   const navigate = navigationOverride || defaultNavigate;
   const { user, logout } = useAuth();
+  const { addNotification } = useNotification();
 
   const handleLogout = async () => {
     try {
       await logout();
     } catch (error) {
-      alert('Logout failed: ' + error.message);
+      addNotification('Logout failed: ' + error.message, 'error');
     }
   };
 
