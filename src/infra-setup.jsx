@@ -335,8 +335,13 @@ if [ -d "SecureAgentBase" ]; then
   git checkout main 2>/dev/null || true
   git merge upstream/main 2>/dev/null || true
 else
-  git clone https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
+  git clone --depth 1 https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
   cd SecureAgentBase
+  # Reinitialize git for fresh repo (single commit)
+  rm -rf .git
+  git init
+  git add -A
+  git commit -m "Initial commit from SecureAgentBase"
   git remote add upstream https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
 fi
 
