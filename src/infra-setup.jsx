@@ -320,7 +320,6 @@ else
   git clone --depth 1 https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
   cd SecureAgentBase
   git remote add upstream https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
-  git fetch --unshallow 2>/dev/null || true
 fi
 
 # Remove upstream to avoid "multiple remotes" error with gh cli
