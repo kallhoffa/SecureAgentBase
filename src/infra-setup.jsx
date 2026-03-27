@@ -367,11 +367,16 @@ if [ -d "/opt/kimaki" ]; then
   chmod +x /opt/kimaki/bin/kimaki.js 2>/dev/null || true
   ln -sf /opt/kimaki/bin/kimaki.js /usr/local/bin/kimaki 2>/dev/null || true
   echo "DEBUG: Kimaki from bundle ready"
+elif [ -d "/opt/kimaki" ]; then
+  echo "Kimaki found in bundle at /opt/kimaki..."
+  chmod +x /opt/kimaki/bin.js 2>/dev/null || true
+  ln -sf /opt/kimaki/bin.js /usr/local/bin/kimaki 2>/dev/null || true
+  echo "DEBUG: Kimaki from bundle ready"
 elif [ -d "/opt/packages/kimaki" ]; then
   echo "Installing Kimaki from bundle..."
   cp -r /opt/packages/kimaki /opt/kimaki
-  chmod +x /opt/kimaki/bin/kimaki.js
-  ln -sf /opt/kimaki/bin/kimaki.js /usr/local/bin/kimaki 2>/dev/null || true
+  chmod +x /opt/kimaki/bin.js 2>/dev/null || true
+  ln -sf /opt/kimaki/bin.js /usr/local/bin/kimaki 2>/dev/null || true
   echo "DEBUG: Kimaki installed from bundle"
 elif command -v npm &> /dev/null; then
   npm install -g kimaki@latest 2>/dev/null || echo "WARNING: Kimaki npm install failed (non-critical)"
