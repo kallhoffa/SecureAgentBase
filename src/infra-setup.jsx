@@ -317,6 +317,7 @@ else
   git clone --depth 1 https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
   cd SecureAgentBase
   git remote add upstream https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
+  git fetch --unshallow 2>/dev/null || true
 fi
 
 # Remove upstream to avoid "multiple remotes" error with gh cli
@@ -2536,19 +2537,29 @@ const InfraSetup = ({ db }) => {
                     )}
                   </div>
 
-                  <button
-                    onClick={async () => {
-                      if (!serviceAccountJson || !projectId) {
-                        setError('Service account and project ID required');
-                        return;
-                      }
-                      setVmIp('');
-                      setStep4Status('enabling');
-                      setStep4Message('Getting service account token...');
-                      addStep4Log('Starting VM recreation process...');
-                      
-                      const token = await getServiceAccountToken();
-                      if (!token) {
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={useOptimizedBundle}
+                        onChange={(e) => setUseOptimizedBundle(e.target.checked)}
+                        className="w-4 h-4 rounded border-gray-300"
+                      />
+                      <span className="text-sm text-gray-600">Optimized</span>
+                    </label>
+                    <button
+                      onClick={async () => {
+                        if (!serviceAccountJson || !projectId) {
+                          setError('Service account and project ID required');
+                          return;
+                        }
+                        setVmIp('');
+                        setStep4Status('enabling');
+                        setStep4Message('Getting service account token...');
+                        addStep4Log('Starting VM recreation process...');
+                        
+                        const token = await getServiceAccountToken();
+                        if (!token) {
                         setError('Failed to authenticate with service account');
                         setStep4Status('error');
                         return;
@@ -2741,6 +2752,7 @@ const InfraSetup = ({ db }) => {
                   >
                     Recreate VM
                   </button>
+                  </div>
                 </div>
               ) : (
                 <>
