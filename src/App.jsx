@@ -23,7 +23,7 @@ const RootLayout = ({ db }) => {
     <>
       <EnvironmentBanner />
       <NavigationBar db={db} />
-      <div className="pt-12">
+      <div className="pt-24">
         <Outlet />
       </div>
     </>

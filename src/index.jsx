@@ -27,14 +27,17 @@ if (import.meta.env.VITE_SENTRY_DSN) {
   });
 }
 
+const env = import.meta.env.VITE_APP_ENV || 'development';
+const suffix = env === 'production' ? 'PRODUCTION' : 'STAGING';
+
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
+  apiKey: import.meta.env[`VITE_FIREBASE_API_KEY_${suffix}`],
+  authDomain: import.meta.env[`VITE_FIREBASE_AUTH_DOMAIN_${suffix}`],
+  projectId: import.meta.env[`VITE_FIREBASE_PROJECT_ID_${suffix}`],
+  storageBucket: import.meta.env[`VITE_FIREBASE_STORAGE_BUCKET_${suffix}`],
+  messagingSenderId: import.meta.env[`VITE_FIREBASE_MESSAGING_SENDER_ID_${suffix}`],
+  appId: import.meta.env[`VITE_FIREBASE_APP_ID_${suffix}`],
+  measurementId: import.meta.env[`VITE_FIREBASE_MEASUREMENT_ID_${suffix}`]
 };
 
 const app = initializeApp(firebaseConfig);

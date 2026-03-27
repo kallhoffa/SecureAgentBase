@@ -2720,7 +2720,32 @@ const InfraSetup = ({ db }) => {
                                   { headers: { 'Authorization': `Bearer ${token}` } }
                                 );
                                 const instanceData = await instanceResp.json();
+                                const vmStatus = instanceData.status;
                                 const ip = instanceData.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP;
+                                
+                                if (vmStatus !== 'RUNNING') {
+                                  addStep4Log(`VM status: ${vmStatus} - waiting for startup...`);
+                                  
+                                  await new Promise(r => setTimeout(r, 10000));
+                                  
+                                  const recheckResp = await fetch(
+                                    `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances/${instanceName}`,
+                                    { headers: { 'Authorization': `Bearer ${token}` } }
+                                  );
+                                  const recheckData = await recheckResp.json();
+                                  const recheckStatus = recheckData.status;
+                                  
+                                  if (recheckStatus !== 'RUNNING') {
+                                    addStep4Log(`VM failed to start. Status: ${recheckStatus}`);
+                                    if (recheckStatus === 'TERMINATED') {
+                                      setError('VM terminated. Check startup script logs in GCP Console for errors.');
+                                    } else {
+                                      setError(`VM is in "${recheckStatus}" state. Please check GCP Console.`);
+                                    }
+                                    setStep4Status('error');
+                                    break;
+                                  }
+                                }
                                 
                                 if (ip) {
                                   setVmIp(ip);
@@ -2931,7 +2956,32 @@ const InfraSetup = ({ db }) => {
                                   { headers: { 'Authorization': `Bearer ${token}` } }
                                 );
                                 const instanceData = await instanceResp.json();
+                                const vmStatus = instanceData.status;
                                 const ip = instanceData.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP;
+                                
+                                if (vmStatus !== 'RUNNING') {
+                                  addStep4Log(`VM status: ${vmStatus} - waiting for startup...`);
+                                  
+                                  await new Promise(r => setTimeout(r, 10000));
+                                  
+                                  const recheckResp = await fetch(
+                                    `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances/${instanceName}`,
+                                    { headers: { 'Authorization': `Bearer ${token}` } }
+                                  );
+                                  const recheckData = await recheckResp.json();
+                                  const recheckStatus = recheckData.status;
+                                  
+                                  if (recheckStatus !== 'RUNNING') {
+                                    addStep4Log(`VM failed to start. Status: ${recheckStatus}`);
+                                    if (recheckStatus === 'TERMINATED') {
+                                      setError('VM terminated. Check startup script logs in GCP Console for errors.');
+                                    } else {
+                                      setError(`VM is in "${recheckStatus}" state. Please check GCP Console.`);
+                                    }
+                                    setStep4Status('error');
+                                    break;
+                                  }
+                                }
                                 
                                 if (ip) {
                                   setVmIp(ip);

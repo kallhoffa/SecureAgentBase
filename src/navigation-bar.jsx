@@ -19,7 +19,7 @@ const NavigationBar = ({ navigate: navigationOverride }) => {
   };
 
   return (
-    <nav className="bg-white border-b border-gray-200 fixed w-full top-0 z-50">
+    <nav className="bg-white border-b border-gray-200 fixed w-full top-8 z-50">
       <div className="max-w-6xl mx-auto px-4">
         <div className="flex items-center justify-between h-16">
           <a href="/" className="flex items-center">
