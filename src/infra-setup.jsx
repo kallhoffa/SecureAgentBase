@@ -1168,6 +1168,12 @@ const InfraSetup = ({ db }) => {
     return () => clearTimeout(timer);
   }, [projectId, serviceAccountJson, discordBotToken, githubPat, firebaseConfigStaging, firebaseConfigProduction, vmIp, vmZone, useFirestore, user, projectName, passphrase, selectedProjectId]);
 
+  useEffect(() => {
+    if (user && !expandedSteps.includes(2) && isStepLocked(2) === false) {
+      setExpandedSteps(prev => [...prev, 2]);
+    }
+  }, [user]);
+
   const handleFileUpload = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
