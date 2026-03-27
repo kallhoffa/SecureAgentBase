@@ -2557,7 +2557,9 @@ const InfraSetup = ({ db }) => {
                       <li>Go to <a href="https://discord.com/developers/applications" target="_blank" rel="noopener noreferrer" className="underline font-medium">Discord Developer Portal</a></li>
                       <li>Click "New Application" → give it a name (e.g., "Kimaki")</li>
                       <li>Go to "Bot" in the left sidebar → click "Add Bot"</li>
-                      <li>Scroll down to "Privileged Gateway Intents" → enable <strong>Message Content Intent</strong> (required for Kimaki to read messages)</li>
+                      <li>In "General Information", scroll down and <strong>disable "Public Bot"</strong> (prevents others from adding your bot)</li>
+                      <li>In "OAuth2" → "General", set <strong>"Default Install Link" to "None"</strong> (required when Public Bot is disabled)</li>
+                      <li>Back in "Bot", scroll down to "Privileged Gateway Intents" → enable <strong>Message Content Intent</strong> (required for Kimaki to read messages)</li>
                       <li>Go to "OAuth2" → "URL Generator"</li>
                       <li>Under "Scopes", check <code className="bg-blue-100 px-1">bot</code></li>
                       <li>Under "Bot Permissions", check <strong>Send Messages</strong>, <strong>Read Message History</strong>, <strong>Manage Channels</strong>, and <strong>Use Slash Commands</strong></li>
