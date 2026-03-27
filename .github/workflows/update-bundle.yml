@@ -34,19 +34,22 @@ jobs:
           echo "$GCP_SA_KEY" | base64 -d > /tmp/gcs-sa.json
           gcloud auth activate-service-account --key-file=/tmp/gcs-sa.json
 
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
       - name: Build bundle
         run: |
-          docker run --rm -v $PWD/bundle:/output debian:stable bash -c "
-            apt-get update && apt-get install -y dpkg-dev
-            mkdir -p /output/packages
-            cd /var/cache/apt/archives
-            apt-get download nodejs npm git curl wget gnupg jq ca-certificates apt-transport-https
-            cp *.deb /output/packages/ 2>/dev/null || true
-          "
+          mkdir -p bundle/packages bundle/kimaki
+          # Install kimaki globally then copy
+          npm install -g kimaki@latest
+          cp -r $(npm root -g)/kimaki bundle/kimaki/
+          chmod +x bundle/kimaki/bin/kimaki.js
 
       - name: Create bundle
         run: |
-          tar -czvf debian-packages.tar.gz bundle/packages/
+          tar -czvf debian-packages.tar.gz bundle/packages/ bundle/kimaki/
 
       - name: Sign bundle
         run: |

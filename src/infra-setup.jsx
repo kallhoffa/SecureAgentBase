@@ -360,10 +360,25 @@ echo "DEBUG: GitHub secrets set"
 # Add upstream back for future syncing
 git remote add upstream https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
 
-# Download Kimaki
+# Install Kimaki (try bundle first, fall back to npm)
 echo "DEBUG: Installing Kimaki..."
-npm install -g kimaki@latest 2>/dev/null || echo "WARNING: Kimaki install failed (non-critical)"
-echo "DEBUG: Kimaki install done"
+if [ -d "/opt/kimaki" ]; then
+  echo "Kimaki found in bundle..."
+  chmod +x /opt/kimaki/bin/kimaki.js 2>/dev/null || true
+  ln -sf /opt/kimaki/bin/kimaki.js /usr/local/bin/kimaki 2>/dev/null || true
+  echo "DEBUG: Kimaki from bundle ready"
+elif [ -d "/opt/packages/kimaki" ]; then
+  echo "Installing Kimaki from bundle..."
+  cp -r /opt/packages/kimaki /opt/kimaki
+  chmod +x /opt/kimaki/bin/kimaki.js
+  ln -sf /opt/kimaki/bin/kimaki.js /usr/local/bin/kimaki 2>/dev/null || true
+  echo "DEBUG: Kimaki installed from bundle"
+elif command -v npm &> /dev/null; then
+  npm install -g kimaki@latest 2>/dev/null || echo "WARNING: Kimaki npm install failed (non-critical)"
+  echo "DEBUG: Kimaki installed via npm"
+else
+  echo "WARNING: npm not available, skipping Kimaki installation"
+fi
 
 # Create Discord channel
 echo "DEBUG: Creating Discord channel..."
