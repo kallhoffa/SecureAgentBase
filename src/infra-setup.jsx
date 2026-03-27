@@ -1,12 +1,140 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from './firestore-utils/auth-context';
 import { useNavigate } from 'react-router-dom';
-import { doc, getDoc, setDoc, deleteDoc } from 'firebase/firestore';
+import { useNotification } from './firestore-utils/notification-context';
+import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, query, where, serverTimestamp } from 'firebase/firestore';
 import { Check, Copy, Upload, AlertTriangle, Trash2, ExternalLink, Shield, Server, Bot } from 'lucide-react';
 
 const INFRA_COLLECTION = 'infra_configs';
+const PROJECTS_COLLECTION = 'projects';
 const LOCALSTORAGE_KEY = 'infra_config_pending';
 const FORM_PROGRESS_KEY = 'infra_form_progress';
+const GCS_BUNDLE_URL = 'https://storage.googleapis.com/secureagent-base-bundles/debian-packages.tar.gz';
+const GCS_SIGNATURE_URL = 'https://storage.googleapis.com/secureagent-base-bundles/debian-packages.tar.gz.asc';
+const BUNDLE_SIGNER_KEY = `-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+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
+rjHERDArJhbYcoArPoa/3mGjFuee
+=nNe/
+-----END PGP PUBLIC KEY BLOCK-----`;
+
+const generateKey = async (passphrase, salt) => {
+  const encoder = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    encoder.encode(passphrase),
+    'PBKDF2',
+    false,
+    ['deriveKey']
+  );
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+};
+
+const encryptData = async (data, passphrase) => {
+  if (!passphrase) return JSON.stringify(data);
+  const encoder = new TextEncoder();
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await generateKey(passphrase, salt);
+  const encrypted = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    encoder.encode(JSON.stringify(data))
+  );
+  const result = {
+    salt: btoa(String.fromCharCode(...salt)),
+    iv: btoa(String.fromCharCode(...iv)),
+    data: btoa(String.fromCharCode(...new Uint8Array(encrypted)))
+  };
+  return JSON.stringify(result);
+};
+
+const decryptData = async (encryptedStr, passphrase) => {
+  if (!passphrase) return JSON.parse(encryptedStr);
+  try {
+    const { salt, iv, data } = JSON.parse(encryptedStr);
+    const encoder = new TextEncoder();
+    const saltArray = new Uint8Array(atob(salt).split('').map(c => c.charCodeAt(0)));
+    const ivArray = new Uint8Array(atob(iv).split('').map(c => c.charCodeAt(0)));
+    const dataArray = new Uint8Array(atob(data).split('').map(c => c.charCodeAt(0)));
+    const key = await generateKey(passphrase, saltArray);
+    const decrypted = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: ivArray },
+      key,
+      dataArray
+    );
+    return JSON.parse(decoder.decode(decrypted));
+  } catch (e) {
+    console.error('Decryption failed:', e);
+    throw new Error('Invalid passphrase or corrupted data');
+  }
+};
+
+const decoder = new TextDecoder();
 
 const saveFormProgress = (data) => {
   try {
@@ -24,6 +152,28 @@ const loadFormProgress = () => {
     console.error('Error loading form progress:', e);
     return null;
   }
+};
+
+const loadProjectsFromFirestore = async (userId, firestoreDb) => {
+  if (!userId || !firestoreDb) return [];
+  const q = query(collection(firestoreDb, PROJECTS_COLLECTION), where('userId', '==', userId));
+  const snapshot = await getDocs(q);
+  return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+};
+
+const saveProjectToFirestore = async (userId, projectId, name, encryptedData, firestoreDb) => {
+  const projectRef = doc(firestoreDb, PROJECTS_COLLECTION, projectId);
+  await setDoc(projectRef, {
+    userId,
+    name,
+    encryptedData,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp()
+  }, { merge: true });
+};
+
+const deleteProjectFromFirestore = async (projectId, firestoreDb) => {
+  await deleteDoc(doc(firestoreDb, PROJECTS_COLLECTION, projectId));
 };
 
 const CloudShellScript = ({ projectId }) => `# SecureAgent-Manager Service Account Setup
@@ -76,6 +226,143 @@ const saveToLocalStorage = (data) => {
   }
 };
 
+const getStartupScript = (useBundle = false) => {
+  const bundleSection = useBundle ? `
+# Try to download pre-bundled packages from GCS for faster setup
+if [ "$USE_BUNDLE" = "true" ]; then
+  echo "Downloading pre-bundled packages from GCS..."
+  if curl -sf --connect-timeout 15 "${GCS_BUNDLE_URL}" -o /tmp/packages.tar.gz 2>/dev/null && \\
+     curl -sf --connect-timeout 15 "${GCS_SIGNATURE_URL}" -o /tmp/packages.tar.gz.asc 2>/dev/null; then
+    echo "Bundle downloaded, verifying signature..."
+    
+    # Import trusted GPG key
+    GNUPGHOME=/tmp/gpghome
+    mkdir -p $GNUPGHOME
+    chmod 700 $GNUPGHOME
+    echo '${BUNDLE_SIGNER_KEY}' | gpg --import --no-tty 2>/dev/null || true
+    
+    # Verify signature
+    if gpg --batch --verify /tmp/packages.tar.gz.asc /tmp/packages.tar.gz 2>/dev/null; then
+      echo "Bundle signature verified!"
+      tar -xzf /tmp/packages.tar.gz -C /opt/ 2>/dev/null || true
+      if [ -d /opt/packages ]; then
+        echo "Installing from verified bundle..."
+        cd /opt/packages
+        dpkg -i *.deb 2>/dev/null || apt-get install -f -y --no-install-recommends 2>/dev/null || true
+        export BUNDLE_SUCCESS="true"
+      fi
+    else
+      echo "WARNING: Bundle signature verification failed! Using standard installation..."
+    fi
+  else
+    echo "WARNING: Could not download bundle. Using standard installation..."
+  fi
+fi
+` : '';
+
+  return `#!/bin/bash
+set -e
+export HOME=/root
+export DEBIAN_FRONTEND=noninteractive
+export USE_BUNDLE="${useBundle ? 'true' : 'false'}"
+echo "=== VM Setup Started ==="
+
+GITHUB_TOKEN=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/github_token" -H "Metadata-Flavor: Google")
+DISCORD_BOT_TOKEN=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/discord_bot_token" -H "Metadata-Flavor: Google")
+GITHUB_OWNER=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/github_owner" -H "Metadata-Flavor: Google")
+FIREBASE_STAGING=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_staging" -H "Metadata-Flavor: Google")
+FIREBASE_PRODUCTION=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_production" -H "Metadata-Flavor: Google")
+
+echo "Secrets loaded from metadata"
+
+# Remove man-db to speed up installs
+apt-get remove --purge -y man-db 2>/dev/null || true
+
+${bundleSection}
+
+# Install dependencies if bundle failed or not used
+if [ "$BUNDLE_SUCCESS" != "true" ]; then
+  echo "Installing dependencies via apt..."
+  apt-get update -o Dpkg::Options::="--force-confdef" -o APT::Get::Fix-Missing=true
+  apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-confdef" -o APT::Get::Fix-Missing=true nodejs npm git curl wget gnupg ca-certificates apt-transport-https jq
+fi
+
+# Install GitHub CLI
+if ! command -v gh &> /dev/null; then
+  echo "Installing GitHub CLI..."
+  wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg 2>/dev/null | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null || true
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null 2>&1 || true
+  apt-get update -o Dpkg::Options::="--force-confdef" 2>/dev/null || true
+  apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-confdef" gh 2>/dev/null || true
+fi
+
+# Authenticate GitHub
+echo $GITHUB_TOKEN | gh auth login --with-token 2>/dev/null || true
+gh auth setup-git 2>/dev/null || true
+
+# Clone SecureAgentBase and set up upstream
+cd /opt
+if [ -d "SecureAgentBase" ]; then
+  cd SecureAgentBase
+  git remote add upstream https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
+  git fetch upstream 2>/dev/null || true
+  git checkout main 2>/dev/null || true
+  git merge upstream/main 2>/dev/null || true
+else
+  git clone --depth 1 https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
+  cd SecureAgentBase
+  git remote add upstream https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
+fi
+
+# Remove upstream to avoid "multiple remotes" error with gh cli
+git remote remove upstream 2>/dev/null || true
+git remote remove origin 2>/dev/null || true
+
+# Check if repo exists, create if not
+REPO_EXISTS=false
+if gh repo view "$GITHUB_OWNER/$FIREBASE_STAGING" &>/dev/null; then
+  REPO_EXISTS=true
+fi
+
+if [ "$REPO_EXISTS" = true ]; then
+  echo "Repo exists, pushing..."
+  git remote add origin "https://github.com/$GITHUB_OWNER/$FIREBASE_STAGING.git" 2>/dev/null || true
+  git push -u origin main --force || { echo "Push failed!"; exit 1; }
+else
+  echo "Creating new repo..."
+  gh repo create "$FIREBASE_STAGING" --public --source=. --push || { echo "Repo create failed!"; exit 1; }
+fi
+
+# Add upstream back for future syncing
+git remote add upstream https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
+
+# Set GitHub Secrets
+gh secret set FIREBASE_STAGING_PROJECT_ID --body "$FIREBASE_STAGING" -R "$GITHUB_OWNER/$FIREBASE_STAGING" 2>/dev/null || true
+gh secret set FIREBASE_PRODUCTION_PROJECT_ID --body "$FIREBASE_PRODUCTION" -R "$GITHUB_OWNER/$FIREBASE_STAGING" 2>/dev/null || true
+
+# Download Kimaki
+npm install -g kimaki@latest 2>/dev/null || true
+
+# Create Discord channel
+CHANNEL_DATA=$(curl -s -X POST "https://discord.com/api/v10/guilds/\${DISCORD_GUILD_ID}/channels" \\
+  -H "Authorization: Bot $DISCORD_BOT_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{"name": "secureagent", "type": 0}')
+
+CHANNEL_ID=$(echo $CHANNEL_DATA | jq -r '.id')
+GUILD_ID=$(echo $CHANNEL_DATA | jq -r '.guild_id')
+
+curl -s -X POST "https://discord.com/api/v10/channels/$CHANNEL_ID/messages" \\
+  -H "Authorization: Bot $DISCORD_BOT_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "content": "Welcome to SecureAgent! Setup complete. Your repo is ready at: https://github.com/'"$GITHUB_OWNER"'/"$FIREBASE_STAGING"
+  }'
+
+echo "=== VM Setup Complete ==="
+`;
+};
+
 const loadFromLocalStorage = () => {
   try {
     const data = localStorage.getItem(LOCALSTORAGE_KEY);
@@ -89,10 +376,12 @@ const loadFromLocalStorage = () => {
 const InfraSetup = ({ db }) => {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const { addNotification } = useNotification();
   const [projectId, setProjectId] = useState('');
   const [serviceAccountKey, setServiceAccountKey] = useState(null);
   const [githubAppInstalled, setGithubAppInstalled] = useState(false);
   const [vmIp, setVmIp] = useState('');
+  const [vmZone, setVmZone] = useState('us-east1-b');
   const [discordBotToken, setDiscordBotToken] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -115,6 +404,16 @@ const InfraSetup = ({ db }) => {
   const [gcpConfigLost, setGcpConfigLost] = useState(false);
   const [checkingCompletion, setCheckingCompletion] = useState(true);
 
+  const [projects, setProjects] = useState([]);
+  const [selectedProjectId, setSelectedProjectId] = useState('');
+  const [projectName, setProjectName] = useState('');
+  const [isCreatingNew, setIsCreatingNew] = useState(false);
+  const [useFirestore, setUseFirestore] = useState(false);
+  const [passphrase, setPassphrase] = useState('');
+  const [decryptPassphrase, setDecryptPassphrase] = useState('');
+  const [pendingDecryptProject, setPendingDecryptProject] = useState(null);
+  const [decryptError, setDecryptError] = useState('');
+
   const [firebaseConfigStaging, setFirebaseConfigStaging] = useState('');
   const [firebaseConfigProduction, setFirebaseConfigProduction] = useState('');
   const [firebaseStagingData, setFirebaseStagingData] = useState({});
@@ -124,6 +423,7 @@ const InfraSetup = ({ db }) => {
   const [discordBotTokenInput, setDiscordBotTokenInput] = useState('');
   const [vmHttpsUrl, setVmHttpsUrl] = useState('');
   const [formProgressLoaded, setFormProgressLoaded] = useState(false);
+  const [useOptimizedBundle, setUseOptimizedBundle] = useState(false);
 
   const [currentStep, setCurrentStep] = useState(1);
   const [expandedSteps, setExpandedSteps] = useState([1]);
@@ -134,6 +434,8 @@ const InfraSetup = ({ db }) => {
   const [step3Status, setStep3Status] = useState('idle');
   const [step3Message, setStep3Message] = useState('');
   const [step3Logs, setStep3Logs] = useState([]);
+  const [vmLogs, setVmLogs] = useState('');
+  const [loadingVmLogs, setLoadingVmLogs] = useState(false);
 
   const [step4Status, setStep4Status] = useState('idle');
   const [step4Message, setStep4Message] = useState('');
@@ -210,6 +512,39 @@ const InfraSetup = ({ db }) => {
     }
   };
 
+  const fetchVmLogs = async () => {
+    if (!serviceAccountJson || !projectId || !vmIp) return;
+    
+    setLoadingVmLogs(true);
+    try {
+      const token = await getServiceAccountToken();
+      if (!token) {
+        setError('Failed to get service account token');
+        setLoadingVmLogs(false);
+        return;
+      }
+
+      const zone = vmZone;
+      const instanceName = 'secureagent-manager';
+      
+      const response = await fetch(
+        `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances/${instanceName}/serialPort`,
+        { headers: { 'Authorization': `Bearer ${token}` } }
+      );
+      
+      if (response.ok) {
+        const data = await response.json();
+        setVmLogs(data.contents || 'No serial port output available yet.');
+      } else {
+        const err = await response.json();
+        setVmLogs(`Error fetching logs: ${err.error?.message || 'Unknown error'}`);
+      }
+    } catch (e) {
+      setVmLogs(`Error: ${e.message}`);
+    }
+    setLoadingVmLogs(false);
+  };
+
   const importPrivateKey = async (pem) => {
     const pemHeader = '-----BEGIN PRIVATE KEY-----';
     const pemFooter = '-----END PRIVATE KEY-----';
@@ -260,6 +595,10 @@ const InfraSetup = ({ db }) => {
     } else {
       setExpandedSteps(prev => [...prev, step]);
     }
+  };
+
+  const editStep = (step) => {
+    setExpandedSteps(prev => [...prev, step]);
   };
 
   const isStepActive = (step) => {
@@ -573,16 +912,9 @@ const InfraSetup = ({ db }) => {
     setCreatingVm(true);
     setError(null);
 
-    const zone = 'us-central1-a';
+    const zone = vmZone;
     const instanceName = 'kimaki-manager';
-    const startupScript = `#!/bin/bash
-apt-get update
-apt-get install -y nodejs npm git curl
-cd /opt
-git clone https://github.com/remorses/kimaki.git
-cd kimaki
-npm install
-`;
+    const startupScript = getStartupScript(useOptimizedBundle);
 
     try {
       const checkResponse = await fetch(
@@ -709,9 +1041,6 @@ npm install
       // Note: serviceAccountJson is NOT restored from storage since it contains sensitive private_key
       // User must re-upload the service account JSON each session
       if (formProgress.projectId) setProjectId(formProgress.projectId);
-      if (formProgress.projectId && !formProgress.gcpAccessToken) {
-        setGcpConfigLost(true);
-      }
     }
     setFormProgressLoaded(true);
   }, []);
@@ -794,11 +1123,39 @@ npm install
     loadInfraConfig();
   }, [db, user]);
 
+  useEffect(() => {
+    const loadProjects = async () => {
+      if (!user) {
+        setProjects([]);
+        return;
+      }
+      setLoadingProjects(true);
+      try {
+        const loadedProjects = await loadProjectsFromFirestore(user.uid, db);
+        setProjects(loadedProjects);
+      } catch (err) {
+        console.error('Error loading projects:', err);
+      }
+      setLoadingProjects(false);
+    };
+    loadProjects();
+  }, [user, db]);
+
   const handleCopyScript = () => {
     navigator.clipboard.writeText(CloudShellScript({ projectId }));
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  useEffect(() => {
+    if (!useFirestore || !user || !projectName || !passphrase || passphrase.length < 4 || !selectedProjectId) return;
+    
+    const timer = setTimeout(() => {
+      autoSaveProject();
+    }, 2000);
+    
+    return () => clearTimeout(timer);
+  }, [projectId, serviceAccountJson, discordBotToken, githubPat, firebaseConfigStaging, firebaseConfigProduction, vmIp, vmZone, useFirestore, user, projectName, passphrase, selectedProjectId]);
 
   const handleFileUpload = async (event) => {
     const file = event.target.files?.[0];
@@ -864,6 +1221,79 @@ npm install
     } else {
       saveToLocalStorage(finalData);
     }
+
+    if (useFirestore && user && projectName && passphrase && passphrase.length >= 4) {
+      console.log('Saving project to Firestore:', { projectName, passphraseLength: passphrase.length });
+      try {
+        const projectIdToSave = selectedProjectId || `proj_${Date.now()}`;
+        const encryptedConfig = await encryptData({
+          gcp: {
+            projectId: projectId.trim(),
+            serviceAccountJson,
+            discordBotToken
+          },
+          github: {
+            pat: githubPat
+          },
+          firebase: {
+            staging: firebaseConfigStaging,
+            production: firebaseConfigProduction
+          },
+          vm: {
+            ip: vmIp,
+            zone: vmZone
+          },
+          projectName
+        }, passphrase);
+        
+        await saveProjectToFirestore(user.uid, projectIdToSave, projectName, encryptedConfig, db);
+        console.log('Project saved successfully');
+        setSelectedProjectId(projectIdToSave);
+        setIsCreatingNew(false);
+        const updatedProjects = await loadProjectsFromFirestore(user.uid, db);
+        setProjects(updatedProjects);
+        console.log('Projects reloaded:', updatedProjects);
+      } catch (err) {
+        console.error('Error saving project:', err);
+      }
+    } else if (useFirestore && projectName) {
+      console.log('Not saving to Firestore - need passphrase (min 4 chars)');
+    }
+  };
+
+  const autoSaveProject = async () => {
+    if (!useFirestore || !user || !projectName || !passphrase || passphrase.length < 4) return;
+    if (!selectedProjectId) {
+      console.log('No project selected, skipping auto-save');
+      return;
+    }
+    
+    try {
+      const encryptedConfig = await encryptData({
+        gcp: {
+          projectId: projectId.trim(),
+          serviceAccountJson,
+          discordBotToken
+        },
+        github: {
+          pat: githubPat
+        },
+        firebase: {
+          staging: firebaseConfigStaging,
+          production: firebaseConfigProduction
+        },
+        vm: {
+          ip: vmIp,
+          zone: vmZone
+        },
+        projectName
+      }, passphrase);
+      
+      await saveProjectToFirestore(user.uid, selectedProjectId, projectName, encryptedConfig, db);
+      console.log('Project auto-saved');
+    } catch (err) {
+      console.error('Error auto-saving project:', err);
+    }
   };
 
   const handleSaveConfig = async () => {
@@ -876,7 +1306,7 @@ npm install
       await saveConfig({
         created_at: new Date().toISOString(),
       });
-      alert('Infrastructure configuration saved!');
+
     } catch (err) {
       console.error('Error saving config:', err);
       setError('Failed to save configuration');
@@ -904,7 +1334,7 @@ npm install
 
       await saveConfig(localConfig);
       setMergeStatus('success');
-      alert('Configuration merged to your account!');
+
     } catch (err) {
       console.error('Error merging config:', err);
       setError('Failed to merge configuration');
@@ -951,8 +1381,6 @@ npm install
       
       setExpandedSteps([]);
       setError(null);
-      
-      alert('Infrastructure disconnected');
     } catch (err) {
       console.error('Error disconnecting:', err);
       setError('Failed to disconnect');
@@ -1102,7 +1530,6 @@ npm install
       const result = await response.json();
       setVmIp(result.ip);
       await saveConfig({ vm_ip: result.ip });
-      alert('VM provisioned successfully!');
     } catch (err) {
       console.error('Error creating VM:', err);
       setError(err.message);
@@ -1252,8 +1679,6 @@ npm install
       
       setDiscordBotToken(discordBotTokenInput);
       expandNextStep(6);
-      
-      alert('Discord bot token saved! You can now create your VM.');
     } catch (err) {
       console.error('Error saving discord bot token:', err);
       setError(err.message);
@@ -1264,7 +1689,7 @@ npm install
 
   const pendingConfig = !user && loadFromLocalStorage();
 
-  const getStepHeader = (stepNumber, title, icon, isComplete, isActive, isLocked, info, isWarning = false) => {
+  const getStepHeader = (stepNumber, title, icon, isComplete, isActive, isLocked, info, isWarning = false, onEdit = null) => {
     const baseClasses = "flex items-center justify-between w-full p-4 rounded-lg transition-all duration-200";
     let bgClasses = "bg-gray-50";
     let borderClasses = "border border-gray-200";
@@ -1291,13 +1716,22 @@ npm install
       borderClasses = "border border-gray-200";
     }
 
+    const handleHeaderClick = () => {
+      if (isLocked) return;
+      if (isComplete && onEdit) {
+        onEdit();
+      } else {
+        toggleStep(stepNumber);
+      }
+    };
+
     return (
-      <button
-        onClick={() => !isLocked && toggleStep(stepNumber)}
-        disabled={isLocked}
-        className={`${baseClasses} ${bgClasses} ${borderClasses} ${isLocked ? 'cursor-not-allowed' : 'cursor-pointer hover:shadow-md'} w-full text-left`}
-      >
-        <div className="flex items-center gap-3">
+      <div className={`${baseClasses} ${bgClasses} ${borderClasses} ${isLocked ? 'opacity-60' : ''}`}>
+        <button
+          onClick={handleHeaderClick}
+          disabled={isLocked}
+          className={`flex items-center gap-3 flex-1 text-left ${isLocked ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+        >
           {isComplete || isWarning ? (isWarning ? <AlertTriangle className={iconColor} size={24} /> : <Check className={iconColor} size={24} />) : icon}
           <span className={`font-semibold ${textClasses}`}>{title}</span>
           {isWarning && <span className="text-xs text-yellow-600 ml-2">(Re-authentication required)</span>}
@@ -1312,17 +1746,30 @@ npm install
               </div>
             </div>
           )}
+        </button>
+        <div className="flex items-center gap-2">
+          {isComplete && onEdit && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onEdit(); }}
+              className={`p-1.5 rounded hover:bg-green-100 text-green-600`}
+              title="Edit step"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+              </svg>
+            </button>
+          )}
+          {expandedSteps.includes(stepNumber) ? (
+            <svg className={`w-5 h-5 ${textClasses}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+            </svg>
+          ) : (
+            <svg className={`w-5 h-5 ${textClasses}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          )}
         </div>
-        {expandedSteps.includes(stepNumber) ? (
-          <svg className={`w-5 h-5 ${textClasses}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
-          </svg>
-        ) : (
-          <svg className={`w-5 h-5 ${textClasses}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-          </svg>
-        )}
-      </button>
+      </div>
     );
   };
 
@@ -1350,6 +1797,264 @@ npm install
           >
             Back to Home
           </button>
+        </div>
+      </div>
+
+      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-6">
+        <div className="flex flex-wrap items-center gap-4 mb-4">
+          <div className="flex items-center gap-2">
+            <label className="font-medium text-gray-700">Project:</label>
+            <select
+              value={selectedProjectId}
+              onChange={async (e) => {
+                const projId = e.target.value;
+                setSelectedProjectId(projId);
+                setIsCreatingNew(false);
+                if (!projId) {
+                  setProjectName('');
+                  setUseFirestore(false);
+                  return;
+                }
+                const proj = projects.find(p => p.id === projId);
+                if (proj) {
+                  setProjectName(proj.name || '');
+                  setPendingDecryptProject(proj.encryptedData ? proj : null);
+                  setDecryptPassphrase('');
+                  setDecryptError('');
+                  if (!proj.encryptedData) {
+                    if (proj.gcp) {
+                      setProjectId(proj.gcp.projectId || '');
+                      setServiceAccountJson(proj.gcp.serviceAccountJson || null);
+                      setDiscordBotToken(proj.gcp.discordBotToken || '');
+                    }
+                    if (proj.github) {
+                      setGithubPat(proj.github.pat || '');
+                    }
+                    if (proj.firebase) {
+                      setFirebaseConfigStaging(proj.firebase.staging || '');
+                      setFirebaseConfigProduction(proj.firebase.production || '');
+                    }
+                    if (proj.vm) {
+                      setVmIp(proj.vm.ip || '');
+                      setVmZone(proj.vm.zone || 'us-east1-b');
+                    }
+                  }
+                }
+              }}
+              className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-400"
+            >
+              <option value="">Select a project</option>
+              {projects.map(proj => (
+                <option key={proj.id} value={proj.id}>{proj.name}</option>
+              ))}
+            </select>
+          </div>
+          <button
+            onClick={() => {
+              setSelectedProjectId('');
+              setProjectName('');
+              setIsCreatingNew(true);
+              setProjectId('');
+              setServiceAccountJson(null);
+              setDiscordBotToken('');
+              setGithubPat('');
+              setFirebaseConfigStaging('');
+              setFirebaseConfigProduction('');
+              setVmIp('');
+              setStep1Complete(false);
+              setStep2Complete(false);
+              setStep3Complete(false);
+            }}
+            className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg flex items-center gap-1"
+          >
+            + New Project
+          </button>
+        </div>
+
+        {isCreatingNew && (
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-1">Project Name:</label>
+            <input
+              type="text"
+              value={projectName}
+              onChange={(e) => setProjectName(e.target.value)}
+              placeholder="Enter project name (e.g., my-app-staging)"
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-400"
+            />
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center gap-4 mb-4">
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={useFirestore}
+              onChange={(e) => setUseFirestore(e.target.checked)}
+              className="w-4 h-4"
+            />
+            <span className="text-sm text-gray-700">Store encrypted credentials in Firestore</span>
+          </label>
+          {useFirestore && (
+            <input
+              type="password"
+              value={passphrase}
+              onChange={(e) => setPassphrase(e.target.value)}
+              placeholder="Enter passphrase (min 4 chars)"
+              className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-400"
+            />
+          )}
+          {pendingDecryptProject && (
+            <div className="w-full mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+              <p className="text-sm text-yellow-800 mb-2">This project is encrypted. Enter passphrase to decrypt:</p>
+              <div className="flex gap-2">
+                <input
+                  type="password"
+                  value={decryptPassphrase}
+                  onChange={(e) => setDecryptPassphrase(e.target.value)}
+                  placeholder="Enter passphrase"
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-400"
+                />
+                <button
+                  onClick={async () => {
+                    if (!decryptPassphrase) return;
+                    try {
+                      const decrypted = await decryptData(pendingDecryptProject.encryptedData, decryptPassphrase);
+                      const newExpanded = [1];
+                      if (decrypted.gcp) {
+                        setProjectId(decrypted.gcp.projectId || '');
+                        setServiceAccountJson(decrypted.gcp.serviceAccountJson || null);
+                        setDiscordBotToken(decrypted.gcp.discordBotToken || '');
+                        newExpanded.push(2, 3);
+                      }
+                      if (decrypted.github) {
+                        setGithubPat(decrypted.github.pat || '');
+                        if (decrypted.gcp) newExpanded.push(4, 5);
+                      }
+                      if (decrypted.firebase) {
+                        setFirebaseConfigStaging(decrypted.firebase.staging || '');
+                        setFirebaseConfigProduction(decrypted.firebase.production || '');
+                        const stagingParsed = parseFirebaseConfig(decrypted.firebase.staging);
+                        if (stagingParsed) setFirebaseStagingData(stagingParsed);
+                        const productionParsed = parseFirebaseConfig(decrypted.firebase.production);
+                        if (productionParsed) setFirebaseProductionData(productionParsed);
+                      }
+                      if (decrypted.vm) {
+                        setVmIp(decrypted.vm.ip || '');
+                        setVmZone(decrypted.vm.zone || 'us-east1-b');
+                        newExpanded.push(6, 7);
+                      }
+                      setExpandedSteps(newExpanded);
+                      setGcpConfigLost(false);
+                      setPendingDecryptProject(null);
+                      setDecryptPassphrase('');
+                      setDecryptError('');
+                      setPassphrase(decryptPassphrase);
+                    } catch (err) {
+                      console.error('Failed to decrypt project:', err);
+                      setDecryptError('Incorrect passphrase or corrupted data');
+                    }
+                  }}
+                  className="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-lg"
+                >
+                  Decrypt
+                </button>
+                <button
+                  onClick={() => {
+                    setPendingDecryptProject(null);
+                    setDecryptPassphrase('');
+                    setDecryptError('');
+                  }}
+                  className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2 rounded-lg"
+                >
+                  Cancel
+                </button>
+              </div>
+              {decryptError && (
+                <p className="text-red-600 text-sm mt-2">{decryptError}</p>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="flex flex-wrap gap-3">
+          <button
+            onClick={async () => {
+              const configData = {
+                gcp: {
+                  projectId,
+                  serviceAccountJson,
+                  discordBotToken
+                },
+                github: {
+                  pat: githubPat
+                },
+                firebase: {
+                  staging: firebaseConfigStaging,
+                  production: firebaseConfigProduction
+                },
+                vm: {
+                  ip: vmIp,
+                  zone: vmZone
+                },
+                projectName
+              };
+              
+              const jsonStr = await encryptData(configData, passphrase);
+              const blob = new Blob([jsonStr], { type: 'application/json' });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = projectName ? `${projectName}-config.json` : 'secureagent-config.json';
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+            className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm"
+          >
+            Export Settings
+          </button>
+          <label className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm cursor-pointer">
+            Import File
+            <input
+              type="file"
+              accept=".json"
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                try {
+                  const text = await file.text();
+                  let data;
+                  try {
+                    data = await decryptData(text, passphrase);
+                  } catch {
+                    data = JSON.parse(text);
+                  }
+                  if (data.gcp) {
+                    setProjectId(data.gcp.projectId || '');
+                    setServiceAccountJson(data.gcp.serviceAccountJson || null);
+                    setDiscordBotToken(data.gcp.discordBotToken || '');
+                  }
+                  if (data.github) {
+                    setGithubPat(data.github.pat || '');
+                  }
+                  if (data.firebase) {
+                    setFirebaseConfigStaging(data.firebase.staging || '');
+                    setFirebaseConfigProduction(data.firebase.production || '');
+                  }
+                  if (data.vm) {
+                    setVmIp(data.vm.ip || '');
+                    setVmZone(data.vm.zone || 'us-east1-b');
+                  }
+                  if (data.projectName) {
+                    setProjectName(data.projectName);
+                  }
+                } catch (err) {
+                  console.error('Import failed:', err);
+                  setError('Failed to import config file');
+                }
+              }}
+            />
+          </label>
         </div>
       </div>
 
@@ -1394,7 +2099,7 @@ npm install
         </div>
 
         <div className="space-y-2">
-          {getStepHeader(2, "Step 2: Service Account", <Upload className="text-blue-600" size={24} />, isStepCompleted(2), isStepActive(2), isStepLocked(2), "Create a service account in your GCP project and paste the JSON key. This lets us create VMs without accessing your personal account.", isStepWarning(2))}
+          {getStepHeader(2, "Step 2: Service Account", <Upload className="text-blue-600" size={24} />, isStepCompleted(2), isStepActive(2), isStepLocked(2), "Create a service account in your GCP project and paste the JSON key. This lets us create VMs without accessing your personal account.", isStepWarning(2), () => editStep(2))}
           
           {expandedSteps.includes(2) && !isStepCompleted(1) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
@@ -1404,7 +2109,7 @@ npm install
 
           {expandedSteps.includes(2) && isStepCompleted(1) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {isStepCompleted(2) ? (
+              {(isStepCompleted(2) && !expandedSteps.includes(2)) ? (
                 <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
                   <Check size={20} />
                   <span className="font-medium">Service account configured</span>
@@ -1476,7 +2181,7 @@ npm install
         </div>
 
         <div className="space-y-2">
-          {getStepHeader(3, "Step 3: GCP Project", <Server className="text-blue-600" size={24} />, isStepCompleted(3), isStepActive(3), isStepLocked(3), "Select or create a GCP project for your VM.")}
+          {getStepHeader(3, "Step 3: GCP Project", <Server className="text-blue-600" size={24} />, isStepCompleted(3), isStepActive(3), isStepLocked(3), "Select or create a GCP project for your VM.", false, () => editStep(3))}
           
           {expandedSteps.includes(3) && !isStepCompleted(2) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
@@ -1486,7 +2191,7 @@ npm install
 
           {expandedSteps.includes(3) && isStepCompleted(2) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {step3Complete ? (
+              {(step3Complete && !expandedSteps.includes(3)) ? (
                 <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
                   <Check size={20} />
                   <span className="font-medium">Project configured: {projectId}</span>
@@ -1538,7 +2243,7 @@ npm install
         </div>
 
         <div className="space-y-2">
-          {getStepHeader(4, "Step 4: Firebase Setup", <svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M3.89 15.672L6.255.461A.542.542 0 0 1 7.27.288l2.543 4.771zm16.794 3.692l-2.25-14a.54.54 0 0 0-.919-.295L3.316 19.365l7.856 4.427a1.621 1.621 0 0 0 1.588 0zM14.3 7.147l-1.82-3.482a.542.542 0 0 0-.96 0L3.53 17.984z"/></svg>, isStepCompleted(4), isStepActive(4), isStepLocked(4), "Configure Firebase hosting for your staging and production environments.")}
+          {getStepHeader(4, "Step 4: Firebase Setup", <svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M3.89 15.672L6.255.461A.542.542 0 0 1 7.27.288l2.543 4.771zm16.794 3.692l-2.25-14a.54.54 0 0 0-.919-.295L3.316 19.365l7.856 4.427a1.621 1.621 0 0 0 1.588 0zM14.3 7.147l-1.82-3.482a.542.542 0 0 0-.96 0L3.53 17.984z"/></svg>, isStepCompleted(4), isStepActive(4), isStepLocked(4), "Configure Firebase hosting for your staging and production environments.", false, () => editStep(4))}
           
           {expandedSteps.includes(4) && !isStepCompleted(3) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
@@ -1548,7 +2253,7 @@ npm install
 
           {expandedSteps.includes(4) && isStepCompleted(3) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {isStepCompleted(4) ? (
+              {(isStepCompleted(4) && !expandedSteps.includes(4)) ? (
                 <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
                   <Check size={20} />
                   <span className="font-medium">Firebase configured: Staging ({firebaseStagingData.projectId}), Production ({firebaseProductionData.projectId})</span>
@@ -1606,7 +2311,7 @@ npm install
         </div>
 
         <div className="space-y-2">
-          {getStepHeader(5, "Step 5: GitHub Auth", <svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>, isStepCompleted(5), isStepActive(5), isStepLocked(5), "Create a GitHub Personal Access Token for the VM to authenticate with GitHub.")}
+          {getStepHeader(5, "Step 5: GitHub Auth", <svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>, isStepCompleted(5), isStepActive(5), isStepLocked(5), "Create a GitHub Personal Access Token for the VM to authenticate with GitHub.", false, () => editStep(5))}
           
           {expandedSteps.includes(5) && !isStepCompleted(4) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
@@ -1616,7 +2321,7 @@ npm install
 
           {expandedSteps.includes(5) && isStepCompleted(4) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {isStepCompleted(5) ? (
+              {(isStepCompleted(5) && !expandedSteps.includes(5)) ? (
                 <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
                   <Check size={20} />
                   <span className="font-medium">GitHub auth configured</span>
@@ -1703,7 +2408,7 @@ npm install
         </div>
 
         <div className="space-y-2">
-          {getStepHeader(6, "Step 6: Discord Bot", <Bot className="text-blue-600" size={24} />, isStepCompleted(6), isStepActive(6), isStepLocked(6), "Create a Discord bot and add it to your server. The VM will use this bot to create channels and send messages.")}
+          {getStepHeader(6, "Step 6: Discord Bot", <Bot className="text-blue-600" size={24} />, isStepCompleted(6), isStepActive(6), isStepLocked(6), "Create a Discord bot and add it to your server. The VM will use this bot to create channels and send messages.", false, () => editStep(6))}
           
           {expandedSteps.includes(6) && !isStepCompleted(5) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
@@ -1713,21 +2418,10 @@ npm install
 
           {expandedSteps.includes(6) && isStepCompleted(5) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {gcpConfigLost && (
+              {!serviceAccountJson && projectId && (
                 <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
-                  <p className="text-yellow-800 font-medium mb-1">Re-authentication required</p>
-                  <p className="text-yellow-700 text-sm">We don't save your sensitive info, so you need to complete this step again to continue.</p>
-                </div>
-              )}
-              
-              {!hasGcpAccess() && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
-                  <p className="text-red-800 font-medium mb-2">Missing Prerequisites:</p>
-                  <ul className="text-red-700 text-sm space-y-1">
-                    {!projectId && <li>• GCP Project ID (complete Step 3)</li>}
-                    {!serviceAccountJson && <li>• Service Account Key (complete Step 2)</li>}
-                  </ul>
-                  <p className="text-red-600 text-sm mt-2">You must complete Steps 2-3 before configuring Discord bot.</p>
+                  <p className="text-yellow-800 font-medium mb-1">Service Account Required</p>
+                  <p className="text-yellow-700 text-sm">Re-upload your service account JSON key (Step 2) to continue with Discord bot setup.</p>
                 </div>
               )}
               
@@ -1735,7 +2429,7 @@ npm install
                 Configure Discord bot token. <strong>Important:</strong> Add the bot to your Discord server before creating the VM.
               </p>
               
-              {discordBotToken ? (
+              {(discordBotToken && !expandedSteps.includes(6)) ? (
                 <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
                   <Check size={20} />
                   <span className="font-medium">Discord bot token configured</span>
@@ -1789,7 +2483,7 @@ npm install
         </div>
 
         <div className="space-y-2">
-          {getStepHeader(7, "Step 7: Create VM", <Server className="text-blue-600" size={24} />, isStepCompleted(7), isStepActive(7), isStepLocked(7), "Create a GCP VM that will fork SecureAgentBase, set up GitHub Actions, download Kimaki, and configure your Discord bot.")}
+          {getStepHeader(7, "Step 7: Create VM", <Server className="text-blue-600" size={24} />, isStepCompleted(7), isStepActive(7), isStepLocked(7), "Create a GCP VM that will fork SecureAgentBase, set up GitHub Actions, download Kimaki, and configure your Discord bot.", false, () => editStep(7))}
           
           {expandedSteps.includes(7) && !isStepCompleted(6) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
@@ -1799,10 +2493,56 @@ npm install
 
           {expandedSteps.includes(7) && isStepCompleted(6) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {isStepCompleted(7) ? (
-                <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
-                  <Check size={20} />
-                  <span className="font-medium">VM created and ready at {vmIp}</span>
+              {(isStepCompleted(7) && !expandedSteps.includes(7)) ? (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
+                    <Check size={20} />
+                    <span className="font-medium">VM created and ready at {vmIp}</span>
+                  </div>
+                  
+                  <div className="border border-gray-200 rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="font-medium text-gray-700">VM Serial Port Logs</h3>
+                      <button
+                        onClick={fetchVmLogs}
+                        disabled={loadingVmLogs}
+                        className="text-sm bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded-lg flex items-center gap-1"
+                      >
+                        {loadingVmLogs ? (
+                          <span className="animate-spin">⟳</span>
+                        ) : (
+                          <span>↻</span>
+                        )}
+                        Refresh Logs
+                      </button>
+                    </div>
+                    {vmLogs ? (
+                      <pre className="bg-gray-900 text-green-400 p-3 rounded text-xs font-mono max-h-64 overflow-y-auto whitespace-pre-wrap">
+                        {vmLogs}
+                      </pre>
+                    ) : (
+                      <p className="text-gray-500 text-sm">Click "Refresh Logs" to view VM startup output</p>
+                    )}
+                  </div>
+
+                  <button
+                    onClick={async () => {
+                      if (!serviceAccountJson || !projectId) {
+                        setError('Service account and project ID required');
+                        return;
+                      }
+                      setVmIp('');
+                      setStep4Status('idle');
+                      setStep4Message('');
+                      setStep4Logs([]);
+                      setTimeout(() => {
+                        document.getElementById('recreate-vm-trigger')?.click();
+                      }, 100);
+                    }}
+                    className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg"
+                  >
+                    Recreate VM
+                  </button>
                 </div>
               ) : (
                 <>
@@ -1810,9 +2550,57 @@ npm install
                     Enable required APIs and create a VM. The VM will automatically fork SecureAgentBase, set up GitHub Actions, download Kimaki, and create a Discord channel.
                   </p>
                   
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">GCP Zone (free e2-micro):</label>
+                    <select
+                      value={vmZone}
+                      onChange={(e) => setVmZone(e.target.value)}
+                      className="w-full px-3 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
+                    >
+                      <option value="us-east1-b">us-east1-b</option>
+                      <option value="us-east1-c">us-east1-c</option>
+                      <option value="us-east1-d">us-east1-d</option>
+                      <option value="us-central1-a">us-central1-a</option>
+                      <option value="us-central1-b">us-central1-b</option>
+                      <option value="us-central1-c">us-central1-c</option>
+                      <option value="us-west1-a">us-west1-a</option>
+                      <option value="us-west1-b">us-west1-b</option>
+                      <option value="europe-west1-d">europe-west1-d</option>
+                      <option value="europe-west1-c">europe-west1-c</option>
+                      <option value="asia-east1-a">asia-east1-a</option>
+                      <option value="asia-east1-b">asia-east1-b</option>
+                      <option value="asia-southeast1-a">asia-southeast1-a</option>
+                      <option value="asia-southeast1-b">asia-southeast1-b</option>
+                    </select>
+                  </div>
+                  
+                  <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                    <label className="flex items-start gap-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={useOptimizedBundle}
+                        onChange={(e) => setUseOptimizedBundle(e.target.checked)}
+                        className="mt-1 w-5 h-5 rounded border-blue-300"
+                      />
+                      <div>
+                        <span className="font-medium text-blue-800">Use optimized deployment</span>
+                        <p className="text-sm text-blue-700 mt-1">
+                          Download pre-bundled packages from GCS for ~60% faster setup. 
+                          The bundle is GPG-signed for integrity verification.
+                        </p>
+                        {!useOptimizedBundle && (
+                          <p className="text-xs text-blue-600 mt-2">
+                            Recommended for faster deployment. Uses standard apt/npm sources by default.
+                          </p>
+                        )}
+                      </div>
+                    </label>
+                  </div>
+                  
                   {step4Status === 'idle' && (
                     <div className="flex gap-2 flex-wrap">
                       <button
+                        id="recreate-vm-trigger"
                         onClick={async () => {
                           if (!serviceAccountJson || !projectId) {
                             setError('Service account and project ID required');
@@ -1873,133 +2661,117 @@ npm install
                           setStep4Message('Creating VM...');
                           addStep4Log('Creating VM...');
                           
-                          const zone = 'us-central1-a';
+                          const zone = vmZone;
                           const instanceName = 'secureagent-manager';
+                          const startupScript = getStartupScript(useOptimizedBundle);
+
+                          const zones = [vmZone, 'us-central1-b', 'us-central1-c', 'us-west1-a', 'us-west1-b', 'us-east1-c', 'us-east1-d', 'europe-west1-d', 'asia-east1-a'];
+                          let vmCreated = false;
                           
-                          const startupScript = `#!/bin/bash
-set -e
-echo "=== VM Setup Started ==="
-
-# Read secrets from metadata
-GITHUB_TOKEN=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/github_token" -H "Metadata-Flavor: Google")
-DISCORD_BOT_TOKEN=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/discord_bot_token" -H "Metadata-Flavor: Google")
-GITHUB_OWNER=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/github_owner" -H "Metadata-Flavor: Google")
-FIREBASE_STAGING=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_staging" -H "Metadata-Flavor: Google")
-FIREBASE_PRODUCTION=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_production" -H "Metadata-Flavor: Google")
-
-echo "Secrets loaded from metadata"
-
-# Install dependencies
-apt-get update
-apt-get install -y nodejs npm git curl wget gnupg ca-certificates apt-transport-https jq
-
-# Install GitHub CLI
-wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null
-apt-get update
-apt-get install -y gh
-
-# Authenticate GitHub
-echo $GITHUB_TOKEN | gh auth login --with-token
-gh auth setup-git
-
-# Fork SecureAgentBase
-cd /opt
-gh repo fork kallhoffa/SecureAgentBase --clone
-cd SecureAgentBase
-
-# Set GitHub Secrets
-gh secret set FIREBASE_STAGING_PROJECT_ID --body "$FIREBASE_STAGING"
-gh secret set FIREBASE_PRODUCTION_PROJECT_ID --body "$FIREBASE_PRODUCTION"
-
-# Download Kimaki
-npm install -g kimaki@latest
-
-# Create Discord channel
-CHANNEL_DATA=$(curl -s -X POST "https://discord.com/api/v10/guilds/\${DISCORD_GUILD_ID}/channels" \\
-  -H "Authorization: Bot $DISCORD_BOT_TOKEN" \\
-  -H "Content-Type: application/json" \\
-  -d '{"name": "secureagent", "type": 0}')
-
-CHANNEL_ID=$(echo $CHANNEL_DATA | jq -r '.id')
-GUILD_ID=$(echo $CHANNEL_DATA | jq -r '.guild_id')
-
-# Send welcome message
-curl -s -X POST "https://discord.com/api/v10/channels/$CHANNEL_ID/messages" \\
-  -H "Authorization: Bot $DISCORD_BOT_TOKEN" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "content": "Welcome to SecureAgent! Setup complete. Your VM is ready at: https://github.com/'"$GITHUB_OWNER"'/SecureAgentBase"
-  }'
-
-echo "=== VM Setup Complete ==="
-`;
-
-                          try {
-                            const vmResponse = await fetch(
-                              `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances`,
-                              {
-                                method: 'POST',
-                                headers: {
-                                  'Authorization': `Bearer ${token}`,
-                                  'Content-Type': 'application/json'
-                                },
-                                body: JSON.stringify({
-                                  name: instanceName,
-                                  machineType: `zones/${zone}/machineTypes/e2-micro`,
-                                  disks: [{
-                                    boot: true,
-                                    autoDelete: true,
-                                    initializeParams: {
-                                      diskSizeGb: '10',
-                                      sourceImage: 'projects/debian-cloud/global/images/family/debian-11',
-                                    },
-                                  }],
-                                  networkInterfaces: [{
-                                    network: 'global/networks/default',
-                                    accessConfigs: [{ type: 'ONE_TO_ONE_NAT' }],
-                                  }],
-                                  metadata: {
-                                    items: [
-                                      { key: 'startup-script', value: startupScript },
-                                      { key: 'github_token', value: githubPat },
-                                      { key: 'discord_bot_token', value: discordBotToken },
-                                      { key: 'github_owner', value: user?.reloadUserInfo?.screenName || 'user' },
-                                      { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
-                                      { key: 'firebase_production', value: firebaseProductionData?.projectId || '' }
-                                    ]
-                                  }
-                                })
-                              }
-                            );
-                            
-                            if (vmResponse.ok) {
-                              addStep4Log('VM creation started, waiting for completion...');
-                              await new Promise(r => setTimeout(r, 15000));
+                          for (const tryZone of zones) {
+                            try {
+                              setStep4Message(`Creating VM in ${tryZone}...`);
+                              addStep4Log(`Attempting VM creation in ${tryZone}...`);
                               
-                              const instanceResp = await fetch(
-                                `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances/${instanceName}`,
-                                { headers: { 'Authorization': `Bearer ${token}` } }
+                              const vmResponse = await fetch(
+                                `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances`,
+                                {
+                                  method: 'POST',
+                                  headers: {
+                                    'Authorization': `Bearer ${token}`,
+                                    'Content-Type': 'application/json'
+                                  },
+                                  body: JSON.stringify({
+                                    name: instanceName,
+                                    machineType: `zones/${tryZone}/machineTypes/e2-micro`,
+                                    disks: [{
+                                      boot: true,
+                                      autoDelete: true,
+                                      initializeParams: {
+                                        diskSizeGb: '10',
+                                        sourceImage: 'projects/debian-cloud/global/images/family/debian-11',
+                                      },
+                                    }],
+                                    networkInterfaces: [{
+                                      network: 'global/networks/default',
+                                      accessConfigs: [{ type: 'ONE_TO_ONE_NAT' }],
+                                    }],
+                                    metadata: {
+                                      items: [
+                                        { key: 'startup-script', value: startupScript },
+                                        { key: 'github_token', value: githubPat },
+                                        { key: 'discord_bot_token', value: discordBotToken },
+                                        { key: 'github_owner', value: user?.reloadUserInfo?.screenName || 'user' },
+                                        { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
+                                        { key: 'firebase_production', value: firebaseProductionData?.projectId || '' }
+                                      ]
+                                    }
+                                  })
+                                }
                               );
-                              const instanceData = await instanceResp.json();
-                              const ip = instanceData.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP;
                               
-                              if (ip) {
-                                setVmIp(ip);
-                                addStep4Log(`VM ready at ${ip}`);
+                              if (vmResponse.ok) {
+                                setVmZone(tryZone);
+                                addStep4Log(`VM creation started in ${tryZone}, waiting for completion...`);
+                                await new Promise(r => setTimeout(r, 15000));
+                                
+                                const instanceResp = await fetch(
+                                  `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances/${instanceName}`,
+                                  { headers: { 'Authorization': `Bearer ${token}` } }
+                                );
+                                const instanceData = await instanceResp.json();
+                                const ip = instanceData.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP;
+                                
+                                if (ip) {
+                                  setVmIp(ip);
+                                  addStep4Log(`VM ready at ${ip}`);
+                                }
+                                vmCreated = true;
+                                setStep4Status('complete');
+                                setStep4Message('VM created successfully!');
+                                expandNextStep(7);
+                                break;
+                              } else {
+                                const err = await vmResponse.json();
+                                const errStr = JSON.stringify(err);
+                                const errMsg = err.error?.message || '';
+                                const errStatus = err.error?.status || '';
+                                const statusMsg = err.status?.message || '';
+                                
+                                addStep4Log(`VM response not ok: ${errMsg || statusMsg || errStr}`);
+                                
+                                if (errStr.toLowerCase().includes('zone') && 
+                                    (errStr.toLowerCase().includes('exhausted') || 
+                                     errStr.toLowerCase().includes('unavailable') ||
+                                     errStr.toLowerCase().includes('resource'))) {
+                                  addStep4Log(`Zone ${tryZone} may be out of capacity, trying next zone...`);
+                                  continue;
+                                }
+                                
+                                if (errMsg.includes('ZONE_RESOURCE_POOL_EXHAUSTED') || 
+                                    errStr.includes('RESOURCE_EXHAUSTED') ||
+                                    errStr.includes('resource_availability') ||
+                                    errStatus === 'RESOURCE_EXHAUSTED' ||
+                                    statusMsg.includes('ZONE_RESOURCE_POOL_EXHAUSTED') ||
+                                    (errMsg.includes('unavailable') && errMsg.includes('zone'))) {
+                                  addStep4Log(`Zone ${tryZone} out of capacity, trying next zone...`);
+                                  continue;
+                                }
+                                
+                                addStep4Log(`VM creation failed: ${errMsg || statusMsg || errStr}`);
+                                setError(`Failed to create VM: ${errMsg || statusMsg}`);
+                                setStep4Status('error');
+                                break;
                               }
-                              setStep4Status('complete');
-                              setStep4Message('VM created successfully!');
-                              expandNextStep(7);
-                            } else {
-                              const err = await vmResponse.json();
-                              addStep4Log(`VM creation failed: ${err.error?.message || 'Unknown error'}`);
-                              setError(`Failed to create VM: ${err.error?.message}`);
-                              setStep4Status('error');
+                            } catch (e) {
+                              addStep4Log(`Error creating VM in ${tryZone}: ${e.message}, trying next zone...`);
+                              continue;
                             }
-                          } catch (e) {
-                            addStep4Log(`Error: ${e.message}`);
-                            setError(e.message);
+                          }
+                          
+                          if (!vmCreated && step4Status !== 'error') {
+                            addStep4Log('All zones exhausted, could not create VM');
+                            setError('All zones are out of capacity. Please try again later.');
                             setStep4Status('error');
                           }
                         }}
@@ -2037,10 +2809,252 @@ echo "=== VM Setup Complete ==="
                       </button>
                     </div>
                   )}
+
+                  <div className="mt-4 flex gap-2">
+                      <button
+                        onClick={async () => {
+                          if (!serviceAccountJson || !projectId) {
+                            setError('Service account and project ID required');
+                            return;
+                          }
+                          setStep4Status('enabling');
+                          setStep4Message('Getting service account token...');
+                          addStep4Log('Starting VM recreation process...');
+                          
+                          const token = await getServiceAccountToken();
+                          if (!token) {
+                            setError('Failed to authenticate with service account');
+                            setStep4Status('error');
+                            return;
+                          }
+                          addStep4Log('Service account authenticated');
+                          
+                          const apis = [
+                            { name: 'compute.googleapis.com', displayName: 'Compute Engine API' },
+                            { name: 'cloudresourcemanager.googleapis.com', displayName: 'Cloud Resource Manager API' },
+                            { name: 'serviceusage.googleapis.com', displayName: 'Service Usage API' }
+                          ];
+                          
+                          for (const api of apis) {
+                            setStep4Message(`Enabling ${api.displayName}...`);
+                            addStep4Log(`Enabling ${api.displayName}...`);
+                            
+                            try {
+                              const response = await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/${api.name}:enable`, {
+                                method: 'POST',
+                                headers: {
+                                  'Authorization': `Bearer ${token}`,
+                                  'Content-Type': 'application/json'
+                                }
+                              });
+                              
+                              if (response.ok) {
+                                addStep4Log(`${api.displayName} enabled`);
+                              } else {
+                                const errData = await response.json().catch(() => ({}));
+                                const errMsg = errData.error?.message || '';
+                                if (errMsg.includes('billing')) {
+                                  setError('Billing must be enabled on your GCP project');
+                                  addStep4Log(`ERROR: Billing required for ${api.displayName}`);
+                                } else if (errMsg.includes('already') || errMsg.includes('enabled')) {
+                                  addStep4Log(`${api.displayName} already enabled`);
+                                } else {
+                                  addStep4Log(`Note: ${errMsg || 'Continuing anyway...'}`);
+                                }
+                              }
+                            } catch (e) {
+                              addStep4Log(`Error enabling ${api.displayName}: ${e.message}`);
+                            }
+                            
+                            await new Promise(r => setTimeout(r, 1500));
+                          }
+                          
+                          setStep4Message('Creating VM...');
+                          addStep4Log('Creating VM...');
+                          
+                          const zone = vmZone;
+                          const instanceName = 'secureagent-manager';
+                          const startupScript = getStartupScript(useOptimizedBundle);
+
+                          const zones = [vmZone, 'us-central1-b', 'us-central1-c', 'us-west1-a', 'us-west1-b', 'us-east1-c', 'us-east1-d', 'europe-west1-d', 'asia-east1-a'];
+                          let vmCreated = false;
+                          
+                          for (const tryZone of zones) {
+                            try {
+                              setStep4Message(`Creating VM in ${tryZone}...`);
+                              addStep4Log(`Attempting VM creation in ${tryZone}...`);
+                              
+                              const vmResponse = await fetch(
+                                `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances`,
+                                {
+                                  method: 'POST',
+                                  headers: {
+                                    'Authorization': `Bearer ${token}`,
+                                    'Content-Type': 'application/json'
+                                  },
+                                  body: JSON.stringify({
+                                    name: instanceName,
+                                    machineType: `zones/${tryZone}/machineTypes/e2-micro`,
+                                    disks: [{
+                                      boot: true,
+                                      autoDelete: true,
+                                      initializeParams: {
+                                        diskSizeGb: '10',
+                                        sourceImage: 'projects/debian-cloud/global/images/family/debian-11',
+                                      },
+                                    }],
+                                    networkInterfaces: [{
+                                      network: 'global/networks/default',
+                                      accessConfigs: [{ type: 'ONE_TO_ONE_NAT' }],
+                                    }],
+                                    metadata: {
+                                      items: [
+                                        { key: 'startup-script', value: startupScript },
+                                        { key: 'github_token', value: githubPat },
+                                        { key: 'discord_bot_token', value: discordBotToken },
+                                        { key: 'github_owner', value: user?.reloadUserInfo?.screenName || 'user' },
+                                        { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
+                                        { key: 'firebase_production', value: firebaseProductionData?.projectId || '' }
+                                      ]
+                                    }
+                                  })
+                                }
+                              );
+                              
+                              if (vmResponse.ok) {
+                                setVmZone(tryZone);
+                                addStep4Log(`VM creation started in ${tryZone}, waiting for completion...`);
+                                await new Promise(r => setTimeout(r, 15000));
+                                
+                                const instanceResp = await fetch(
+                                  `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances/${instanceName}`,
+                                  { headers: { 'Authorization': `Bearer ${token}` } }
+                                );
+                                const instanceData = await instanceResp.json();
+                                const ip = instanceData.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP;
+                                
+                                if (ip) {
+                                  setVmIp(ip);
+                                  addStep4Log(`VM ready at ${ip}`);
+                                }
+                                vmCreated = true;
+                                setStep4Status('complete');
+                                setStep4Message('VM created successfully!');
+                                expandNextStep(7);
+                                break;
+                              } else {
+                                const err = await vmResponse.json();
+                                const errStr = JSON.stringify(err);
+                                const errMsg = err.error?.message || '';
+                                const errStatus = err.error?.status || '';
+                                const statusMsg = err.status?.message || '';
+                                
+                                addStep4Log(`VM response not ok: ${errMsg || statusMsg || errStr}`);
+                                
+                                if (errStr.toLowerCase().includes('zone') && 
+                                    (errStr.toLowerCase().includes('exhausted') || 
+                                     errStr.toLowerCase().includes('unavailable') ||
+                                     errStr.toLowerCase().includes('resource'))) {
+                                  addStep4Log(`Zone ${tryZone} may be out of capacity, trying next zone...`);
+                                  continue;
+                                }
+                                
+                                if (errMsg.includes('ZONE_RESOURCE_POOL_EXHAUSTED') || 
+                                    errStr.includes('RESOURCE_EXHAUSTED') ||
+                                    errStr.includes('resource_availability') ||
+                                    errStatus === 'RESOURCE_EXHAUSTED' ||
+                                    statusMsg.includes('ZONE_RESOURCE_POOL_EXHAUSTED') ||
+                                    (errMsg.includes('unavailable') && errMsg.includes('zone'))) {
+                                  addStep4Log(`Zone ${tryZone} out of capacity, trying next zone...`);
+                                  continue;
+                                }
+                                
+                                addStep4Log(`VM creation failed: ${errMsg || statusMsg || errStr}`);
+                                setError(`Failed to create VM: ${errMsg || statusMsg}`);
+                                setStep4Status('error');
+                                break;
+                              }
+                            } catch (e) {
+                              addStep4Log(`Error creating VM in ${tryZone}: ${e.message}, trying next zone...`);
+                              continue;
+                            }
+                          }
+                          
+                          if (!vmCreated && step4Status !== 'error') {
+                            addStep4Log('All zones exhausted, could not create VM');
+                            setError('All zones are out of capacity. Please try again later.');
+                            setStep4Status('error');
+                          }
+                        }}
+                        className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg"
+                      >
+                        Recreate VM
+                      </button>
+                    </div>
                 </>
               )}
             </div>
           )}
+        </div>
+
+        <div className="mt-8 pt-6 border-t border-gray-200">
+          <h2 className="text-lg font-semibold text-gray-800 mb-4">Resources</h2>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <a
+              href={`https://console.cloud.google.com/compute/instances?project=${projectId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 p-3 bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 text-sm text-gray-700"
+            >
+              <span>☁️</span>
+              GCP Compute Console
+            </a>
+            <a
+              href="https://console.firebase.google.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 p-3 bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 text-sm text-gray-700"
+            >
+              <span>🔥</span>
+              Firebase Console
+            </a>
+            <a
+              href="https://github.com/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 p-3 bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 text-sm text-gray-700"
+            >
+              <span>🐙</span>
+              GitHub
+            </a>
+            <a
+              href="https://discord.com/developers/applications"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 p-3 bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 text-sm text-gray-700"
+            >
+              <span>💬</span>
+              Discord Developer Portal
+            </a>
+            <a
+              href="https://github.com/kallhoffa/SecureAgentBase"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 p-3 bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 text-sm text-gray-700"
+            >
+              <span>📦</span>
+              SecureAgentBase (GitHub)
+            </a>
+            <a
+              href="https://github.com/kallhoffa/kimaki"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 p-3 bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 text-sm text-gray-700"
+            >
+              <span>🤖</span>
+              Kimaki CLI
+            </a>
+          </div>
         </div>
 
         <div className="flex items-center justify-between pt-4 border-t">
@@ -2051,13 +3065,20 @@ echo "=== VM Setup Complete ==="
             <Trash2 size={18} />
             Disconnect Infrastructure
           </button>
-          <button
-            onClick={handleSaveConfig}
-            disabled={saving || !projectId.trim()}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium disabled:opacity-50"
-          >
-            {saving ? 'Saving...' : 'Save Configuration'}
-          </button>
+          {!useFirestore && (
+            <button
+              onClick={handleSaveConfig}
+              disabled={saving || !projectId.trim()}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium disabled:opacity-50"
+            >
+              {saving ? 'Saving...' : 'Save Configuration'}
+            </button>
+          )}
+          {useFirestore && (
+            <span className="text-sm text-gray-500">
+              Auto-saving enabled
+            </span>
+          )}
         </div>
       </div>
     </div>
