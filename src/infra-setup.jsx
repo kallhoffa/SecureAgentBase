@@ -495,6 +495,7 @@ const InfraSetup = ({ db }) => {
   const [discordBotTokenInput, setDiscordBotTokenInput] = useState('');
   const [discordGuildId, setDiscordGuildId] = useState('');
   const [detectedGuilds, setDetectedGuilds] = useState([]);
+  const [discordDetecting, setDiscordDetecting] = useState(false);
   const [vmHttpsUrl, setVmHttpsUrl] = useState('');
   const [formProgressLoaded, setFormProgressLoaded] = useState(false);
   const [useOptimizedBundle, setUseOptimizedBundle] = useState(false);
@@ -1160,6 +1161,7 @@ const InfraSetup = ({ db }) => {
         setGithubAppInstalled(configData.github_app_installed || false);
         setVmIp(configData.vm_ip || '');
         setDiscordBotToken(configData.discord_bot_token || '');
+        setDiscordGuildId(configData.discord_guild_id || '');
         setFirebaseConfigStaging(configData.firebase_staging ? JSON.stringify(configData.firebase_staging, null, 2) : '');
         setFirebaseConfigProduction(configData.firebase_production ? JSON.stringify(configData.firebase_production, null, 2) : '');
         setFirebaseStagingData(configData.firebase_staging || {});
@@ -1307,7 +1309,8 @@ const InfraSetup = ({ db }) => {
           gcp: {
             projectId: projectId.trim(),
             serviceAccountJson,
-            discordBotToken
+            discordBotToken,
+            discordGuildId
           },
           github: {
             pat: githubPat
@@ -1741,29 +1744,34 @@ const InfraSetup = ({ db }) => {
 
     try {
       // Auto-detect Discord servers the bot is in
-      if (!discordGuildId) {
-        try {
-          const guildsResponse = await fetch('https://discord.com/api/v10/users/@me/guilds', {
-            headers: {
-              'Authorization': `Bot ${discordBotTokenInput}`,
-            },
-          });
+      setDiscordDetecting(true);
+      try {
+        const guildsResponse = await fetch('https://discord.com/api/v10/users/@me/guilds', {
+          headers: {
+            'Authorization': `Bot ${discordBotTokenInput}`,
+          },
+        });
+        
+        if (guildsResponse.ok) {
+          const guilds = await guildsResponse.json();
+          setDetectedGuilds(guilds);
           
-          if (guildsResponse.ok) {
-            const guilds = await guildsResponse.json();
-            setDetectedGuilds(guilds);
-            
-            if (guilds.length === 1) {
-              setDiscordGuildId(guilds[0].id);
-              console.log('Auto-detected Discord server:', guilds[0].name);
-            } else if (guilds.length > 1) {
-              console.log(`Bot is in ${guilds.length} servers. Please select one.`);
-            }
+          if (guilds.length === 1) {
+            setDiscordGuildId(guilds[0].id);
+            console.log('Auto-detected Discord server:', guilds[0].name);
+          } else if (guilds.length > 1) {
+            console.log(`Bot is in ${guilds.length} servers. Please select one.`);
+          } else {
+            console.log('Bot is not in any servers. Add the bot to your Discord server first.');
+            setError('Bot is not in any servers. Invite the bot to your Discord server first.');
           }
-        } catch (guildErr) {
-          console.warn('Could not detect Discord servers:', guildErr.message);
+        } else {
+          console.warn('Could not fetch Discord guilds');
         }
+      } catch (guildErr) {
+        console.warn('Could not detect Discord servers:', guildErr.message);
       }
+      setDiscordDetecting(false);
       
       if (githubPat && githubRepoUrl) {
         try {
@@ -2023,6 +2031,7 @@ const InfraSetup = ({ db }) => {
                         setProjectId(decrypted.gcp.projectId || '');
                         setServiceAccountJson(decrypted.gcp.serviceAccountJson || null);
                         setDiscordBotToken(decrypted.gcp.discordBotToken || '');
+                        setDiscordGuildId(decrypted.gcp.discordGuildId || '');
                       }
                       if (decrypted.github) {
                         setGithubPat(decrypted.github.pat || '');
@@ -2088,7 +2097,8 @@ const InfraSetup = ({ db }) => {
                 gcp: {
                   projectId,
                   serviceAccountJson,
-                  discordBotToken
+                  discordBotToken,
+                  discordGuildId
                 },
                 github: {
                   pat: githubPat
@@ -2603,19 +2613,29 @@ const InfraSetup = ({ db }) => {
                         {detectedGuilds.length === 1 && ` - will use: ${detectedGuilds[0].name}`}
                       </p>
                     )}
+                    {discordDetecting && (
+                      <p className="text-xs text-blue-600 mt-1 animate-pulse">
+                        Detecting Discord servers...
+                      </p>
+                    )}
                   </div>
-                  {error && (
+                  {error && discordGuildId && (
+                    <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-700 text-sm">
+                      ⚠️ {error} - You can still continue, but Discord channel won't be created.
+                    </div>
+                  )}
+                  {error && !discordGuildId && (
                     <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
                       {error}
                     </div>
                   )}
                   <button
                     onClick={handleCreateDiscordBot}
-                    disabled={saving || !discordBotTokenInput.trim() || !hasGcpAccess()}
+                    disabled={saving || discordDetecting || !discordBotTokenInput.trim() || !hasGcpAccess()}
                     className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Bot size={18} />
-                    {saving ? 'Saving...' : 'Save Token'}
+                    {saving || discordDetecting ? 'Detecting...' : 'Save Token'}
                   </button>
                 </>
               )}
