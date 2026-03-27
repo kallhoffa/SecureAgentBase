@@ -404,30 +404,33 @@ if [ -d "/opt/gh" ]; then
   cp /opt/gh/bin/gh /usr/local/bin/gh 2>/dev/null && chmod +x /usr/local/bin/gh && echo "DEBUG: gh from bundle ready"
 fi
 
-# Create Discord channel
-echo "DEBUG: Creating Discord channel..."
-echo "DEBUG: DISCORD_GUILD_ID=$DISCORD_GUILD_ID"
-echo "DEBUG: DISCORD_BOT_TOKEN length=\${#DISCORD_BOT_TOKEN}"
-CHANNEL_DATA=$(curl -s -X POST "https://discord.com/api/v10/guilds/\${DISCORD_GUILD_ID}/channels" \\
-  -H "Authorization: Bot $DISCORD_BOT_TOKEN" \\
-  -H "Content-Type: application/json" \\
-  -d '{"name": "secureagent", "type": 0}')
+# Create Discord channel (if guild ID is available)
+if [ -n "$DISCORD_GUILD_ID" ] && [ "$DISCORD_GUILD_ID" != "null" ]; then
+  echo "DEBUG: Creating Discord channel..."
+  echo "DEBUG: DISCORD_GUILD_ID=$DISCORD_GUILD_ID"
+  echo "DEBUG: DISCORD_BOT_TOKEN length=\${#DISCORD_BOT_TOKEN}"
+  CHANNEL_DATA=$(curl -s -X POST "https://discord.com/api/v10/guilds/\${DISCORD_GUILD_ID}/channels" \
+    -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"name": "secureagent", "type": 0}')
 
-echo "DEBUG: Discord channel response: $CHANNEL_DATA"
+  echo "DEBUG: Discord channel response: $CHANNEL_DATA"
 
-CHANNEL_ID=$(echo $CHANNEL_DATA | jq -r '.id')
-GUILD_ID=$(echo $CHANNEL_DATA | jq -r '.guild_id')
+  CHANNEL_ID=$(echo $CHANNEL_DATA | jq -r '.id')
 
-if [ "$CHANNEL_ID" = "null" ] || [ -z "$CHANNEL_ID" ]; then
-  echo "WARNING: Failed to create Discord channel (channel ID is empty)"
+  if [ "$CHANNEL_ID" = "null" ] || [ -z "$CHANNEL_ID" ]; then
+    echo "WARNING: Failed to create Discord channel"
+  else
+    echo "DEBUG: Posting welcome message..."
+    curl -s -X POST "https://discord.com/api/v10/channels/$CHANNEL_ID/messages" \
+      -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
+      -H "Content-Type: application/json" \
+      -d '{
+        "content": "Welcome to SecureAgent! Setup complete. Your repo is ready at: https://github.com/'"$GITHUB_OWNER"'/"$FIREBASE_STAGING"
+      }' || echo "WARNING: Failed to send Discord message"
+  fi
 else
-  echo "DEBUG: Posting welcome message..."
-  curl -s -X POST "https://discord.com/api/v10/channels/$CHANNEL_ID/messages" \\
-    -H "Authorization: Bot $DISCORD_BOT_TOKEN" \\
-    -H "Content-Type: application/json" \\
-    -d '{
-      "content": "Welcome to SecureAgent! Setup complete. Your repo is ready at: https://github.com/'"$GITHUB_OWNER"'/"$FIREBASE_STAGING"
-    }' || echo "WARNING: Failed to send Discord message"
+  echo "DEBUG: Skipping Discord channel (no guild ID provided)"
 fi
 
 echo "DEBUG: Discord setup done"
@@ -1124,6 +1127,8 @@ const InfraSetup = ({ db }) => {
       firebaseConfigStaging,
       firebaseConfigProduction,
       githubPat,
+      discordBotToken,
+      discordGuildId,
       expandedSteps,
       step2Complete,
       serviceAccountJson,
@@ -1132,7 +1137,7 @@ const InfraSetup = ({ db }) => {
     };
     console.log('Saving form progress:', formData);
     saveFormProgress(formData);
-  }, [formProgressLoaded, firebaseConfigStaging, firebaseConfigProduction, githubPat, expandedSteps, step2Complete, serviceAccountJson, projectId, gcpAccessToken]);
+  }, [formProgressLoaded, firebaseConfigStaging, firebaseConfigProduction, githubPat, discordBotToken, discordGuildId, expandedSteps, step2Complete, serviceAccountJson, projectId, gcpAccessToken]);
 
   useEffect(() => {
     const loadInfraConfig = async () => {
@@ -1160,8 +1165,8 @@ const InfraSetup = ({ db }) => {
         setGcpAccessToken(configData.gcp_access_token || null);
         setGithubAppInstalled(configData.github_app_installed || false);
         setVmIp(configData.vm_ip || '');
-        setDiscordBotToken(configData.discord_bot_token || '');
-        setDiscordGuildId(configData.discord_guild_id || '');
+        setDiscordBotToken(configData.discord_bot_token || configData.discordBotToken || '');
+        setDiscordGuildId(configData.discord_guild_id || configData.discordGuildId || '');
         setFirebaseConfigStaging(configData.firebase_staging ? JSON.stringify(configData.firebase_staging, null, 2) : '');
         setFirebaseConfigProduction(configData.firebase_production ? JSON.stringify(configData.firebase_production, null, 2) : '');
         setFirebaseStagingData(configData.firebase_staging || {});
