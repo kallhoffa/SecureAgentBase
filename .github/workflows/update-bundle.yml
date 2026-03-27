@@ -57,11 +57,15 @@ jobs:
               debian-packages.tar.gz
 
       - name: Upload to GCS
+        env:
+          GCS_BUCKET: ${{ secrets.GCS_BUCKET }}
         run: |
-          gsutil cp debian-packages.tar.gz gs://$GCS_BUCKET/
-          gsutil cp debian-packages.tar.gz.asc gs://$GCS_BUCKET/
+          gsutil cp debian-packages.tar.gz gs://${GCS_BUCKET}/
+          gsutil cp debian-packages.tar.gz.asc gs://${GCS_BUCKET}/
 
       - name: Verify public bucket access
+        env:
+          GCS_BUCKET: ${{ secrets.GCS_BUCKET }}
         run: |
-          curl -sI "https://storage.googleapis.com/$GCS_BUCKET/debian-packages.tar.gz" | head -1
-          curl -sI "https://storage.googleapis.com/$GCS_BUCKET/debian-packages.tar.gz.asc" | head -1
+          curl -sI "https://storage.googleapis.com/${GCS_BUCKET}/debian-packages.tar.gz" | head -1
+          curl -sI "https://storage.googleapis.com/${GCS_BUCKET}/debian-packages.tar.gz.asc" | head -1
