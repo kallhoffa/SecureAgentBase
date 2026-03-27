@@ -126,7 +126,7 @@ const CreateApp = ({ db }) => {
     const instanceName = `kimaki-${appName}`;
     const startupScript = `#!/bin/bash
 apt-get update
-apt-get install -y nodejs npm git curl
+apt-get install -y --fix-missing nodejs npm git curl
 
 cd /opt
 git clone https://github.com/argbase/kimaki.git

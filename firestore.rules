@@ -30,5 +30,10 @@ service cloud.firestore {
     match /infra_configs/{userId} {
       allow read, write: if isAuthenticated() && userId == request.auth.uid;
     }
+    
+    match /projects/{projectId} {
+      allow read, write: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+    }
   }
 }
