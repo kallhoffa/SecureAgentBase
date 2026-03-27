@@ -1,0 +1,62 @@
+name: Update Package Bundle
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * 0'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/update-bundle.yml'
+
+jobs:
+  build-and-sign:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker
+        uses: docker/setup-buildx-action@v3
+
+      - name: Import GPG key
+        run: |
+          echo "$GPG_PRIVATE_KEY" | gpg --import --no-tty
+
+      - name: Set up GCS auth
+        run: |
+          echo '$GCP_SA_KEY' > /tmp/gcs-sa.json
+          gcloud auth activate-service-account --key-file=/tmp/gcs-sa.json
+
+      - name: Build bundle
+        run: |
+          docker run --rm -v $PWD/bundle:/output debian:stable bash -c "
+            apt-get update && apt-get install -y dpkg-dev
+            mkdir -p /output/packages
+            cd /var/cache/apt/archives
+            apt-get download nodejs npm git curl wget gnupg jq ca-certificates apt-transport-https
+            cp *.deb /output/packages/ 2>/dev/null || true
+          "
+
+      - name: Create bundle
+        run: |
+          tar -czvf debian-packages.tar.gz bundle/packages/
+
+      - name: Sign bundle
+        run: |
+          gpg --batch --yes --pinentry-mode loopback \
+              --passphrase "$GPG_PASSPHRASE" \
+              --armor --detach-sign \
+              --local-user bundles@secureagent.app \
+              debian-packages.tar.gz
+
+      - name: Upload to GCS
+        run: |
+          gsutil cp debian-packages.tar.gz gs://$GCS_BUCKET/
+          gsutil cp debian-packages.tar.gz.asc gs://$GCS_BUCKET/
+
+      - name: Verify public bucket access
+        run: |
+          curl -sI "https://storage.googleapis.com/$GCS_BUCKET/debian-packages.tar.gz" | head -1
+          curl -sI "https://storage.googleapis.com/$GCS_BUCKET/debian-packages.tar.gz.asc" | head -1

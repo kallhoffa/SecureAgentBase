@@ -87,6 +87,138 @@ Edit `firestore.rules` to customize permissions
 - [AGENTS.md](./AGENTS.md) - Developer guide for agents
 - [LIFECYCLE.md](./LIFECYCLE.md) - Engineering philosophy
 
+## VM Package Bundle (Fast Deployment)
+
+The infra-setup wizard includes an optional fast deployment mode that downloads pre-bundled packages from GCS instead of installing via apt/npm. This can reduce VM setup time by ~60%.
+
+### GPG Signing & Automated Bundle Updates
+
+To ensure bundle integrity, packages are signed with GPG. The bundle is automatically updated via GitHub Actions.
+
+#### One-Time Setup
+
+1. **Generate GPG key pair:**
+   ```bash
+   gpg --batch --gen-key <<EOF
+   Key-Type: 1
+   Key-Length: 4096
+   Subkey-Type: 1
+   Subkey-Length: 4096
+   Name-Real: SecureAgent Bundle Signer
+   Name-Email: bundles@example.com
+   Expire-Date: 1y
+   %no-protection
+   %commit
+   EOF
+   ```
+
+2. **Export keys:**
+   ```bash
+   gpg --armor --export bundles@example.com > public.gpg
+   gpg --armor --export-secret-key bundles@example.com > private.gpg
+   ```
+
+3. **Create GCS bucket:**
+   ```bash
+   gsutil mb gs://secureagent-base-bundles
+   gsutil iam ch allUsers:objectViewer gs://secureagent-base-bundles
+   ```
+
+4. **Create service account for GCS uploads:**
+   ```bash
+   gcloud iam service-accounts create bundle-uploader \
+     --display-name="Bundle Uploader"
+   
+   gcloud projects add-iam-policy-binding YOUR_PROJECT_ID \
+     --member="serviceAccount:bundle-uploader@YOUR_PROJECT_ID.iam.gserviceaccount.com" \
+     --role="roles/storage.objectAdmin"
+   
+   gcloud iam service-accounts keys create bundle-uploader.json \
+     --iam-account=bundle-uploader@YOUR_PROJECT_ID.iam.gserviceaccount.com
+   ```
+
+5. **Add GitHub Secrets:**
+   - `GPG_PRIVATE_KEY`: Contents of private.gpg
+   - `GPG_PASSPHRASE`: Empty or your passphrase
+   - `GCS_BUCKET`: secureagent-base-bundles
+   - `GCP_SA_KEY`: Contents of bundle-uploader.json
+
+6. **Extract public key for embedding:**
+   ```bash
+   cat public.gpg | tr -d '\n' | sed 's/BEGIN PGP PUBLIC KEY BLOCK/BEGIN PGP PUBLIC KEY BLOCK/'
+   # Add this to BUNDLE_SIGNER_KEY constant in infra-setup.jsx
+   ```
+
+#### GitHub Actions Workflow
+
+Create `.github/workflows/update-bundle.yml`:
+
+```yaml
+name: Update Package Bundle
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly (Sunday midnight)
+
+jobs:
+  build-and-sign:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Import GPG key
+        run: |
+          echo "$GPG_PRIVATE_KEY" | gpg --import --no-tty
+
+      - name: Set up GCS auth
+        run: |
+          echo '$GCP_SA_KEY' > /tmp/gcs-sa.json
+          gcloud auth activate-service-account --key-file=/tmp/gcs-sa.json
+
+      - name: Build bundle
+        run: |
+          docker run --rm -v $PWD/bundle:/output debian:stable bash -c "
+            apt-get update && apt-get install -y dpkg-dev
+            mkdir -p /output/packages
+            cd /var/cache/apt/archives
+            apt-get download nodejs npm git curl wget gnupg jq ca-certificates apt-transport-https
+            cp *.deb /output/packages/
+          "
+
+      - name: Create bundle
+        run: |
+          tar -czvf debian-packages.tar.gz bundle/packages/
+
+      - name: Sign bundle
+        run: |
+          gpg --batch --yes --pinentry-mode loopback \
+              --passphrase "$GPG_PASSPHRASE" \
+              --armor --detach-sign \
+              --local-user bundles@example.com \
+              debian-packages.tar.gz
+
+      - name: Upload to GCS
+        run: |
+          gsutil cp debian-packages.tar.gz gs://$GCS_BUCKET/
+          gsutil cp debian-packages.tar.gz.asc gs://$GCS_BUCKET/
+```
+
+#### Bundle Contents
+
+The bundle includes pre-downloaded .deb packages for:
+- nodejs
+- npm
+- git
+- curl
+- wget
+- gnupg
+- jq
+- ca-certificates
+- apt-transport-https
+
 ## License
 
 Apache 2.0
