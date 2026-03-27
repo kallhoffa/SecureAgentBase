@@ -339,7 +339,7 @@ else
   cd SecureAgentBase
   # Reinitialize git for fresh repo (single commit)
   rm -rf .git
-  git init
+  git init -b main
   git add -A
   git commit -m "Initial commit from SecureAgentBase"
   git remote add upstream https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
