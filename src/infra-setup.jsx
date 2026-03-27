@@ -269,11 +269,14 @@ echo "=== VM Setup Started ==="
 
 GITHUB_TOKEN=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/github_token" -H "Metadata-Flavor: Google")
 DISCORD_BOT_TOKEN=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/discord_bot_token" -H "Metadata-Flavor: Google")
+DISCORD_GUILD_ID=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/discord_guild_id" -H "Metadata-Flavor: Google")
 GITHUB_OWNER=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/github_owner" -H "Metadata-Flavor: Google")
 FIREBASE_STAGING=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_staging" -H "Metadata-Flavor: Google")
 FIREBASE_PRODUCTION=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_production" -H "Metadata-Flavor: Google")
 
 echo "Secrets loaded from metadata"
+echo "DEBUG: FIREBASE_STAGING=$FIREBASE_STAGING"
+echo "DEBUG: FIREBASE_PRODUCTION=$FIREBASE_PRODUCTION"
 
 # Remove man-db to speed up installs
 apt-get remove --purge -y man-db 2>/dev/null || true
@@ -338,7 +341,7 @@ if gh repo view "\${REPO_OWNER}/\${FIREBASE_STAGING}" 2>/dev/null; then
   REPO_EXISTS=true
 fi
 
-if [ "$REPO_EXISTS" = true ]; then
+  if [ "$REPO_EXISTS" = true ]; then
   echo "Repo exists, pushing..."
   git remote add origin "https://github.com/\${REPO_OWNER}/\${FIREBASE_STAGING}.git" 2>/dev/null || true
   git push -u origin main --force || { echo "Push failed!"; exit 1; }
@@ -346,33 +349,49 @@ else
   echo "Creating new repo..."
   gh repo create "$FIREBASE_STAGING" --public --source=. --push || { echo "Repo create failed!"; exit 1; }
 fi
+echo "DEBUG: GitHub push done"
 
 # Set GitHub Secrets
-gh secret set FIREBASE_STAGING_PROJECT_ID --body "$FIREBASE_STAGING" -R "\${REPO_OWNER}/\${FIREBASE_STAGING}" 2>/dev/null || true
-gh secret set FIREBASE_PRODUCTION_PROJECT_ID --body "$FIREBASE_PRODUCTION" -R "\${REPO_OWNER}/\${FIREBASE_STAGING}" 2>/dev/null || true
+echo "DEBUG: Setting GitHub secrets..."
+gh secret set FIREBASE_STAGING_PROJECT_ID --body "$FIREBASE_STAGING" -R "\${REPO_OWNER}/\${FIREBASE_STAGING}" 2>/dev/null || echo "WARNING: Failed to set FIREBASE_STAGING_PROJECT_ID"
+gh secret set FIREBASE_PRODUCTION_PROJECT_ID --body "$FIREBASE_PRODUCTION" -R "\${REPO_OWNER}/\${FIREBASE_STAGING}" 2>/dev/null || echo "WARNING: Failed to set FIREBASE_PRODUCTION_PROJECT_ID"
+echo "DEBUG: GitHub secrets set"
 
 # Add upstream back for future syncing
 git remote add upstream https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
 
 # Download Kimaki
-npm install -g kimaki@latest 2>/dev/null || true
+echo "DEBUG: Installing Kimaki..."
+npm install -g kimaki@latest 2>/dev/null || echo "WARNING: Kimaki install failed (non-critical)"
+echo "DEBUG: Kimaki install done"
 
 # Create Discord channel
+echo "DEBUG: Creating Discord channel..."
+echo "DEBUG: DISCORD_GUILD_ID=$DISCORD_GUILD_ID"
+echo "DEBUG: DISCORD_BOT_TOKEN length=\${#DISCORD_BOT_TOKEN}"
 CHANNEL_DATA=$(curl -s -X POST "https://discord.com/api/v10/guilds/\${DISCORD_GUILD_ID}/channels" \\
   -H "Authorization: Bot $DISCORD_BOT_TOKEN" \\
   -H "Content-Type: application/json" \\
   -d '{"name": "secureagent", "type": 0}')
 
+echo "DEBUG: Discord channel response: $CHANNEL_DATA"
+
 CHANNEL_ID=$(echo $CHANNEL_DATA | jq -r '.id')
 GUILD_ID=$(echo $CHANNEL_DATA | jq -r '.guild_id')
 
-curl -s -X POST "https://discord.com/api/v10/channels/$CHANNEL_ID/messages" \\
-  -H "Authorization: Bot $DISCORD_BOT_TOKEN" \\
-  -H "Content-Type: application/json" \\
-  -d '{
-    "content": "Welcome to SecureAgent! Setup complete. Your repo is ready at: https://github.com/'"$GITHUB_OWNER"'/"$FIREBASE_STAGING"
-  }'
+if [ "$CHANNEL_ID" = "null" ] || [ -z "$CHANNEL_ID" ]; then
+  echo "WARNING: Failed to create Discord channel (channel ID is empty)"
+else
+  echo "DEBUG: Posting welcome message..."
+  curl -s -X POST "https://discord.com/api/v10/channels/$CHANNEL_ID/messages" \\
+    -H "Authorization: Bot $DISCORD_BOT_TOKEN" \\
+    -H "Content-Type: application/json" \\
+    -d '{
+      "content": "Welcome to SecureAgent! Setup complete. Your repo is ready at: https://github.com/'"$GITHUB_OWNER"'/"$FIREBASE_STAGING"
+    }' || echo "WARNING: Failed to send Discord message"
+fi
 
+echo "DEBUG: Discord setup done"
 echo "=== VM Setup Complete ==="
 `;
 };
@@ -2655,6 +2674,7 @@ const InfraSetup = ({ db }) => {
                                     { key: 'startup-script', value: startupScript },
                                     { key: 'github_token', value: githubPat },
                                     { key: 'discord_bot_token', value: discordBotToken },
+                                    { key: 'discord_guild_id', value: '' },
                                     { key: 'github_owner', value: user?.reloadUserInfo?.screenName || 'user' },
                                     { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
                                     { key: 'firebase_production', value: firebaseProductionData?.projectId || '' }
@@ -2917,6 +2937,7 @@ const InfraSetup = ({ db }) => {
                                         { key: 'startup-script', value: startupScript },
                                         { key: 'github_token', value: githubPat },
                                         { key: 'discord_bot_token', value: discordBotToken },
+                                        { key: 'discord_guild_id', value: '' },
                                         { key: 'github_owner', value: user?.reloadUserInfo?.screenName || 'user' },
                                         { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
                                         { key: 'firebase_production', value: firebaseProductionData?.projectId || '' }
@@ -3153,6 +3174,7 @@ const InfraSetup = ({ db }) => {
                                         { key: 'startup-script', value: startupScript },
                                         { key: 'github_token', value: githubPat },
                                         { key: 'discord_bot_token', value: discordBotToken },
+                                        { key: 'discord_guild_id', value: '' },
                                         { key: 'github_owner', value: user?.reloadUserInfo?.screenName || 'user' },
                                         { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
                                         { key: 'firebase_production', value: firebaseProductionData?.projectId || '' }
