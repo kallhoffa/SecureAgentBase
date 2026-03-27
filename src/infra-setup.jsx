@@ -469,6 +469,7 @@ const InfraSetup = ({ db }) => {
   const [githubPat, setGithubPat] = useState('');
   const [githubRepoUrl, setGithubRepoUrl] = useState('');
   const [discordBotTokenInput, setDiscordBotTokenInput] = useState('');
+  const [discordGuildId, setDiscordGuildId] = useState('');
   const [vmHttpsUrl, setVmHttpsUrl] = useState('');
   const [formProgressLoaded, setFormProgressLoaded] = useState(false);
   const [useOptimizedBundle, setUseOptimizedBundle] = useState(false);
@@ -1707,7 +1708,7 @@ const InfraSetup = ({ db }) => {
       setError(`Missing: ${missing.join(', ')}. Complete Step 2 to configure.`);
       return;
     }
-
+    
     const accessToken = await getAccessToken();
     
     setSaving(true);
@@ -1729,6 +1730,9 @@ const InfraSetup = ({ db }) => {
       }
       
       setDiscordBotToken(discordBotTokenInput);
+      if (discordGuildId) {
+        setDiscordGuildId(discordGuildId);
+      }
       expandNextStep(6);
     } catch (err) {
       console.error('Error saving discord bot token:', err);
@@ -2500,6 +2504,7 @@ const InfraSetup = ({ db }) => {
                       <li>Under "Bot Permissions", check <strong>Send Messages</strong>, <strong>Read Message History</strong>, <strong>Manage Channels</strong>, and <strong>Use Slash Commands</strong></li>
                       <li>Copy the generated URL at the bottom, open it in a new tab, and select your server to invite the bot</li>
                       <li>Go back to "Bot" → click "Reset Token" → copy the token</li>
+                      <li>Enable Developer Mode in Discord (<strong>User Settings → Advanced → Developer Mode</strong>), then right-click your server name → <strong>Copy Server ID</strong></li>
                     </ol>
                   </div>
                   <div className="mb-4">
@@ -2515,6 +2520,19 @@ const InfraSetup = ({ db }) => {
                       className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 disabled:bg-gray-100 disabled:cursor-not-allowed"
                     />
                   </div>
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Discord Server ID <span className="text-gray-400 font-normal">(right-click your server name → Copy Server ID)</span>
+                    </label>
+                    <input
+                      type="text"
+                      value={discordGuildId}
+                      onChange={(e) => setDiscordGuildId(e.target.value)}
+                      placeholder="Enter your Discord server ID"
+                      disabled={!hasGcpAccess()}
+                      className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                    />
+                  </div>
                   {error && (
                     <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
                       {error}
@@ -2522,7 +2540,7 @@ const InfraSetup = ({ db }) => {
                   )}
                   <button
                     onClick={handleCreateDiscordBot}
-                    disabled={saving || !discordBotTokenInput.trim() || !hasGcpAccess()}
+                    disabled={saving || !discordBotTokenInput.trim() || !discordGuildId.trim() || !hasGcpAccess()}
                     className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Bot size={18} />
@@ -2689,7 +2707,7 @@ const InfraSetup = ({ db }) => {
                                     { key: 'startup-script', value: startupScript },
                                     { key: 'github_token', value: githubPat },
                                     { key: 'discord_bot_token', value: discordBotToken },
-                                    { key: 'discord_guild_id', value: '' },
+                                    { key: 'discord_guild_id', value: discordGuildId || '' },
                                     { key: 'github_owner', value: user?.reloadUserInfo?.screenName || 'user' },
                                     { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
                                     { key: 'firebase_production', value: firebaseProductionData?.projectId || '' }
@@ -2952,7 +2970,7 @@ const InfraSetup = ({ db }) => {
                                         { key: 'startup-script', value: startupScript },
                                         { key: 'github_token', value: githubPat },
                                         { key: 'discord_bot_token', value: discordBotToken },
-                                        { key: 'discord_guild_id', value: '' },
+                                        { key: 'discord_guild_id', value: discordGuildId || '' },
                                         { key: 'github_owner', value: user?.reloadUserInfo?.screenName || 'user' },
                                         { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
                                         { key: 'firebase_production', value: firebaseProductionData?.projectId || '' }
@@ -3189,7 +3207,7 @@ const InfraSetup = ({ db }) => {
                                         { key: 'startup-script', value: startupScript },
                                         { key: 'github_token', value: githubPat },
                                         { key: 'discord_bot_token', value: discordBotToken },
-                                        { key: 'discord_guild_id', value: '' },
+                                        { key: 'discord_guild_id', value: discordGuildId || '' },
                                         { key: 'github_owner', value: user?.reloadUserInfo?.screenName || 'user' },
                                         { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
                                         { key: 'firebase_production', value: firebaseProductionData?.projectId || '' }
