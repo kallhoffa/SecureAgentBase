@@ -290,13 +290,25 @@ if [ "$BUNDLE_SUCCESS" != "true" ]; then
   apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-confdef" -o APT::Get::Fix-Missing=true nodejs npm git curl wget gnupg ca-certificates apt-transport-https jq
 fi
 
-# Install GitHub CLI
+# Install GitHub CLI (try bundle first, then apt)
 if ! command -v gh &> /dev/null; then
   echo "Installing GitHub CLI..."
-  wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg 2>/dev/null | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null || true
-  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null 2>&1 || true
-  apt-get update -o Dpkg::Options::="--force-confdef" 2>/dev/null || true
-  apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-confdef" gh 2>/dev/null || true
+  if [ -d "/opt/kimaki" ]; then
+    # Try bundled gh
+    if [ -f "/opt/kimaki/bin/gh" ]; then
+      cp /opt/kimaki/bin/gh /usr/local/bin/gh
+      chmod +x /usr/local/bin/gh
+      echo "DEBUG: gh installed from bundle"
+    fi
+  fi
+  
+  # Fall back to apt if bundle didn't work
+  if ! command -v gh &> /dev/null; then
+    wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg 2>/dev/null | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null || true
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null 2>&1 || true
+    apt-get update -o Dpkg::Options::="--force-confdef" 2>/dev/null || true
+    apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-confdef" gh 2>/dev/null || true
+  fi
 fi
 
 # Authenticate GitHub
@@ -1745,10 +1757,12 @@ const InfraSetup = ({ db }) => {
         }
       }
       
-      try {
-        await saveSecretToGitHub('DISCORD_BOT_TOKEN', discordBotTokenInput);
-      } catch (ghErr) {
-        console.warn('Could not save to GitHub Secrets:', ghErr.message);
+      if (githubPat && githubRepoUrl) {
+        try {
+          await saveSecretToGitHub('DISCORD_BOT_TOKEN', discordBotTokenInput);
+        } catch (ghErr) {
+          console.warn('Could not save to GitHub Secrets:', ghErr.message);
+        }
       }
       
       if (accessToken) {
@@ -2757,7 +2771,7 @@ const InfraSetup = ({ db }) => {
                                     { key: 'github_token', value: githubPat },
                                     { key: 'discord_bot_token', value: discordBotToken },
                                     { key: 'discord_guild_id', value: discordGuildId || '' },
-                                    { key: 'github_owner', value: user?.reloadUserInfo?.screenName || 'user' },
+                                    { key: 'github_owner', value: '' },
                                     { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
                                     { key: 'firebase_production', value: firebaseProductionData?.projectId || '' }
                                   ]
@@ -3020,7 +3034,7 @@ const InfraSetup = ({ db }) => {
                                         { key: 'github_token', value: githubPat },
                                         { key: 'discord_bot_token', value: discordBotToken },
                                         { key: 'discord_guild_id', value: discordGuildId || '' },
-                                        { key: 'github_owner', value: user?.reloadUserInfo?.screenName || 'user' },
+                                        { key: 'github_owner', value: '' },
                                         { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
                                         { key: 'firebase_production', value: firebaseProductionData?.projectId || '' }
                                       ]
@@ -3257,7 +3271,7 @@ const InfraSetup = ({ db }) => {
                                         { key: 'github_token', value: githubPat },
                                         { key: 'discord_bot_token', value: discordBotToken },
                                         { key: 'discord_guild_id', value: discordGuildId || '' },
-                                        { key: 'github_owner', value: user?.reloadUserInfo?.screenName || 'user' },
+                                        { key: 'github_owner', value: '' },
                                         { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
                                         { key: 'firebase_production', value: firebaseProductionData?.projectId || '' }
                                       ]

@@ -35,11 +35,16 @@ jobs:
         run: |
           mkdir -p bundle/kimaki
           docker run --rm \
-            -v $(pwd)/bundle/kimaki:/output \
+            -v $(pwd)/bundle:/output \
             node:20-bullseye bash -c "
               npm install -g kimaki@latest
-              cp -r \$(npm root -g)/kimaki /output/
+              cp -r \$(npm root -g)/kimaki /output/kimaki/
             "
+
+      - name: Download gh CLI
+        run: |
+          mkdir -p bundle/gh
+          curl -fsSL https://github.com/cli/cli/releases/download/v2.63.2/gh_2.63.2_linux_amd64.tar.gz | tar -xz -C bundle/gh --strip-components=2
 
       - name: Create bundle
         run: tar -czvf debian-packages.tar.gz bundle/
