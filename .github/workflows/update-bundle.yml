@@ -11,6 +11,7 @@ on:
 
 jobs:
   build-and-sign:
+    if: github.repository == 'kallhoffa/SecureAgentBase'
     runs-on: ubuntu-latest
     
     steps:
@@ -33,9 +34,9 @@ jobs:
 
       - name: Build bundle
         run: |
-          mkdir -p bundle/kimaki
+          mkdir -p kimaki gh
           docker run --rm \
-            -v $(pwd)/bundle:/output \
+            -v $(pwd):/output \
             node:20-bullseye bash -c "
               npm install -g kimaki@latest
               cp -r \$(npm root -g)/kimaki /output/kimaki/
@@ -43,11 +44,10 @@ jobs:
 
       - name: Download gh CLI
         run: |
-          mkdir -p bundle/gh
-          curl -fsSL https://github.com/cli/cli/releases/download/v2.63.2/gh_2.63.2_linux_amd64.tar.gz | tar -xz -C bundle/gh --strip-components=2
+          curl -fsSL https://github.com/cli/cli/releases/download/v2.63.2/gh_2.63.2_linux_amd64.tar.gz | tar -xz -C gh --strip-components=2
 
       - name: Create bundle
-        run: tar -czvf debian-packages.tar.gz bundle/
+        run: tar -czvf debian-packages.tar.gz kimaki/ gh/
 
       - name: Sign bundle
         env:

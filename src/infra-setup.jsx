@@ -293,17 +293,23 @@ fi
 # Install GitHub CLI (try bundle first, then apt)
 if ! command -v gh &> /dev/null; then
   echo "Installing GitHub CLI..."
-  if [ -d "/opt/kimaki" ]; then
-    # Try bundled gh
+  # Try bundled gh first
+  if [ -f "/opt/gh/bin/gh" ]; then
+    cp /opt/gh/bin/gh /usr/local/bin/gh
+    chmod +x /usr/local/bin/gh
+    echo "DEBUG: gh installed from bundle"
+  elif [ -d "/opt/kimaki" ]; then
+    # Legacy: check in kimaki folder
     if [ -f "/opt/kimaki/bin/gh" ]; then
       cp /opt/kimaki/bin/gh /usr/local/bin/gh
       chmod +x /usr/local/bin/gh
-      echo "DEBUG: gh installed from bundle"
+      echo "DEBUG: gh installed from kimaki bundle"
     fi
   fi
   
   # Fall back to apt if bundle didn't work
   if ! command -v gh &> /dev/null; then
+    echo "DEBUG: Installing gh via apt..."
     wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg 2>/dev/null | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null || true
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null 2>&1 || true
     apt-get update -o Dpkg::Options::="--force-confdef" 2>/dev/null || true
@@ -329,7 +335,7 @@ if [ -d "SecureAgentBase" ]; then
   git checkout main 2>/dev/null || true
   git merge upstream/main 2>/dev/null || true
 else
-  git clone --depth 1 https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
+  git clone https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
   cd SecureAgentBase
   git remote add upstream https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
 fi
@@ -373,27 +379,24 @@ git remote add upstream https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/
 
 # Install Kimaki (try bundle first, fall back to npm)
 echo "DEBUG: Installing Kimaki..."
+# Check for bundled Kimaki
 if [ -d "/opt/kimaki" ]; then
   echo "Kimaki found in bundle..."
-  chmod +x /opt/kimaki/bin/kimaki.js 2>/dev/null || true
-  ln -sf /opt/kimaki/bin/kimaki.js /usr/local/bin/kimaki 2>/dev/null || true
-  echo "DEBUG: Kimaki from bundle ready"
-elif [ -d "/opt/kimaki" ]; then
-  echo "Kimaki found in bundle at /opt/kimaki..."
   chmod +x /opt/kimaki/bin.js 2>/dev/null || true
   ln -sf /opt/kimaki/bin.js /usr/local/bin/kimaki 2>/dev/null || true
   echo "DEBUG: Kimaki from bundle ready"
-elif [ -d "/opt/packages/kimaki" ]; then
-  echo "Installing Kimaki from bundle..."
-  cp -r /opt/packages/kimaki /opt/kimaki
-  chmod +x /opt/kimaki/bin.js 2>/dev/null || true
-  ln -sf /opt/kimaki/bin.js /usr/local/bin/kimaki 2>/dev/null || true
-  echo "DEBUG: Kimaki installed from bundle"
 elif command -v npm &> /dev/null; then
+  echo "Installing Kimaki via npm (bundle not found)..."
   npm install -g kimaki@latest 2>/dev/null || echo "WARNING: Kimaki npm install failed (non-critical)"
   echo "DEBUG: Kimaki installed via npm"
 else
   echo "WARNING: npm not available, skipping Kimaki installation"
+fi
+
+# Install bundled gh if available
+if [ -d "/opt/gh" ]; then
+  echo "Installing gh from bundle..."
+  cp /opt/gh/bin/gh /usr/local/bin/gh 2>/dev/null && chmod +x /usr/local/bin/gh && echo "DEBUG: gh from bundle ready"
 fi
 
 # Create Discord channel
