@@ -1,46 +1,46 @@
-import React, { useState } from 'react';
+import { useState, FormEvent } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from './firestore-utils/auth-context';
 
-const Login = () => {
+const Login: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const { login, loginWithGoogle } = useAuth();
+  const { signIn, signInWithGoogle } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
-  const handleSuccess = () => {
+  const handleSuccess = (): void => {
     const params = new URLSearchParams(location.search);
     const returnUrl = params.get('returnUrl') || '/';
     navigate(returnUrl);
   };
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: FormEvent): Promise<void> => {
     e.preventDefault();
     setError('');
     setLoading(true);
 
     try {
-      await login(email, password);
+      await signIn(email, password);
       handleSuccess();
     } catch (err) {
-      setError(err.message);
+      setError(err instanceof Error ? err.message : 'Login failed');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleGoogleLogin = async () => {
+  const handleGoogleLogin = async (): Promise<void> => {
     setError('');
     setLoading(true);
 
     try {
-      await loginWithGoogle();
+      await signInWithGoogle();
       handleSuccess();
     } catch (err) {
-      setError(err.message);
+      setError(err instanceof Error ? err.message : 'Google login failed');
     } finally {
       setLoading(false);
     }
@@ -126,7 +126,7 @@ const Login = () => {
         </div>
 
         <p className="mt-6 text-center text-sm text-gray-600">
-          Don't have an account?{' '}
+          Don&apos;t have an account?{' '}
           <Link to="/signup" className="text-blue-600 hover:text-blue-700 font-medium">
             Sign up
           </Link>

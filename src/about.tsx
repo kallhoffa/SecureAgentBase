@@ -1,6 +1,4 @@
-import React from 'react';
-
-const About = () => {
+const About: React.FC = () => {
   return (
     <div className="container mx-auto p-4 max-w-3xl">
       <div className="bg-white shadow-md rounded-lg p-6">

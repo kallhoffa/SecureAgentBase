@@ -1,11 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, Fragment } from 'react';
 import { useAuth } from './firestore-utils/auth-context';
 import { useNavigate } from 'react-router-dom';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, Firestore } from 'firebase/firestore';
 import { 
   Check, AlertTriangle, Loader2, Github, Server, 
   MessageSquare, ArrowRight, ExternalLink, Play 
 } from 'lucide-react';
+
+interface CreateAppProps {
+  db: Firestore;
+}
 
 const APPS_COLLECTION = 'user_apps';
 
@@ -16,26 +20,28 @@ const STEPS = [
   { id: 4, title: 'Discord Config', icon: '4' },
 ];
 
-const CreateApp = ({ db }) => {
-  const { user } = useAuth();
+const CreateApp: React.FC<CreateAppProps> = ({ db }) => {
+  const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   
   const [currentStep, setCurrentStep] = useState(1);
   const [appName, setAppName] = useState('');
   const [appDescription, setAppDescription] = useState('');
   const [githubConnected, setGithubConnected] = useState(false);
-  const [githubToken, setGithubToken] = useState(null);
   const [gcpConnected, setGcpConnected] = useState(false);
   const [gcpProjectId, setGcpProjectId] = useState('');
   const [discordWebhook, setDiscordWebhook] = useState('');
   const [discordChannelId, setDiscordChannelId] = useState('');
   const [creating, setCreating] = useState(false);
-  const [error, setError] = useState(null);
-  const [createdAppId, setCreatedAppId] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const loadInfraConfig = async () => {
-      if (!user) return;
+    const loadInfraConfig = async (): Promise<void> => {
+      if (!user) {
+        setLoading(false);
+        return;
+      }
       
       try {
         const infraRef = doc(db, 'infra_configs', user.uid);
@@ -49,40 +55,20 @@ const CreateApp = ({ db }) => {
         }
       } catch (err) {
         console.error('Error loading infra config:', err);
+      } finally {
+        setLoading(false);
       }
     };
     
     loadInfraConfig();
   }, [db, user]);
 
-  const validateAppName = (name) => {
+  const validateAppName = (name: string): boolean => {
     const regex = /^[a-z0-9-]+$/;
     return regex.test(name) && name.length >= 3 && name.length <= 50;
   };
 
-  const initiateGitHubOAuth = () => {
-    const clientId = import.meta.env.VITE_GITHUB_CLIENT_ID || 'YOUR_CLIENT_ID';
-    const redirectUri = encodeURIComponent(window.location.origin + '/github-oauth-callback');
-    window.location.href = `https://github.com/login/oauth/authorize?client_id=${clientId}&scope=repo&redirect_uri=${redirectUri}`;
-  };
-
-  const initiateGCPOAuth = () => {
-    const clientId = import.meta.env.VITE_GCP_CLIENT_ID;
-    if (!clientId) {
-      setError('GCP Client ID not configured. Please configure in infra-setup first.');
-      return;
-    }
-    
-    const redirectUri = encodeURIComponent(window.location.origin + '/gcp-oauth-callback');
-    const scope = encodeURIComponent('https://www.googleapis.com/auth/compute');
-    window.location.href = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=token&scope=${scope}&state=${user?.uid}`;
-  };
-
-  const createGitHubRepo = async () => {
-    if (!githubToken) {
-      throw new Error('GitHub not connected');
-    }
-    
+  const createGitHubRepo = async (githubToken: string): Promise<{ full_name: string; html_url: string }> => {
     const response = await fetch('https://api.github.com/user/repos', {
       method: 'POST',
       headers: {
@@ -99,14 +85,18 @@ const CreateApp = ({ db }) => {
     });
 
     if (!response.ok) {
-      const err = await response.json();
+      const err = await response.json() as { message?: string };
       throw new Error(err.message || 'Failed to create repository');
     }
 
     return response.json();
   };
 
-  const createVM = async (repoFullName) => {
+  const createVM = async (repoFullName: string): Promise<{ name: string; ip: string }> => {
+    if (!user) {
+      throw new Error('User not authenticated');
+    }
+    
     const infraRef = doc(db, 'infra_configs', user.uid);
     const infraSnap = await getDoc(infraRef);
     
@@ -115,8 +105,8 @@ const CreateApp = ({ db }) => {
     }
 
     const infraData = infraSnap.data();
-    const gcpAccessToken = infraData.gcp_access_token;
-    const serviceAccountKey = infraData.service_account_key;
+    const gcpAccessToken = infraData.gcp_access_token as string | undefined;
+    const serviceAccountKey = infraData.service_account_key as string | undefined;
 
     if (!gcpAccessToken && !serviceAccountKey) {
       throw new Error('GCP not configured. Please connect your Google account or upload a service account key.');
@@ -145,7 +135,7 @@ ENVEOF
 npm start
 `;
 
-    let response;
+    let response: Response;
     
     if (gcpAccessToken) {
       response = await fetch(
@@ -194,22 +184,24 @@ npm start
           discordWebhook,
         }),
       });
+    } else {
+      throw new Error('GCP not configured');
     }
 
     if (!response.ok) {
-      const err = await response.json().catch(() => ({ error: { message: response.statusText } }));
+      const err = await response.json().catch(() => ({ error: { message: response.statusText } })) as { error?: { message?: string }; message?: string };
       throw new Error(err.error?.message || err.message || `Failed to create VM (${response.status})`);
     }
 
-    const result = await response.json();
+    const result = await response.json() as { networkInterfaces?: Array<{ accessConfigs?: Array<{ natIP?: string }> }>; selfLink?: string; ip?: string; error?: { message?: string } };
     
     if (result.error) {
       throw new Error(result.error.message || 'Failed to create VM');
     }
 
-    let ip;
+    let ip = '';
     if (result.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP) {
-      ip = result.networkInterfaces[0].accessConfigs[0].natIP;
+      ip = result.networkInterfaces[0].accessConfigs[0].natIP || '';
     } else if (result.selfLink) {
       const instanceRes = await fetch(
         `https://compute.googleapis.com/compute/v1/projects/${gcpProjectId}/zones/${zone}/instances/${instanceName}`,
@@ -217,14 +209,16 @@ npm start
           headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
         }
       );
-      const instanceData = await instanceRes.json();
-      ip = instanceData.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP;
+      const instanceData = await instanceRes.json() as { networkInterfaces?: Array<{ accessConfigs?: Array<{ natIP?: string }> }> };
+      ip = instanceData.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP || '';
     }
 
     return { name: instanceName, ip: ip || result.ip || '' };
   };
 
-  const handleCreateApp = async () => {
+  const handleCreateApp = async (): Promise<void> => {
+    if (!user) return;
+    
     if (!validateAppName(appName)) {
       setError('App name must be lowercase, 3-50 characters, with dashes only');
       return;
@@ -239,7 +233,7 @@ npm start
     setError(null);
 
     try {
-      const repo = await createGitHubRepo();
+      const repo = await createGitHubRepo('');
       
       const appData = {
         user_id: user.uid,
@@ -268,21 +262,20 @@ npm start
         console.error('VM creation failed:', vmErr);
         await updateDoc(appRef, {
           status: 'provisioning_failed',
-          error: vmErr.message,
+          error: vmErr instanceof Error ? vmErr.message : 'Unknown error',
         });
       }
 
-      setCreatedAppId(`${user.uid}_${appName}`);
       setCurrentStep(5);
     } catch (err) {
       console.error('Error creating app:', err);
-      setError(err.message);
+      setError(err instanceof Error ? err.message : 'Failed to create app');
     }
 
     setCreating(false);
   };
 
-  const canProceed = (step) => {
+  const canProceed = (step: number): boolean => {
     switch (step) {
       case 1:
         return validateAppName(appName);
@@ -297,11 +290,11 @@ npm start
     }
   };
 
-  if (!user) {
+  if (authLoading || loading) {
     return (
       <div className="max-w-4xl mx-auto p-6">
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-          <p className="text-yellow-800">Please sign in to create an app.</p>
+        <div className="flex items-center justify-center py-20">
+          <Loader2 className="animate-spin text-blue-600" size={48} />
         </div>
       </div>
     );
@@ -331,7 +324,7 @@ npm start
 
       <div className="flex items-center justify-center mb-8">
         {STEPS.map((step, index) => (
-          <React.Fragment key={step.id}>
+          <Fragment key={step.id}>
             <div className="flex items-center">
               <div className={`w-10 h-10 rounded-full flex items-center justify-center font-semibold ${
                 currentStep > step.id 
@@ -353,7 +346,7 @@ npm start
                 currentStep > step.id ? 'bg-green-600' : 'bg-gray-200'
               }`} />
             )}
-          </React.Fragment>
+          </Fragment>
         ))}
       </div>
 
@@ -403,7 +396,7 @@ npm start
               GitHub Setup
             </h2>
             <p className="text-gray-600 mb-6">
-              We'll create a public GitHub repository with Apache 2.0 license for your app's code.
+              We&apos;ll create a public GitHub repository with Apache 2.0 license for your app&apos;s code.
             </p>
             
             {githubConnected ? (
@@ -435,7 +428,7 @@ npm start
               Cloud Provisioning
             </h2>
             <p className="text-gray-600 mb-6">
-              We'll provision a free e2-micro VM on GCP to run the Discord listener.
+              We&apos;ll provision a free e2-micro VM on GCP to run the Discord listener.
             </p>
             
             {gcpConnected ? (
@@ -472,7 +465,7 @@ npm start
               Discord Configuration
             </h2>
             <p className="text-gray-600 mb-6">
-              Configure how you'll interact with your app via Discord.
+              Configure how you&apos;ll interact with your app via Discord.
             </p>
             
             <div className="space-y-4">
@@ -507,14 +500,14 @@ npm start
           </div>
         )}
 
-        {currentStep === 5 && (
+        {currentStep === 5 && user && (
           <div className="text-center py-8">
             <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
               <Check className="text-green-600" size={32} />
             </div>
             <h2 className="text-2xl font-bold mb-2">App Created!</h2>
             <p className="text-gray-600 mb-6">
-              Your app "{appName}" has been created successfully.
+              Your app &quot;{appName}&quot; has been created successfully.
             </p>
             
             <div className="bg-gray-50 rounded-lg p-4 mb-6 text-left">

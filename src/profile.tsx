@@ -1,12 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from './firestore-utils/auth-context';
 import { useNavigate } from 'react-router-dom';
 import { useNotification } from './firestore-utils/notification-context';
 import { getUserPreferences, setUserBetaPreference } from './firestore-utils/user-preferences';
-import { Shield, ExternalLink, Plus } from 'lucide-react';
+import { Shield, ExternalLink, Plus, Loader2 } from 'lucide-react';
+import { Firestore } from 'firebase/firestore';
 
-const Profile = ({ db }) => {
-  const { user, logout } = useAuth();
+interface ProfileProps {
+  db: Firestore;
+}
+
+const Profile: React.FC<ProfileProps> = ({ db }) => {
+  const { user, logout, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const { addNotification } = useNotification();
   const [betaEnabled, setBetaEnabled] = useState(false);
@@ -14,7 +19,7 @@ const Profile = ({ db }) => {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    const loadPreferences = async () => {
+    const loadPreferences = async (): Promise<void> => {
       if (user) {
         try {
           const prefs = await getUserPreferences(db, user.uid);
@@ -29,7 +34,17 @@ const Profile = ({ db }) => {
     loadPreferences();
   }, [db, user]);
 
-  const handleToggleBeta = async () => {
+  if (authLoading || loading) {
+    return (
+      <div className="max-w-2xl mx-auto p-6">
+        <div className="flex items-center justify-center py-20">
+          <Loader2 className="animate-spin text-blue-600" size={48} />
+        </div>
+      </div>
+    );
+  }
+
+  const handleToggleBeta = async (): Promise<void> => {
     if (!user) return;
     
     setSaving(true);
@@ -45,22 +60,14 @@ const Profile = ({ db }) => {
     setSaving(false);
   };
 
-  const handleLogout = async () => {
+  const handleLogout = async (): Promise<void> => {
     try {
       await logout();
       navigate('/');
     } catch (error) {
-      addNotification('Logout failed: ' + error.message, 'error');
+      addNotification('Logout failed: ' + (error as Error).message, 'error');
     }
   };
-
-  if (!user) {
-    return (
-      <div className="max-w-2xl mx-auto p-6">
-        <p>Please sign in to view your profile.</p>
-      </div>
-    );
-  }
 
   return (
     <div className="max-w-2xl mx-auto p-6">
@@ -69,7 +76,7 @@ const Profile = ({ db }) => {
       <div className="bg-white rounded-lg shadow p-6 mb-6">
         <h2 className="text-lg font-semibold mb-4">Account</h2>
         <p className="text-gray-600 mb-2">
-          <span className="font-medium">Email:</span> {user.email}
+          <span className="font-medium">Email:</span> {user?.email}
         </p>
       </div>
 

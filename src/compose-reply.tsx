@@ -1,26 +1,34 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect, FormEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from './firestore-utils/auth-context';
 import { getPost, addReply } from './firestore-utils/post-storage';
+import { Firestore } from 'firebase/firestore';
+import type { Post } from './types';
 
-const ComposeReply = ({ db }) => {
+interface ComposeReplyProps {
+  db: Firestore;
+}
+
+const ComposeReply: React.FC<ComposeReplyProps> = ({ db }) => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const postId = searchParams.get('id');
   
   const [content, setContent] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState(null);
-  const [post, setPost] = useState(null);
+  const [error, setError] = useState<string | null>(null);
+  const [post, setPost] = useState<Post | null>(null);
   const [loading, setLoading] = useState(true);
   
   const { user } = useAuth();
 
   useEffect(() => {
-    const loadPost = async () => {
+    const loadPost = async (): Promise<void> => {
       try {
-        const fetchedPost = await getPost(db, postId);
-        setPost(fetchedPost);
+        if (postId) {
+          const fetchedPost = await getPost(db, postId);
+          setPost(fetchedPost);
+        }
       } catch (err) {
         console.error('Error loading post:', err);
         setError('Failed to load post');
@@ -34,7 +42,7 @@ const ComposeReply = ({ db }) => {
     }
   }, [db, postId]);
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: FormEvent): Promise<void> => {
     e.preventDefault();
     
     if (!content.trim()) {
@@ -46,10 +54,10 @@ const ComposeReply = ({ db }) => {
     setError(null);
 
     try {
-      await addReply(db, postId, {
+      await addReply(db, postId!, {
         content: content.trim(),
-        authorId: user.uid,
-        authorName: user.email || 'Anonymous',
+        authorId: user!.uid,
+        authorName: user!.email || 'Anonymous',
       });
       
       navigate(`/post?id=${postId}`);

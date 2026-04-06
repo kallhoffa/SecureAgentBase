@@ -1,19 +1,30 @@
 import { useState, useEffect } from 'react';
 import { fetchFeatureFlags } from '../firestore-utils/remote-config';
 
-const getTestOverride = () => {
+interface FeatureFlagMap {
+  [key: string]: string | boolean | undefined;
+}
+
+declare global {
+  interface Window {
+    __FLAG_TEST_MODE__?: FeatureFlagMap;
+    __FEATURE_FLAGS__?: FeatureFlagMap;
+  }
+}
+
+const getTestOverride = (): FeatureFlagMap | null => {
   if (typeof window !== 'undefined') {
-    return window.__FLAG_TEST_MODE__;
+    return window.__FLAG_TEST_MODE__ || null;
   }
   return null;
 };
 
-const isStaging = () => {
+const isStaging = (): boolean => {
   if (typeof window === 'undefined') return false;
   return window.location.hostname.includes('staging');
 };
 
-const getBetaFromStorage = () => {
+const getBetaFromStorage = (): boolean => {
   if (typeof window === 'undefined') return false;
   const keys = Object.keys(localStorage);
   for (const key of keys) {
@@ -24,8 +35,13 @@ const getBetaFromStorage = () => {
   return false;
 };
 
-export const useFeatureFlag = (flagKey) => {
-  const getInitialValue = () => {
+interface UseFeatureFlagResult {
+  flagValue: string | boolean | null;
+  loading: boolean;
+}
+
+export const useFeatureFlag = (flagKey: string): UseFeatureFlagResult => {
+  const getInitialValue = (): string | boolean | null => {
     if (isStaging() && flagKey === 'navigation_banner') {
       return 'beta';
     }
@@ -35,8 +51,8 @@ export const useFeatureFlag = (flagKey) => {
     return null;
   };
 
-  const [flagValue, setFlagValue] = useState(getInitialValue);
-  const [loading, setLoading] = useState(() => {
+  const [flagValue, setFlagValue] = useState<string | boolean | null>(getInitialValue);
+  const [loading, setLoading] = useState<boolean>(() => {
     if (isStaging() && flagKey === 'navigation_banner') {
       return false;
     }
@@ -49,7 +65,7 @@ export const useFeatureFlag = (flagKey) => {
   useEffect(() => {
     let mounted = true;
 
-    const loadFlag = async () => {
+    const loadFlag = async (): Promise<void> => {
       try {
         if (isStaging() && flagKey === 'navigation_banner') {
           if (mounted) {
@@ -76,7 +92,7 @@ export const useFeatureFlag = (flagKey) => {
           return;
         }
 
-        let flags;
+        let flags: FeatureFlagMap;
         
         if (window.__FEATURE_FLAGS__) {
           flags = window.__FEATURE_FLAGS__;

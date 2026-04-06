@@ -1,6 +1,6 @@
-import './App.css';
-import React from 'react';
 import { BrowserRouter, Routes, Route, Outlet } from 'react-router-dom';
+import { Firestore } from 'firebase/firestore';
+import { Auth } from 'firebase/auth';
 import { LandingPage } from './posts';
 import { useAuth } from './firestore-utils/auth-context';
 import Post from './post';
@@ -16,9 +16,13 @@ import InfraSetup from './infra-setup';
 import CreateApp from './create-app';
 import GitHubCallback from './github-callback';
 import { NotificationProvider } from './firestore-utils/notification-context';
+import { RequireAuth, RedirectIfAuthed } from './components/ProtectedRoute';
 
+interface RootLayoutProps {
+  db: Firestore;
+}
 
-const RootLayout = ({ db }) => {
+const RootLayout: React.FC<RootLayoutProps> = ({ db }) => {
   return (
     <>
       <EnvironmentBanner />
@@ -30,8 +34,8 @@ const RootLayout = ({ db }) => {
   );
 };
 
-const HomePage = () => {
-  const { user, loading } = useAuth();
+const HomePage: React.FC = () => {
+  const { loading } = useAuth();
   
   if (loading) {
     return (
@@ -44,9 +48,12 @@ const HomePage = () => {
   return <LandingPage />;
 };
 
+interface AppProps {
+  db: Firestore;
+  auth: Auth;
+}
 
-function App({ db }) {
-  
+const App: React.FC<AppProps> = ({ db }) => {
   return (
     <NotificationProvider>
       <BrowserRouter>
@@ -54,20 +61,20 @@ function App({ db }) {
           <Route element={<RootLayout db={db} />}>
             <Route path="/" element={<HomePage />} />
             <Route path="/post" element={<Post db={db}/>} />
-            <Route path="/compose-post" element={<ComposePost db={db} />} />
-            <Route path="/compose-reply" element={<ComposeReply db={db} />} />
+            <Route path="/compose-post" element={<RequireAuth><ComposePost db={db} /></RequireAuth>} />
+            <Route path="/compose-reply" element={<RequireAuth><ComposeReply db={db} /></RequireAuth>} />
             <Route path="/about" element={<About/>} />
-            <Route path="/login" element={<Login />} />
-            <Route path="/signup" element={<Signup />} />
-            <Route path="/profile" element={<Profile db={db} />} />
-            <Route path="/infra-setup" element={<InfraSetup db={db} />} />
-            <Route path="/create-app" element={<CreateApp db={db} />} />
+            <Route path="/login" element={<RedirectIfAuthed><Login /></RedirectIfAuthed>} />
+            <Route path="/signup" element={<RedirectIfAuthed><Signup /></RedirectIfAuthed>} />
+            <Route path="/profile" element={<RequireAuth><Profile db={db} /></RequireAuth>} />
+            <Route path="/infra-setup" element={<RequireAuth><InfraSetup db={db} /></RequireAuth>} />
+            <Route path="/create-app" element={<RequireAuth><CreateApp db={db} /></RequireAuth>} />
           </Route>
           <Route path="/github-callback" element={<GitHubCallback db={db} />} />
         </Routes>
       </BrowserRouter>
     </NotificationProvider>
   );
-}
+};
 
 export default App;

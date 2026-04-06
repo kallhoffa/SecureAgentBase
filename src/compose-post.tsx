@@ -1,18 +1,23 @@
-import React, { useState } from 'react';
+import { useState, FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from './firestore-utils/auth-context';
 import { createPost } from './firestore-utils/post-storage';
+import { Firestore } from 'firebase/firestore';
 
-const ComposePost = ({ db }) => {
+interface ComposePostProps {
+  db: Firestore;
+}
+
+const ComposePost: React.FC<ComposePostProps> = ({ db }) => {
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
   
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: FormEvent): Promise<void> => {
     e.preventDefault();
     
     if (!title.trim() || !content.trim()) {
@@ -27,8 +32,8 @@ const ComposePost = ({ db }) => {
       const postId = await createPost(db, {
         title: title.trim(),
         content: content.trim(),
-        authorId: user.uid,
-        authorName: user.email || 'Anonymous',
+        authorId: user!.uid,
+        authorName: user!.email || 'Anonymous',
       });
       
       navigate(`/post?id=${postId}`);

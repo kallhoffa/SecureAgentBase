@@ -1,9 +1,27 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from './firestore-utils/auth-context';
 import { useNavigate } from 'react-router-dom';
 import { useNotification } from './firestore-utils/notification-context';
-import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, query, where, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, query, where, serverTimestamp, Firestore } from 'firebase/firestore';
 import { Check, Copy, Upload, AlertTriangle, Trash2, ExternalLink, Shield, Server, Bot } from 'lucide-react';
+
+interface Window {
+  google?: {
+    accounts: {
+      oauth2: {
+        initTokenClient: (config: {
+          client_id: string;
+          scope: string;
+          callback: (response: { error?: string; access_token?: string }) => void;
+        }) => { open(): void; requestAccessToken(): void };
+      };
+    };
+  };
+}
+
+interface InfraSetupProps {
+  db: Firestore;
+}
 
 const INFRA_COLLECTION = 'infra_configs';
 const PROJECTS_COLLECTION = 'projects';
@@ -118,6 +136,7 @@ const decryptData = async (encryptedStr, passphrase) => {
   try {
     const { salt, iv, data } = JSON.parse(encryptedStr);
     const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
     const saltArray = new Uint8Array(atob(salt).split('').map(c => c.charCodeAt(0)));
     const ivArray = new Uint8Array(atob(iv).split('').map(c => c.charCodeAt(0)));
     const dataArray = new Uint8Array(atob(data).split('').map(c => c.charCodeAt(0)));
@@ -133,8 +152,6 @@ const decryptData = async (encryptedStr, passphrase) => {
     throw new Error('Invalid passphrase or corrupted data');
   }
 };
-
-const decoder = new TextDecoder();
 
 const saveFormProgress = (data) => {
   try {
@@ -245,12 +262,21 @@ if [ "$USE_BUNDLE" = "true" ]; then
     if gpg --batch --verify /tmp/packages.tar.gz.asc /tmp/packages.tar.gz 2>/dev/null; then
       echo "Bundle signature verified!"
       tar -xzf /tmp/packages.tar.gz -C /opt/ 2>/dev/null || true
+      
+      # Install .deb packages if present
       if [ -d /opt/packages ]; then
         echo "Installing from verified bundle..."
         cd /opt/packages
         dpkg -i *.deb 2>/dev/null || apt-get install -f -y --no-install-recommends 2>/dev/null || true
-        export BUNDLE_SUCCESS="true"
       fi
+      
+      # Add bundled Node.js to PATH
+      if [ -d /opt/nodejs/bin ]; then
+        export PATH="/opt/nodejs/bin:$PATH"
+        echo "Bundle Node.js available"
+      fi
+      
+      export BUNDLE_SUCCESS="true"
     else
       echo "WARNING: Bundle signature verification failed! Using standard installation..."
     fi
@@ -287,7 +313,17 @@ ${bundleSection}
 if [ "$BUNDLE_SUCCESS" != "true" ]; then
   echo "Installing dependencies via apt..."
   apt-get update -o Dpkg::Options::="--force-confdef" -o APT::Get::Fix-Missing=true
-  apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-confdef" -o APT::Get::Fix-Missing=true nodejs npm git curl wget gnupg ca-certificates apt-transport-https jq
+  apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-confdef" -o APT::Get::Fix-Missing=true curl git gnupg ca-certificates apt-transport-https jq
+  
+  # Install Node.js 20 from bundle if available
+  if [ -d "/opt/nodejs" ]; then
+    echo "Installing Node.js from bundle..."
+    cp -r /opt/nodejs/* /usr/local/ 2>/dev/null || true
+  elif ! command -v node &> /dev/null || [ "$(node -v | cut -d. -f1 | tr -d 'v')" -lt 20 ]; then
+    echo "Installing Node.js 20..."
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+    apt-get install -y --no-install-recommends nodejs
+  fi
 fi
 
 # Install GitHub CLI (try bundle first, then apt)
@@ -382,18 +418,73 @@ echo "DEBUG: GitHub secrets set"
 # Add upstream back for future syncing
 git remote add upstream https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
 
-# Install Kimaki (try bundle first, fall back to npm)
+# Install and start Kimaki (try bundle first, fall back to npm)
 echo "DEBUG: Installing Kimaki..."
+KIMAKI_STARTED=false
+
 # Check for bundled Kimaki
 if [ -d "/opt/kimaki" ]; then
   echo "Kimaki found in bundle..."
-  chmod +x /opt/kimaki/bin.js 2>/dev/null || true
-  ln -sf /opt/kimaki/bin.js /usr/local/bin/kimaki 2>/dev/null || true
-  echo "DEBUG: Kimaki from bundle ready"
+  
+  # Check actual structure
+  if [ -f "/opt/kimaki/bin.js" ]; then
+    KIMAKI_DIR="/opt/kimaki"
+  elif [ -f "/opt/kimaki/kimaki/bin.js" ]; then
+    KIMAKI_DIR="/opt/kimaki/kimaki"
+  else
+    echo "WARNING: Kimaki bin.js not found, checking contents..."
+    ls -la /opt/kimaki/
+    ls -la /opt/kimaki/*/ 2>/dev/null || true
+  fi
+  
+  if [ -n "$KIMAKI_DIR" ] && [ -f "$KIMAKI_DIR/bin.js" ]; then
+    chmod +x "$KIMAKI_DIR/bin.js" 2>/dev/null || true
+    ln -sf "$KIMAKI_DIR/bin.js" /usr/local/bin/kimaki 2>/dev/null || true
+    echo "DEBUG: Kimaki from bundle ready, starting..."
+    
+    # Ensure package.json has "type": "module" for ESM support
+    if [ -f "$KIMAKI_DIR/package.json" ]; then
+      if ! grep -q '"type": "module"' "$KIMAKI_DIR/package.json"; then
+        sed -i 's/"name"/"type": "module",\n    "name"/' "$KIMAKI_DIR/package.json" 2>/dev/null || true
+      fi
+    fi
+    
+    # Add bundled Node.js to PATH
+    if [ -d "/opt/nodejs" ]; then
+      export PATH="/opt/nodejs/bin:$PATH"
+    fi
+    
+    # Start Kimaki in background with ESM support
+    cd "$KIMAKI_DIR"
+    nohup node "$KIMAKI_DIR/bin.js" > /var/log/kimaki.log 2>&1 &
+    KIMAKI_PID=$!
+    sleep 3
+    
+    # Check if process is running
+    if ps -p $KIMAKI_PID > /dev/null 2>&1; then
+      echo "DEBUG: Kimaki started successfully (PID: $KIMAKI_PID)"
+      KIMAKI_STARTED=true
+    elif pgrep -f "kimaki" > /dev/null 2>&1; then
+      echo "DEBUG: Kimaki running (PID: $(pgrep -f kimaki))"
+      KIMAKI_STARTED=true
+    else
+      echo "WARNING: Kimaki process not running, checking log..."
+      cat /var/log/kimaki.log 2>/dev/null || echo "No log file"
+    fi
+  fi
 elif command -v npm &> /dev/null; then
-  echo "Installing Kimaki via npm (bundle not found)..."
-  npm install -g kimaki@latest 2>/dev/null || echo "WARNING: Kimaki npm install failed (non-critical)"
-  echo "DEBUG: Kimaki installed via npm"
+  echo "Installing Kimaki via npm..."
+  npm install -g kimaki@latest 2>/dev/null || echo "WARNING: Kimaki npm install failed"
+  
+  if command -v kimaki &> /dev/null; then
+    echo "DEBUG: Kimaki installed via npm, starting..."
+    nohup kimaki > /var/log/kimaki.log 2>&1 &
+    sleep 2
+    if pgrep -f "kimaki" > /dev/null; then
+      echo "DEBUG: Kimaki started successfully (PID: $(pgrep -f kimaki))"
+      KIMAKI_STARTED=true
+    fi
+  fi
 else
   echo "WARNING: npm not available, skipping Kimaki installation"
 fi
@@ -422,12 +513,11 @@ if [ -n "$DISCORD_GUILD_ID" ] && [ "$DISCORD_GUILD_ID" != "null" ]; then
     echo "WARNING: Failed to create Discord channel"
   else
     echo "DEBUG: Posting welcome message..."
+    WELCOME_MSG="Welcome to SecureAgent! Your Kimaki bot is ready."
     curl -s -X POST "https://discord.com/api/v10/channels/$CHANNEL_ID/messages" \
       -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
       -H "Content-Type: application/json" \
-      -d '{
-        "content": "Welcome to SecureAgent! Setup complete. Your repo is ready at: https://github.com/'"$GITHUB_OWNER"'/"$FIREBASE_STAGING"
-      }' || echo "WARNING: Failed to send Discord message"
+      -d "{\"content\": \"$WELCOME_MSG\"}" || echo "WARNING: Failed to send Discord message"
   fi
 else
   echo "DEBUG: Skipping Discord channel (no guild ID provided)"
@@ -448,7 +538,7 @@ const loadFromLocalStorage = () => {
   }
 };
 
-const InfraSetup = ({ db }) => {
+const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const { addNotification } = useNotification();
@@ -491,10 +581,9 @@ const InfraSetup = ({ db }) => {
 
   const [firebaseConfigStaging, setFirebaseConfigStaging] = useState('');
   const [firebaseConfigProduction, setFirebaseConfigProduction] = useState('');
-  const [firebaseStagingData, setFirebaseStagingData] = useState({});
-  const [firebaseProductionData, setFirebaseProductionData] = useState({});
+  const [firebaseStagingData, setFirebaseStagingData] = useState<{ projectId?: string }>({});
+  const [firebaseProductionData, setFirebaseProductionData] = useState<{ projectId?: string }>({});
   const [githubPat, setGithubPat] = useState('');
-  const [githubRepoUrl, setGithubRepoUrl] = useState('');
   const [discordBotTokenInput, setDiscordBotTokenInput] = useState('');
   const [discordGuildId, setDiscordGuildId] = useState('');
   const [detectedGuilds, setDetectedGuilds] = useState([]);
@@ -515,7 +604,7 @@ const InfraSetup = ({ db }) => {
   const [vmLogs, setVmLogs] = useState('');
   const [loadingVmLogs, setLoadingVmLogs] = useState(false);
 
-  const [step4Status, setStep4Status] = useState('idle');
+  const [step4Status, setStep4Status] = useState<'idle' | 'enabling' | 'complete' | 'error'>('idle');
   const [step4Message, setStep4Message] = useState('');
   const [step4Logs, setStep4Logs] = useState([]);
   const [step4Retrying, setStep4Retrying] = useState(false);
@@ -699,8 +788,8 @@ const InfraSetup = ({ db }) => {
   const isStepCompleted = (step) => {
     if (step === 1) return !!user;
     if (step === 2) return !!serviceAccountJson;
-    if (step === 3) return !!projectId;
-    if (step === 4) return !!(firebaseStagingData?.projectId && firebaseProductionData?.projectId);
+    if (step === 3) return !!(firebaseStagingData?.projectId && firebaseProductionData?.projectId);
+    if (step === 4) return !!githubPat;
     if (step === 5) return !!githubPat;
     if (step === 6) return !!discordBotToken;
     if (step === 7) return !!vmIp;
@@ -762,14 +851,16 @@ const InfraSetup = ({ db }) => {
     return [];
   };
 
-  const initGoogleOAuth = () => {
+  const initGoogleOAuth = (): { open(): void; requestAccessToken(): void } | null => {
     const clientId = import.meta.env.VITE_GCP_CLIENT_ID;
     if (!clientId) {
       setError('GCP Client ID not configured. Add VITE_GCP_CLIENT_ID to .env.local');
       return null;
     }
 
-    return window.google.accounts.oauth2.initTokenClient({
+    const googleClient = (window as unknown as { google?: { accounts: { oauth2: { initTokenClient: (config: { client_id: string; scope: string; callback: (response: { error?: string; access_token?: string }) => void }) => { open(): void; requestAccessToken(): void } } } } }).google;
+    if (!googleClient) return null;
+    return googleClient.accounts.oauth2.initTokenClient({
       client_id: clientId,
       scope: 'https://www.googleapis.com/auth/cloud-platform',
       callback: async (response) => {
@@ -1108,8 +1199,6 @@ const InfraSetup = ({ db }) => {
         const parsed = parseFirebaseConfig(formProgress.firebaseConfigProduction);
         if (parsed) setFirebaseProductionData(parsed);
       }
-      if (formProgress.githubRepoUrl) setGithubRepoUrl(formProgress.githubRepoUrl);
-      if (formProgress.githubPat) setGithubPat(formProgress.githubPat);
       if (formProgress.vmHttpsUrl) setVmHttpsUrl(formProgress.vmHttpsUrl);
       if (formProgress.expandedSteps) setExpandedSteps(formProgress.expandedSteps);
       if (formProgress.step2Complete) setStep2Complete(formProgress.step2Complete);
@@ -1171,7 +1260,6 @@ const InfraSetup = ({ db }) => {
         setFirebaseConfigProduction(configData.firebase_production ? JSON.stringify(configData.firebase_production, null, 2) : '');
         setFirebaseStagingData(configData.firebase_staging || {});
         setFirebaseProductionData(configData.firebase_production || {});
-        setGithubRepoUrl(configData.github_repo_url || '');
         setGithubPat(configData.github_pat || '');
         
         // Note: service_account_key is NOT restored (private_key sensitive)
@@ -1294,7 +1382,6 @@ const InfraSetup = ({ db }) => {
       vm_ip: vmIp,
       firebase_staging_project_id: firebaseStagingData?.projectId,
       firebase_production_project_id: firebaseProductionData?.projectId,
-      github_repo_url: githubRepoUrl,
       updated_at: new Date().toISOString(),
     };
 
@@ -1452,7 +1539,6 @@ const InfraSetup = ({ db }) => {
       setVmIp('');
       setDiscordBotToken('');
       setGithubAppInstalled(false);
-      setGithubRepoUrl('');
       setGithubPat('');
       setFirebaseConfigStaging('');
       setFirebaseConfigProduction('');
@@ -1539,25 +1625,6 @@ const InfraSetup = ({ db }) => {
     }
     
     try {
-      if (githubPat && githubRepoUrl) {
-        try {
-          await saveSecretToGitHub('FIREBASE_STAGING_PROJECT_ID', stagingConfig.projectId);
-          await saveSecretToGitHub('FIREBASE_PRODUCTION_PROJECT_ID', productionConfig.projectId);
-        } catch (ghErr) {
-          console.warn('Could not save to GitHub Secrets:', ghErr.message);
-        }
-      }
-      
-      const accessToken = await getAccessToken();
-      if (accessToken) {
-        try {
-          await saveSecretToGCP('firebase-staging-config', JSON.stringify(stagingConfig));
-          await saveSecretToGCP('firebase-production-config', JSON.stringify(productionConfig));
-        } catch (gcpErr) {
-          console.warn('Could not save to GCP Secret Manager:', gcpErr.message);
-        }
-      }
-      
       if (!expandedSteps.includes(5)) {
         setExpandedSteps(prev => [...prev, 5]);
       }
@@ -1640,94 +1707,6 @@ const InfraSetup = ({ db }) => {
     return null;
   };
 
-  const saveSecretToGitHub = async (secretName, secretValue) => {
-    if (!githubPat) {
-      throw new Error('GitHub PAT required. Complete Step 8 first.');
-    }
-
-    const response = await fetch(
-      `https://api.github.com/repos/${githubRepoUrl.replace('https://github.com/', '')}/actions/secrets/${secretName}`,
-      {
-        method: 'PUT',
-        headers: {
-          'Authorization': `Bearer ${githubPat}`,
-          'Accept': 'application/vnd.github+json',
-          'Content-Type': 'application/json',
-          'X-GitHub-Api-Version': '2022-11-28',
-        },
-        body: JSON.stringify({
-          encrypted_value: btoa(secretValue),
-          key_id: '', 
-        }),
-      }
-    );
-
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({}));
-      throw new Error(`Failed to save secret to GitHub: ${err.message || response.statusText}`);
-    }
-
-    return { success: true };
-  };
-
-  const saveSecretToGCP = async (secretName, secretValue) => {
-    if (!hasGcpAccess()) {
-      throw new Error('GCP not configured. Please complete Steps 2-3 first.');
-    }
-
-    const functionUrl = import.meta.env.VITE_CREATE_SECRET_FUNCTION_URL;
-    
-    if (functionUrl && serviceAccountJson) {
-      const response = await fetch(functionUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId,
-          secretName,
-          secretValue,
-          serviceAccountKey: serviceAccountJson,
-        }),
-      });
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({ error: { message: response.statusText } }));
-        throw new Error(`Failed to save secret: ${err.error?.message || response.statusText}`);
-      }
-
-      return response.json();
-    }
-
-    const accessToken = await getAccessToken();
-    if (!accessToken) {
-      throw new Error('GCP access token not available. Please re-authenticate.');
-    }
-
-    const secretId = `secureagent-${secretName}`;
-    
-    const response = await fetch(
-      `https://secretmanager.googleapis.com/v1/projects/${projectId}/secrets/${secretId}/versions`,
-      {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          payload: {
-            data: btoa(secretValue),
-          },
-        }),
-      }
-    );
-
-    if (!response.ok) {
-      const err = await response.json();
-      throw new Error(`Failed to save secret ${secretName}: ${err.error?.message || response.statusText}`);
-    }
-
-    return response.json();
-  };
-
   const handleCreateDiscordBot = async () => {
     if (!discordBotTokenInput.trim()) {
       setError('Please enter your Discord bot token');
@@ -1750,6 +1729,7 @@ const InfraSetup = ({ db }) => {
     try {
       // Auto-detect Discord servers the bot is in
       setDiscordDetecting(true);
+      let detectedGuildId = '';
       try {
         const guildsResponse = await fetch('https://discord.com/api/v10/users/@me/guilds', {
           headers: {
@@ -1762,10 +1742,13 @@ const InfraSetup = ({ db }) => {
           setDetectedGuilds(guilds);
           
           if (guilds.length === 1) {
-            setDiscordGuildId(guilds[0].id);
+            detectedGuildId = guilds[0].id;
+            setDiscordGuildId(detectedGuildId);
             console.log('Auto-detected Discord server:', guilds[0].name);
           } else if (guilds.length > 1) {
-            console.log(`Bot is in ${guilds.length} servers. Please select one.`);
+            detectedGuildId = guilds[0].id;
+            setDiscordGuildId(detectedGuildId);
+            console.log(`Bot is in ${guilds.length} servers. Auto-selected first: ${guilds[0].name}`);
           } else {
             console.log('Bot is not in any servers. Add the bot to your Discord server first.');
             setError('Bot is not in any servers. Invite the bot to your Discord server first.');
@@ -1778,23 +1761,11 @@ const InfraSetup = ({ db }) => {
       }
       setDiscordDetecting(false);
       
-      if (githubPat && githubRepoUrl) {
-        try {
-          await saveSecretToGitHub('DISCORD_BOT_TOKEN', discordBotTokenInput);
-        } catch (ghErr) {
-          console.warn('Could not save to GitHub Secrets:', ghErr.message);
-        }
-      }
-      
-      if (accessToken) {
-        try {
-          await saveSecretToGCP('discord-bot-token', discordBotTokenInput);
-        } catch (gcpErr) {
-          console.warn('Could not save to GCP Secret Manager:', gcpErr.message);
-        }
-      }
-      
       setDiscordBotToken(discordBotTokenInput);
+      await saveConfig({ 
+        discord_bot_token: discordBotTokenInput,
+        discord_guild_id: detectedGuildId 
+      });
       expandNextStep(6);
     } catch (err) {
       console.error('Error saving discord bot token:', err);
@@ -2036,6 +2007,7 @@ const InfraSetup = ({ db }) => {
                         setProjectId(decrypted.gcp.projectId || '');
                         setServiceAccountJson(decrypted.gcp.serviceAccountJson || null);
                         setDiscordBotToken(decrypted.gcp.discordBotToken || '');
+                        setDiscordBotTokenInput(decrypted.gcp.discordBotToken || '');
                         setDiscordGuildId(decrypted.gcp.discordGuildId || '');
                       }
                       if (decrypted.github) {
@@ -2053,15 +2025,23 @@ const InfraSetup = ({ db }) => {
                         setVmIp(decrypted.vm.ip || '');
                         setVmZone(decrypted.vm.zone || 'us-east1-b');
                       }
-                      const newExpanded = [];
-                      if (!isStepCompleted(1)) newExpanded.push(1);
-                      else if (!isStepCompleted(2)) newExpanded.push(2);
-                      else if (!isStepCompleted(3)) newExpanded.push(3);
-                      else if (!isStepCompleted(4)) newExpanded.push(4);
-                      else if (!isStepCompleted(5)) newExpanded.push(5);
-                      else if (!isStepCompleted(6)) newExpanded.push(6);
-                      else if (!isStepCompleted(7)) newExpanded.push(7);
-                      if (vmIp) newExpanded.push(7);
+                      const hasProjectId = !!decrypted.gcp?.projectId;
+                      const hasServiceAccount = !!decrypted.gcp?.serviceAccountJson;
+                      const hasFirebase = !!(decrypted.firebase?.staging && decrypted.firebase?.production);
+                      const hasGithub = !!decrypted.github?.pat;
+                      const hasDiscord = !!decrypted.gcp?.discordBotToken;
+                      const hasVm = !!decrypted.vm?.ip;
+                      
+                      let nextStep = 1;
+                      if (user) nextStep = 2;
+                      if (hasServiceAccount) nextStep = 3;
+                      if (hasFirebase) nextStep = 4;
+                      if (hasGithub) nextStep = 5;
+                      if (hasDiscord) nextStep = 6;
+                      if (hasVm) nextStep = 7;
+                      
+                      const newExpanded = [nextStep];
+                      if (hasVm && !newExpanded.includes(7)) newExpanded.push(7);
                       setExpandedSteps(newExpanded);
                       setGcpConfigLost(false);
                       setPendingDecryptProject(null);
@@ -2258,9 +2238,12 @@ const InfraSetup = ({ db }) => {
                         setServiceAccountError(null);
                         try {
                           const parsed = JSON.parse(e.target.value);
-                          if (!parsed.private_key) throw new Error('Invalid');
+                          console.log('Parsed service account:', parsed ? 'valid' : 'null', parsed?.project_id);
+                          if (!parsed.private_key) throw new Error('Invalid - missing private_key');
                           setServiceAccountJson(parsed);
+                          console.log('Service account JSON set successfully');
                         } catch (err) {
+                          console.log('Service account parse error:', err.message);
                           setServiceAccountError('Invalid JSON. Paste the complete service account JSON file.');
                         }
                       }}
@@ -2272,6 +2255,7 @@ const InfraSetup = ({ db }) => {
                   
                   <button
                     onClick={() => {
+                      console.log('Continue clicked, serviceAccountJson:', !!serviceAccountJson, serviceAccountJson?.project_id);
                       if (serviceAccountJson && serviceAccountJson.project_id) {
                         setStep2Complete(true);
                         setExpandedSteps(prev => [...prev, 3]);
@@ -2475,9 +2459,10 @@ const InfraSetup = ({ db }) => {
                       className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
                     />
                     <p className="text-gray-500 text-xs mt-1">
-                      This will be stored as a GitHub Secret and used by your VM and CI/CD
+                      Will be encrypted and sent to your VM for GitHub authentication
                     </p>
                   </div>
+                  
                   {error && (
                     <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
                       {error}
@@ -2487,30 +2472,8 @@ const InfraSetup = ({ db }) => {
                     onClick={async () => {
                       setError(null);
                       if (githubPat.trim() && githubPat.startsWith('ghp_')) {
-                        try {
-                          try {
-                            await saveSecretToGitHub('GITHUB_TOKEN', githubPat);
-                          } catch (ghErr) {
-                            console.warn('Could not save to GitHub Secrets:', ghErr.message);
-                          }
-                          
-                          const accessToken = await getAccessToken();
-                          if (accessToken) {
-                            try {
-                              await saveSecretToGCP('github-pat', githubPat);
-                            } catch (gcpErr) {
-                              console.warn('Could not save to GCP Secret Manager:', gcpErr.message);
-                            }
-                          }
-                          
-                          if (!expandedSteps.includes(6)) {
-                            setExpandedSteps(prev => [...prev, 6]);
-                          }
-                        } catch (err) {
-                          console.error('Error saving step 5:', err);
-                          if (!expandedSteps.includes(6)) {
-                            setExpandedSteps(prev => [...prev, 6]);
-                          }
+                        if (!expandedSteps.includes(6)) {
+                          setExpandedSteps(prev => [...prev, 6]);
                         }
                       } else {
                         setError('Please enter a valid GitHub PAT (starts with ghp_)');
@@ -2549,43 +2512,43 @@ const InfraSetup = ({ db }) => {
                 Configure Discord bot token. <strong>Important:</strong> Add the bot to your Discord server before creating the VM.
               </p>
               
-              {(discordBotToken && !expandedSteps.includes(6)) ? (
-                <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
-                  <Check size={20} />
-                  <span className="font-medium">Discord bot token configured</span>
+              {discordBotToken && (
+                <div className="flex items-center gap-2 text-green-600 bg-green-50 p-3 rounded-lg mb-4">
+                  <Check size={18} />
+                  <span className="text-sm font-medium">Discord bot token configured</span>
                 </div>
-              ) : (
-                <>
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                    <p className="text-blue-800 font-medium mb-2">Create a Discord bot:</p>
-                    <ol className="list-decimal list-inside space-y-2 text-blue-700 text-sm">
-                      <li>Go to <a href="https://discord.com/developers/applications" target="_blank" rel="noopener noreferrer" className="underline font-medium">Discord Developer Portal</a></li>
-                      <li>Click "New Application" → give it a name (e.g., "Kimaki")</li>
-                      <li>Go to "Bot" in the left sidebar → click "Add Bot"</li>
-                      <li>In "General Information", scroll down and <strong>disable "Public Bot"</strong> (prevents others from adding your bot)</li>
-                      <li>In "OAuth2" → "General", set <strong>"Default Install Link" to "None"</strong> (required when Public Bot is disabled)</li>
-                      <li>Back in "Bot", scroll down to "Privileged Gateway Intents" → enable <strong>Message Content Intent</strong> (required for Kimaki to read messages)</li>
-                      <li>Go to "OAuth2" → "URL Generator"</li>
-                      <li>Under "Scopes", check <code className="bg-blue-100 px-1">bot</code></li>
-                      <li>Under "Bot Permissions", check <strong>Send Messages</strong>, <strong>Read Message History</strong>, <strong>Manage Channels</strong>, and <strong>Use Slash Commands</strong></li>
-                      <li>Copy the generated URL at the bottom, open it in a new tab, and select your server to invite the bot</li>
-                      <li>Go back to "Bot" → click "Reset Token" → copy the token</li>
-                      <li>Enable Developer Mode in Discord (<strong>User Settings → Advanced → Developer Mode</strong>), then right-click your server name → <strong>Copy Server ID</strong></li>
-                    </ol>
-                  </div>
-                  <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Discord Bot Token
-                    </label>
-                    <input
-                      type="password"
-                      value={discordBotTokenInput}
-                      onChange={(e) => setDiscordBotTokenInput(e.target.value)}
-                      placeholder="Paste your Discord bot token here"
-                      disabled={!hasGcpAccess()}
-                      className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 disabled:bg-gray-100 disabled:cursor-not-allowed"
-                    />
-                  </div>
+              )}
+              
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                <p className="text-blue-800 font-medium mb-2">Create a Discord bot:</p>
+                <ol className="list-decimal list-inside space-y-2 text-blue-700 text-sm">
+                  <li>Go to <a href="https://discord.com/developers/applications" target="_blank" rel="noopener noreferrer" className="underline font-medium">Discord Developer Portal</a></li>
+                  <li>Click "New Application" → give it a name (e.g., "Kimaki")</li>
+                  <li>Go to "Bot" in the left sidebar → click "Add Bot"</li>
+                  <li>In "General Information", scroll down and <strong>disable "Public Bot"</strong> (prevents others from adding your bot)</li>
+                  <li>In "OAuth2" → "General", set <strong>"Default Install Link" to "None"</strong> (required when Public Bot is disabled)</li>
+                  <li>Back in "Bot", scroll down to "Privileged Gateway Intents" → enable <strong>Message Content Intent</strong> (required for Kimaki to read messages)</li>
+                  <li>Go to "OAuth2" → "URL Generator"</li>
+                  <li>Under "Scopes", check <code className="bg-blue-100 px-1">bot</code></li>
+                  <li>Under "Bot Permissions", check <strong>Send Messages</strong>, <strong>Read Message History</strong>, <strong>Manage Channels</strong>, and <strong>Use Slash Commands</strong></li>
+                  <li>Copy the generated URL at the bottom, open it in a new tab, and select your server to invite the bot</li>
+                  <li>Go back to "Bot" → click "Reset Token" → copy the token</li>
+                  <li>Enable Developer Mode in Discord (<strong>User Settings → Advanced → Developer Mode</strong>), then right-click your server name → <strong>Copy Server ID</strong></li>
+                </ol>
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Discord Bot Token
+                </label>
+                <input
+                  type="password"
+                  value={discordBotTokenInput}
+                  onChange={(e) => setDiscordBotTokenInput(e.target.value)}
+                  placeholder="Paste your Discord bot token here"
+                  disabled={!hasGcpAccess()}
+                  className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                />
+              </div>
                   <div className="mb-4">
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Discord Server ID <span className="text-gray-400 font-normal">(optional - auto-detected)</span>
@@ -2644,9 +2607,7 @@ const InfraSetup = ({ db }) => {
                     <Bot size={18} />
                     {saving || discordDetecting ? 'Detecting...' : 'Save Token'}
                   </button>
-                </>
-              )}
-            </div>
+              </div>
           )}
         </div>
 
@@ -2684,7 +2645,12 @@ const InfraSetup = ({ db }) => {
                         Refresh Logs
                       </button>
                     </div>
-                    {vmLogs ? (
+                    {loadingVmLogs ? (
+                      <div className="flex items-center justify-center py-8 text-blue-600">
+                        <div className="animate-spin mr-2">⟳</div>
+                        Fetching VM logs...
+                      </div>
+                    ) : vmLogs ? (
                       <pre className="bg-gray-900 text-green-400 p-3 rounded text-xs font-mono max-h-64 overflow-y-auto whitespace-pre-wrap">
                         {vmLogs}
                       </pre>
@@ -2709,202 +2675,208 @@ const InfraSetup = ({ db }) => {
                           setError('Service account and project ID required');
                           return;
                         }
+                        if (!discordGuildId) {
+                          addStep4Log('WARNING: Discord Guild ID not set - Discord channel will not be created');
+                        }
                         setVmIp('');
+                        setStep4Logs([]);
+                        setVmLogs('');
                         setStep4Status('enabling');
                         setStep4Message('Getting service account token...');
                         addStep4Log('Starting VM recreation process...');
                         
                         const token = await getServiceAccountToken();
                         if (!token) {
-                        setError('Failed to authenticate with service account');
-                        setStep4Status('error');
-                        return;
-                      }
-                      addStep4Log('Service account authenticated');
-                      
-                      const apis = [
-                        { name: 'compute.googleapis.com', displayName: 'Compute Engine API' },
-                        { name: 'cloudresourcemanager.googleapis.com', displayName: 'Cloud Resource Manager API' },
-                        { name: 'serviceusage.googleapis.com', displayName: 'Service Usage API' }
-                      ];
-                      
-                      for (const api of apis) {
-                        setStep4Message(`Enabling ${api.displayName}...`);
-                        addStep4Log(`Enabling ${api.displayName}...`);
-                        
-                        try {
-                          const response = await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/${api.name}:enable`, {
-                            method: 'POST',
-                            headers: {
-                              'Authorization': `Bearer ${token}`,
-                              'Content-Type': 'application/json'
-                            }
-                          });
-                          
-                          if (response.ok) {
-                            addStep4Log(`${api.displayName} enabled`);
-                          } else {
-                            const errData = await response.json().catch(() => ({}));
-                            const errMsg = errData.error?.message || '';
-                            if (errMsg.includes('billing')) {
-                              setError('Billing must be enabled on your GCP project');
-                              addStep4Log(`ERROR: Billing required for ${api.displayName}`);
-                            } else if (errMsg.includes('already') || errMsg.includes('enabled')) {
-                              addStep4Log(`${api.displayName} already enabled`);
-                            } else {
-                              addStep4Log(`Note: ${errMsg || 'Continuing...'}`);
-                            }
-                          }
-                        } catch (e) {
-                          addStep4Log(`Error enabling ${api.displayName}: ${e.message}`);
+                          setError('Failed to authenticate with service account');
+                          setStep4Status('error');
+                          return;
                         }
+                        addStep4Log('Service account authenticated');
                         
-                        await new Promise(r => setTimeout(r, 1500));
-                      }
-                      
-                      setStep4Message('Creating VM...');
-                      addStep4Log('Creating VM...');
-                      
-                      const zone = vmZone;
-                      const instanceName = 'secureagent-manager';
-                      const startupScript = getStartupScript(useOptimizedBundle);
-
-                      const zones = [vmZone, 'us-central1-b', 'us-central1-c', 'us-west1-a', 'us-west1-b', 'us-east1-c', 'us-east1-d', 'europe-west1-d', 'asia-east1-a'];
-                      let vmCreated = false;
-                      
-                      for (const tryZone of zones) {
-                        try {
-                          setStep4Message(`Creating VM in ${tryZone}...`);
-                          addStep4Log(`Attempting VM creation in ${tryZone}...`);
+                        const apis = [
+                          { name: 'compute.googleapis.com', displayName: 'Compute Engine API' },
+                          { name: 'cloudresourcemanager.googleapis.com', displayName: 'Cloud Resource Manager API' },
+                          { name: 'serviceusage.googleapis.com', displayName: 'Service Usage API' }
+                        ];
+                        
+                        for (const api of apis) {
+                          setStep4Message(`Enabling ${api.displayName}...`);
+                          addStep4Log(`Enabling ${api.displayName}...`);
                           
-                          const vmResponse = await fetch(
-                            `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances`,
-                            {
+                          try {
+                            const response = await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/${api.name}:enable`, {
                               method: 'POST',
                               headers: {
                                 'Authorization': `Bearer ${token}`,
                                 'Content-Type': 'application/json'
-                              },
-                              body: JSON.stringify({
-                                name: instanceName,
-                                machineType: `zones/${tryZone}/machineTypes/e2-micro`,
-                                disks: [{
-                                  boot: true,
-                                  autoDelete: true,
-                                  initializeParams: {
-                                    diskSizeGb: '10',
-                                    sourceImage: 'projects/debian-cloud/global/images/family/debian-11',
-                                  },
-                                }],
-                                networkInterfaces: [{
-                                  network: 'global/networks/default',
-                                  accessConfigs: [{ type: 'ONE_TO_ONE_NAT' }],
-                                }],
-                                metadata: {
-                                  items: [
-                                    { key: 'startup-script', value: startupScript },
-                                    { key: 'github_token', value: githubPat },
-                                    { key: 'discord_bot_token', value: discordBotToken },
-                                    { key: 'discord_guild_id', value: discordGuildId || '' },
-                                    { key: 'github_owner', value: '' },
-                                    { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
-                                    { key: 'firebase_production', value: firebaseProductionData?.projectId || '' }
-                                  ]
-                                }
-                              })
+                              }
+                            });
+                            
+                            if (response.ok) {
+                              addStep4Log(`${api.displayName} enabled`);
+                            } else {
+                              const errData = await response.json().catch(() => ({}));
+                              const errMsg = errData.error?.message || '';
+                              if (errMsg.includes('billing')) {
+                                setError('Billing must be enabled on your GCP project');
+                                addStep4Log(`ERROR: Billing required for ${api.displayName}`);
+                              } else if (errMsg.includes('already') || errMsg.includes('enabled')) {
+                                addStep4Log(`${api.displayName} already enabled`);
+                              } else {
+                                addStep4Log(`Note: ${errMsg || 'Continuing...'}`);
+                              }
                             }
-                          );
+                          } catch (e) {
+                            addStep4Log(`Error enabling ${api.displayName}: ${e.message}`);
+                          }
                           
-                          if (vmResponse.ok) {
-                            setVmZone(tryZone);
-                            addStep4Log(`VM creation started in ${tryZone}, waiting for completion...`);
-                            await new Promise(r => setTimeout(r, 15000));
+                          await new Promise(r => setTimeout(r, 1500));
+                        }
+                        
+                        setStep4Message('Creating VM...');
+                        addStep4Log('Creating VM...');
+                        
+                        const zone = vmZone;
+                        const instanceName = 'secureagent-manager';
+                        const startupScript = getStartupScript(useOptimizedBundle);
+
+                        const zones = [vmZone, 'us-central1-b', 'us-central1-c', 'us-west1-a', 'us-west1-b', 'us-east1-c', 'us-east1-d', 'europe-west1-d', 'asia-east1-a'];
+                        let vmCreated = false;
+                        
+                        for (const tryZone of zones) {
+                          try {
+                            setStep4Message(`Creating VM in ${tryZone}...`);
+                            addStep4Log(`Attempting VM creation in ${tryZone}...`);
                             
-                            const instanceResp = await fetch(
-                              `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances/${instanceName}`,
-                              { headers: { 'Authorization': `Bearer ${token}` } }
+                            const vmResponse = await fetch(
+                              `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances`,
+                              {
+                                method: 'POST',
+                                headers: {
+                                  'Authorization': `Bearer ${token}`,
+                                  'Content-Type': 'application/json'
+                                },
+                                body: JSON.stringify({
+                                  name: instanceName,
+                                  machineType: `zones/${tryZone}/machineTypes/e2-micro`,
+                                  disks: [{
+                                    boot: true,
+                                    autoDelete: true,
+                                    initializeParams: {
+                                      diskSizeGb: '10',
+                                      sourceImage: 'projects/debian-cloud/global/images/family/debian-11',
+                                    },
+                                  }],
+                                  networkInterfaces: [{
+                                    network: 'global/networks/default',
+                                    accessConfigs: [{ type: 'ONE_TO_ONE_NAT' }],
+                                  }],
+                                  metadata: {
+                                    items: [
+                                      { key: 'startup-script', value: startupScript },
+                                      { key: 'github_token', value: githubPat },
+                                      { key: 'discord_bot_token', value: discordBotToken },
+                                      { key: 'discord_guild_id', value: discordGuildId || '' },
+                                      { key: 'github_owner', value: '' },
+                                      { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
+                                      { key: 'firebase_production', value: firebaseProductionData?.projectId || '' }
+                                    ]
+                                  }
+                                })
+                              }
                             );
-                            const instanceData = await instanceResp.json();
-                            const vmStatus = instanceData.status;
-                            const ip = instanceData.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP;
                             
-                            if (vmStatus !== 'RUNNING') {
-                              addStep4Log(`VM status: ${vmStatus} - waiting for startup...`);
+                            if (vmResponse.ok) {
+                              setVmZone(tryZone);
+                              addStep4Log(`VM creation started in ${tryZone}, waiting for completion...`);
+                              await new Promise(r => setTimeout(r, 15000));
                               
-                              await new Promise(r => setTimeout(r, 10000));
-                              
-                              const recheckResp = await fetch(
+                              const instanceResp = await fetch(
                                 `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances/${instanceName}`,
                                 { headers: { 'Authorization': `Bearer ${token}` } }
                               );
-                              const recheckData = await recheckResp.json();
-                              const recheckStatus = recheckData.status;
+                              const instanceData = await instanceResp.json();
+                              const vmStatus = instanceData.status;
+                              const ip = instanceData.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP;
                               
-                              if (recheckStatus !== 'RUNNING') {
-                                addStep4Log(`VM failed to start. Status: ${recheckStatus}`);
-                                if (recheckStatus === 'TERMINATED') {
-                                  setError('VM terminated. Check startup script logs in GCP Console for errors.');
-                                } else {
-                                  setError(`VM is in "${recheckStatus}" state. Please check GCP Console.`);
+                              if (vmStatus !== 'RUNNING') {
+                                addStep4Log(`VM status: ${vmStatus} - waiting for startup...`);
+                                
+                                await new Promise(r => setTimeout(r, 10000));
+                                
+                                const recheckResp = await fetch(
+                                  `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances/${instanceName}`,
+                                  { headers: { 'Authorization': `Bearer ${token}` } }
+                                );
+                                const recheckData = await recheckResp.json();
+                                const recheckStatus = recheckData.status;
+                                
+                                if (recheckStatus !== 'RUNNING') {
+                                  addStep4Log(`VM failed to start. Status: ${recheckStatus}`);
+                                  if (recheckStatus === 'TERMINATED') {
+                                    setError('VM terminated. Check startup script logs in GCP Console for errors.');
+                                  } else {
+                                    setError(`VM is in "${recheckStatus}" state. Please check GCP Console.`);
+                                  }
+                                  setStep4Status('error');
+                                  break;
                                 }
-                                setStep4Status('error');
-                                break;
                               }
+                              
+                              if (ip) {
+                                setVmIp(ip);
+                                addStep4Log(`VM ready at ${ip}`);
+                              }
+                              vmCreated = true;
+                              setStep4Status('complete');
+                              setStep4Message('VM created successfully!');
+                              expandNextStep(7);
+                              break;
+                            } else {
+                              const err = await vmResponse.json();
+                              const errStr = JSON.stringify(err);
+                              const errMsg = err.error?.message || '';
+                              const errStatus = err.error?.status || '';
+                              const statusMsg = err.status?.message || '';
+                              
+                              addStep4Log(`VM response not ok: ${errMsg || statusMsg || errStr}`);
+                              
+                              if (errStr.toLowerCase().includes('zone') && 
+                                  (errStr.toLowerCase().includes('exhausted') || 
+                                   errStr.toLowerCase().includes('unavailable') ||
+                                   errStr.toLowerCase().includes('resource'))) {
+                                addStep4Log(`Zone ${tryZone} may be out of capacity, trying next zone...`);
+                                continue;
+                              }
+                              
+                              if (errMsg.includes('ZONE_RESOURCE_POOL_EXHAUSTED') || 
+                                  errStr.includes('RESOURCE_EXHAUSTED') ||
+                                  errStr.includes('resource_availability') ||
+                                  errStatus === 'RESOURCE_EXHAUSTED' ||
+                                  statusMsg.includes('ZONE_RESOURCE_POOL_EXHAUSTED') ||
+                                  (errMsg.includes('unavailable') && errMsg.includes('zone'))) {
+                                addStep4Log(`Zone ${tryZone} out of capacity, trying next zone...`);
+                                continue;
+                              }
+                              
+                              addStep4Log(`VM creation failed: ${errMsg || statusMsg || errStr}`);
+                              setError(`Failed to create VM: ${errMsg || statusMsg}`);
+                              setStep4Status('error');
+                              break;
                             }
-                            
-                            if (ip) {
-                              setVmIp(ip);
-                              addStep4Log(`VM ready at ${ip}`);
-                            }
-                            vmCreated = true;
-                            setStep4Status('complete');
-                            setStep4Message('VM created successfully!');
-                            expandNextStep(7);
-                            break;
-                          } else {
-                            const err = await vmResponse.json();
-                            const errStr = JSON.stringify(err);
-                            const errMsg = err.error?.message || '';
-                            const errStatus = err.error?.status || '';
-                            const statusMsg = err.status?.message || '';
-                            
-                            addStep4Log(`VM response not ok: ${errMsg || statusMsg || errStr}`);
-                            
-                            if (errStr.toLowerCase().includes('zone') && 
-                                (errStr.toLowerCase().includes('exhausted') || 
-                                 errStr.toLowerCase().includes('unavailable') ||
-                                 errStr.toLowerCase().includes('resource'))) {
-                              addStep4Log(`Zone ${tryZone} may be out of capacity, trying next zone...`);
+                            } catch (e: any) {
+                              const errMsg = e?.message || e?.name || 'Unknown error';
+                              addStep4Log(`Error creating VM in ${tryZone}: ${errMsg}, trying next zone...`);
                               continue;
                             }
-                            
-                            if (errMsg.includes('ZONE_RESOURCE_POOL_EXHAUSTED') || 
-                                errStr.includes('RESOURCE_EXHAUSTED') ||
-                                errStr.includes('resource_availability') ||
-                                errStatus === 'RESOURCE_EXHAUSTED' ||
-                                statusMsg.includes('ZONE_RESOURCE_POOL_EXHAUSTED') ||
-                                (errMsg.includes('unavailable') && errMsg.includes('zone'))) {
-                              addStep4Log(`Zone ${tryZone} out of capacity, trying next zone...`);
-                              continue;
-                            }
-                            
-                            addStep4Log(`VM creation failed: ${errMsg || statusMsg || errStr}`);
-                            setError(`Failed to create VM: ${errMsg || statusMsg}`);
-                            setStep4Status('error');
-                            break;
-                          }
-                        } catch (e) {
-                          addStep4Log(`Error creating VM in ${tryZone}: ${e.message}, trying next zone...`);
-                          continue;
                         }
-                      }
-                      
-                      if (!vmCreated && step4Status !== 'error') {
-                        addStep4Log('All zones exhausted, could not create VM');
-                        setError('All zones are out of capacity. Please try again later.');
-                        setStep4Status('error');
-                      }
-                    }}
+                        
+                        if (!vmCreated) {
+                          addStep4Log('All zones exhausted, could not create VM');
+                          setError('All zones are out of capacity. Please try again later.');
+                          setStep4Status('error');
+                        }
+                      }}
                     className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg"
                   >
                     Recreate VM
@@ -3156,13 +3128,14 @@ const InfraSetup = ({ db }) => {
                                 setStep4Status('error');
                                 break;
                               }
-                            } catch (e) {
-                              addStep4Log(`Error creating VM in ${tryZone}: ${e.message}, trying next zone...`);
+                            } catch (e: any) {
+                              const errMsg = e?.message || e?.name || 'Unknown error';
+                              addStep4Log(`Error creating VM in ${tryZone}: ${errMsg}, trying next zone...`);
                               continue;
                             }
                           }
                           
-                          if (!vmCreated && step4Status !== 'error') {
+                          if (!vmCreated) {
                             addStep4Log('All zones exhausted, could not create VM');
                             setError('All zones are out of capacity. Please try again later.');
                             setStep4Status('error');
@@ -3209,6 +3182,9 @@ const InfraSetup = ({ db }) => {
                           if (!serviceAccountJson || !projectId) {
                             setError('Service account and project ID required');
                             return;
+                          }
+                          if (!discordGuildId) {
+                            addStep4Log('WARNING: Discord Guild ID not set - Discord channel will not be created');
                           }
                           setStep4Status('enabling');
                           setStep4Message('Getting service account token...');
@@ -3399,7 +3375,7 @@ const InfraSetup = ({ db }) => {
                             }
                           }
                           
-                          if (!vmCreated && step4Status !== 'error') {
+                          if (!vmCreated && (step4Status as string) !== 'error') {
                             addStep4Log('All zones exhausted, could not create VM');
                             setError('All zones are out of capacity. Please try again later.');
                             setStep4Status('error');

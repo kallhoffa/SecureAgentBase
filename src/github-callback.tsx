@@ -1,42 +1,22 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { doc, updateDoc, getDoc } from 'firebase/firestore';
-import { Check, AlertCircle, Loader2, Github } from 'lucide-react';
+import { doc, updateDoc, getDoc, Firestore } from 'firebase/firestore';
+import { Check, AlertCircle, Loader2 } from 'lucide-react';
 
-const GitHubCallback = ({ db }) => {
+interface GitHubCallbackProps {
+  db: Firestore;
+}
+
+type CallbackStatus = 'processing' | 'success' | 'cancelled' | 'error';
+
+const GitHubCallback: React.FC<GitHubCallbackProps> = ({ db }) => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const [status, setStatus] = useState('processing');
+  const [status, setStatus] = useState<CallbackStatus>('processing');
   const [message, setMessage] = useState('Processing...');
-  const [error, setError] = useState(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  useEffect(() => {
-    const handleCallback = async () => {
-      const code = searchParams.get('code');
-      const state = searchParams.get('state');
-      const installationId = searchParams.get('installation_id');
-      const setupAction = searchParams.get('setup_action');
-
-      if (setupAction === 'cancel') {
-        setStatus('cancelled');
-        setMessage('GitHub App installation was cancelled');
-        return;
-      }
-
-      if (code) {
-        await handleOAuthFork(code, state);
-      } else if (installationId) {
-        await handleAppInstall(installationId, state);
-      } else {
-        setStatus('error');
-        setError('No valid callback parameters received');
-      }
-    };
-
-    handleCallback();
-  }, [db, navigate, searchParams]);
-
-  const handleOAuthFork = async (code, state) => {
+  const handleOAuthFork = async (code: string, state: string | null): Promise<void> => {
     try {
       setMessage('Exchanging code for access token...');
       
@@ -62,7 +42,7 @@ const GitHubCallback = ({ db }) => {
         }),
       });
 
-      const tokenData = await tokenResponse.json();
+      const tokenData = await tokenResponse.json() as { error?: string; error_description?: string; access_token?: string };
       
       if (tokenData.error) {
         throw new Error(tokenData.error_description || tokenData.error);
@@ -79,16 +59,19 @@ const GitHubCallback = ({ db }) => {
         },
       });
 
+      let forkData: { html_url?: string; full_name?: string; message?: string } = {};
+      
       if (!forkResponse.ok) {
-        const err = await forkResponse.json();
+        const err = await forkResponse.json() as { message?: string };
         if (err.message === 'Repository fork already exists') {
           setMessage('Repo already forked! Getting fork info...');
         } else {
           throw new Error(err.message || 'Failed to fork repo');
         }
+      } else {
+        forkData = await forkResponse.json();
       }
 
-      const forkData = await forkResponse.json();
       const forkUrl = forkData.html_url || `https://github.com/${forkData.full_name}`;
 
       const userId = state;
@@ -123,11 +106,11 @@ const GitHubCallback = ({ db }) => {
     } catch (err) {
       console.error('Error forking repo:', err);
       setStatus('error');
-      setMessage(err.message || 'Failed to fork repository');
+      setMessage(err instanceof Error ? err.message : 'Failed to fork repository');
     }
   };
 
-  const handleAppInstall = async (installationId, state) => {
+  const handleAppInstall = async (installationId: string, state: string | null): Promise<void> => {
     try {
       if (!state || state === 'anonymous') {
         setStatus('error');
@@ -154,9 +137,45 @@ const GitHubCallback = ({ db }) => {
     } catch (err) {
       console.error('Error updating GitHub App status:', err);
       setStatus('error');
-      setMessage(err.message);
+      setMessage(err instanceof Error ? err.message : 'Failed to update');
     }
   };
+
+  useEffect(() => {
+    let mounted = true;
+    
+    const handleCallback = async (): Promise<void> => {
+      const code = searchParams.get('code');
+      const state = searchParams.get('state');
+      const installationId = searchParams.get('installation_id');
+      const setupAction = searchParams.get('setup_action');
+
+      if (setupAction === 'cancel') {
+        if (mounted) {
+          setStatus('cancelled');
+          setMessage('GitHub App installation was cancelled');
+        }
+        return;
+      }
+
+      if (code && state) {
+        await handleOAuthFork(code, state);
+      } else if (installationId && state) {
+        await handleAppInstall(installationId, state);
+      } else {
+        if (mounted) {
+          setStatus('error');
+          setErrorMsg('No valid callback parameters received');
+        }
+      }
+    };
+
+    handleCallback();
+    
+    return () => {
+      mounted = false;
+    };
+  }, [db, navigate, searchParams]);
 
   return (
     <div className="max-w-md mx-auto p-6 mt-20">

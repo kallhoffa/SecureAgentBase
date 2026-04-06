@@ -1,22 +1,12 @@
-import { initializeApp } from 'firebase/app';
-import { getRemoteConfig, fetchAndActivate, getString } from 'firebase/remote-config';
+import { getRemoteConfig, fetchAndActivate, getString, RemoteConfig } from 'firebase/remote-config';
+import { getFirebaseApp } from '../../firebase';
 import { FEATURE_FLAGS } from '../config/featureFlags';
 
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID
-};
+let remoteConfigInstance: RemoteConfig | null = null;
 
-let remoteConfigInstance = null;
-
-export const getRemoteConfigInstance = () => {
+export const getRemoteConfigInstance = (): RemoteConfig => {
   if (!remoteConfigInstance) {
-    const app = initializeApp(firebaseConfig);
+    const app = getFirebaseApp();
     remoteConfigInstance = getRemoteConfig(app);
     
     remoteConfigInstance.settings = {
@@ -27,11 +17,11 @@ export const getRemoteConfigInstance = () => {
   return remoteConfigInstance;
 };
 
-export const fetchFeatureFlags = async () => {
+export const fetchFeatureFlags = async (): Promise<Record<string, string | boolean>> => {
   try {
     const rc = getRemoteConfigInstance();
     
-    const defaults = {};
+    const defaults: Record<string, string | boolean> = {};
     for (const flag of Object.values(FEATURE_FLAGS)) {
       defaults[flag.key] = flag.default;
     }
@@ -40,7 +30,7 @@ export const fetchFeatureFlags = async () => {
     
     await fetchAndActivate(rc);
     
-    const flags = {};
+    const flags: Record<string, string> = {};
     for (const flag of Object.values(FEATURE_FLAGS)) {
       flags[flag.key] = getString(rc, flag.key);
     }
@@ -49,7 +39,7 @@ export const fetchFeatureFlags = async () => {
   } catch (error) {
     console.error('Error fetching feature flags:', error);
     
-    const fallback = {};
+    const fallback: Record<string, string | boolean> = {};
     for (const flag of Object.values(FEATURE_FLAGS)) {
       fallback[flag.key] = flag.default;
     }

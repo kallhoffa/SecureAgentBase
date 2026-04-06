@@ -1,20 +1,25 @@
-import React from 'react';
 import { LogOut, User } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, NavigateFunction } from 'react-router-dom';
 import { useAuth } from './firestore-utils/auth-context';
 import { useNotification } from './firestore-utils/notification-context';
+import { Firestore } from 'firebase/firestore';
 
-const NavigationBar = ({ navigate: navigationOverride }) => {
+interface NavigationBarProps {
+  navigate?: NavigateFunction;
+  db?: Firestore;
+}
+
+const NavigationBar: React.FC<NavigationBarProps> = ({ navigate: navigationOverride }) => {
   const defaultNavigate = useNavigate();
   const navigate = navigationOverride || defaultNavigate;
   const { user, logout } = useAuth();
   const { addNotification } = useNotification();
 
-  const handleLogout = async () => {
+  const handleLogout = async (): Promise<void> => {
     try {
       await logout();
     } catch (error) {
-      addNotification('Logout failed: ' + error.message, 'error');
+      addNotification('Logout failed: ' + (error as Error).message, 'error');
     }
   };
 

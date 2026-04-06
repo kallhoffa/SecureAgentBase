@@ -34,7 +34,7 @@ jobs:
 
       - name: Build bundle
         run: |
-          mkdir -p kimaki gh
+          mkdir -p kimaki gh nodejs
           docker run --rm \
             -v $(pwd):/output \
             node:20-bullseye bash -c "
@@ -46,8 +46,12 @@ jobs:
         run: |
           curl -fsSL https://github.com/cli/cli/releases/download/v2.63.2/gh_2.63.2_linux_amd64.tar.gz | tar -xz -C gh --strip-components=2
 
+      - name: Download Node.js 20
+        run: |
+          curl -fsSL https://nodejs.org/dist/v20.18.0/node-v20.18.0-linux-x64.tar.gz | tar -xz -C nodejs --strip-components=1
+
       - name: Create bundle
-        run: tar -czvf debian-packages.tar.gz kimaki/ gh/
+        run: tar -czvf debian-packages.tar.gz kimaki/ gh/ nodejs/
 
       - name: Sign bundle
         env:

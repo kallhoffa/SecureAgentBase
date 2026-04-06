@@ -269,6 +269,15 @@ echo "Setup complete!"
 ### Pending
 - ⏳ End-to-end testing with real GCP/Firebase/GitHub/Discord
 
+### Known Issues
+- ⚠️ Secrets embedded in GCP VM metadata (visible in Console/logs)
+- ⚠️ GCP access tokens stored in Firestore
+- ⚠️ Weak passphrase requirements (min 4 characters, no strength validation)
+- ⚠️ No unit tests (only placeholder test exists)
+- ⚠️ `infra-setup.tsx` is 3400+ lines, needs refactoring
+- ⚠️ No rate limiting on auth endpoints
+- ⚠️ Inconsistent type safety (many `any` types)
+
 ---
 
 ## 8. File Structure
@@ -291,3 +300,80 @@ secureagentbase/
 - [Firebase Hosting Deploy Action](https://github.com/FirebaseExtended/action-hosting-deploy)
 - [GitHub Actions Documentation](https://docs.github.com/en/actions)
 - [Discord API Documentation](https://discord.com/developers/docs)
+
+---
+
+## 10. Security Improvements (P0)
+
+### High Priority
+
+1. **Use GCP Secret Manager instead of VM metadata**
+   - Store Discord bot token, GitHub PAT, Firebase configs in Secret Manager
+   - VM startup script reads from Secret Manager API
+   - Removes secrets from visible metadata/logs
+
+2. **Remove GCP access tokens from Firestore**
+   - Tokens should be ephemeral, stored only in memory
+   - Use short-lived tokens via Workload Identity Federation
+   - Never persist OAuth tokens to database
+
+3. **Strengthen passphrase requirements**
+   - Minimum 12 characters
+   - Require mixed case, numbers, special characters
+   - Add strength meter UI
+   - Consider using WebAuthn/FIDO2 for key encryption
+
+### Medium Priority
+
+1. **Add rate limiting**
+   - Firebase Auth rate limiting via Firebase App Check
+   - API throttling for GCP/Discord calls
+   - Implement exponential backoff for retries
+
+2. **Add input validation**
+   - Validate GCP project IDs, Discord tokens, etc.
+   - Sanitize all user inputs
+   - Use Zod for runtime validation
+
+---
+
+## 11. Code Quality Improvements
+
+### Refactoring
+
+1. **Split `infra-setup.tsx` (3400+ lines)**
+   - Create step components: `Step1Account.jsx`, `Step2ServiceAccount.jsx`, etc.
+   - Extract shared form components
+   - Create API service modules for GCP/Discord operations
+   - Target: max 200 lines per component
+
+2. **Remove `any` types**
+   - Define TypeScript interfaces for all API responses
+   - Add proper error typing in catch blocks
+   - Consider full TypeScript migration
+
+### Testing
+
+1. **Add unit tests for:**
+   - `auth-context.tsx` - sign-in/sign-up/logout flows
+   - `post-storage.ts` - CRUD operations
+   - `useFeatureFlag.ts` - flag retrieval
+   - Encryption/decryption utilities
+   - Input validation functions
+
+2. **Test locations:**
+   - Place in `src/_tests_/` directory
+   - Use Vitest with jsdom environment
+   - Follow `@testing-library/react` patterns
+
+### Documentation
+
+1. **Add JSDoc comments** to:
+   - All exported utility functions
+   - API service functions
+   - Complex state management logic
+
+2. **Document security flows:**
+   - How secrets are encrypted/decrypted
+   - VM provisioning security model
+   - Secret Manager integration

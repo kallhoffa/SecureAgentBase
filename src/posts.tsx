@@ -1,10 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useSearchParams, useNavigate } from 'react-router-dom';
-import { MessageCircle, Plus, Rocket, Bot, Github, Cloud, Zap, ArrowRight } from 'lucide-react';
+import { MessageCircle, Plus, Rocket, Bot, Github, Cloud } from 'lucide-react';
 import { getPosts, searchPosts } from './firestore-utils/post-storage';
 import { useAuth } from './firestore-utils/auth-context';
+import { Firestore } from 'firebase/firestore';
+import type { Post } from './types';
 
-const LandingPage = () => {
+const LandingPage: React.FC = () => {
   const navigate = useNavigate();
 
   return (
@@ -94,22 +96,26 @@ const LandingPage = () => {
   );
 };
 
-const Posts = ({ db }) => {
+interface PostsProps {
+  db: Firestore;
+}
+
+const Posts: React.FC<PostsProps> = ({ db }) => {
   const [searchParams] = useSearchParams();
   const searchQuery = searchParams.get('q');
   
-  const [posts, setPosts] = useState([]);
+  const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
   const { user } = useAuth();
 
   useEffect(() => {
-    const loadPosts = async () => {
+    const loadPosts = async (): Promise<void> => {
       try {
         setLoading(true);
         setError(null);
         
-        let fetchedPosts;
+        let fetchedPosts: Post[];
         if (searchQuery) {
           fetchedPosts = await searchPosts(db, searchQuery);
         } else {
@@ -128,9 +134,9 @@ const Posts = ({ db }) => {
     loadPosts();
   }, [db, searchQuery]);
 
-  const formatDate = (timestamp) => {
+  const formatDate = (timestamp: Date | undefined): string => {
     if (!timestamp) return '';
-    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
     return date.toLocaleDateString();
   };
 

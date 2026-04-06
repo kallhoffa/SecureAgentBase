@@ -1,7 +1,12 @@
-import React from 'react';
+import { ReactNode } from 'react';
 
-const Banner = ({ type, children }) => {
-  const colors = {
+interface BannerProps {
+  type: 'localhost' | 'staging' | 'production';
+  children: ReactNode;
+}
+
+const Banner: React.FC<BannerProps> = ({ type, children }) => {
+  const colors: Record<string, string> = {
     localhost: 'bg-yellow-500',
     staging: 'bg-orange-500',
     production: 'bg-blue-600'
@@ -13,7 +18,7 @@ const Banner = ({ type, children }) => {
   );
 };
 
-const EnvironmentBanner = () => {
+const EnvironmentBanner: React.FC = () => {
   const hostname = window.location.hostname;
   const isLocalhost = hostname === 'localhost' || hostname === '127.0.0.1';
   const isStaging = hostname.includes('staging');
@@ -21,7 +26,7 @@ const EnvironmentBanner = () => {
   const version = import.meta.env.VITE_APP_VERSION || 'dev';
   const db = import.meta.env.VITE_FIREBASE_PROJECT_ID || 'unknown';
 
-  const formatVersion = (v) => {
+  const formatVersion = (v: string): string => {
     if (v.startsWith('v')) return v;
     return v.substring(0, 7);
   };

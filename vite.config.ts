@@ -1,10 +1,12 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { sentryVitePlugin } from '@sentry/vite-plugin';
+import viteChecker from 'vite-plugin-checker';
 
 export default defineConfig({
   plugins: [
     react(),
+    viteChecker({ typescript: true }),
     sentryVitePlugin({
       org: 'argbase',
       project: 'argbase-react',

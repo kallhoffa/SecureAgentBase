@@ -1,20 +1,26 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { MessageCircle } from 'lucide-react';
 import { getPost, getReplies } from './firestore-utils/post-storage';
+import { Firestore } from 'firebase/firestore';
+import type { Post, Reply } from './types';
 
-const Post = ({ db }) => {
+interface PostProps {
+  db: Firestore;
+}
+
+const Post: React.FC<PostProps> = ({ db }) => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const postId = searchParams.get('id');
 
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [post, setPost] = useState(null);
-  const [replies, setReplies] = useState([]);
+  const [error, setError] = useState<string | null>(null);
+  const [post, setPost] = useState<Post | null>(null);
+  const [replies, setReplies] = useState<Reply[]>([]);
 
   useEffect(() => {
-    const loadPost = async () => {
+    const loadPost = async (): Promise<void> => {
       try {
         setLoading(true);
         setError(null);
@@ -46,9 +52,9 @@ const Post = ({ db }) => {
     loadPost();
   }, [db, postId]);
 
-  const formatDate = (timestamp) => {
+  const formatDate = (timestamp: Date | undefined): string => {
     if (!timestamp) return '';
-    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
     return date.toLocaleDateString();
   };
 
@@ -60,11 +66,11 @@ const Post = ({ db }) => {
     );
   }
 
-  if (error) {
+  if (error || !post) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">{error}</h2>
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">{error || 'Post not found'}</h2>
           <button
             onClick={() => navigate('/')}
             className="text-blue-600 hover:text-blue-700"
