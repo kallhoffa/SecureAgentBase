@@ -304,6 +304,20 @@ echo "Secrets loaded from metadata"
 echo "DEBUG: FIREBASE_STAGING=$FIREBASE_STAGING"
 echo "DEBUG: FIREBASE_PRODUCTION=$FIREBASE_PRODUCTION"
 
+# Re-detect Discord guild if bot token exists but guild ID is empty
+if [ -n "$DISCORD_BOT_TOKEN" ] && [ "$DISCORD_BOT_TOKEN" != "null" ] && [ -z "$DISCORD_GUILD_ID" ]; then
+  echo "DEBUG: Guild ID empty, re-detecting from bot token..."
+  GUILDS_DATA=$(curl -s "https://discord.com/api/v10/users/@me/guilds" \
+    -H "Authorization: Bot $DISCORD_BOT_TOKEN")
+  GUILD_COUNT=$(echo "$GUILDS_DATA" | grep -o '"id"' | wc -l)
+  if [ "$GUILD_COUNT" -gt 0 ]; then
+    DISCORD_GUILD_ID=$(echo "$GUILDS_DATA" | head -1 | grep -oP '"id"\s*:\s*"\K[^"]+')
+    echo "DEBUG: Re-detected guild ID: $DISCORD_GUILD_ID"
+  else
+    echo "WARNING: Bot not in any servers. Add bot to Discord server first."
+  fi
+fi
+
 # Remove man-db to speed up installs
 apt-get remove --purge -y man-db 2>/dev/null || true
 
@@ -313,7 +327,7 @@ ${bundleSection}
 if [ "$BUNDLE_SUCCESS" != "true" ]; then
   echo "Installing dependencies via apt..."
   apt-get update -o Dpkg::Options::="--force-confdef" -o APT::Get::Fix-Missing=true
-  apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-confdef" -o APT::Get::Fix-Missing=true curl git gnupg ca-certificates apt-transport-https jq
+  apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-confdef" -o APT::Get::Fix-Missing=true curl git gnupg ca-certificates apt-transport-https jq unzip
   
   # Install Node.js 20 from bundle if available
   if [ -d "/opt/nodejs" ]; then
@@ -449,21 +463,36 @@ if [ -d "/opt/kimaki" ]; then
       fi
     fi
     
-    # Add bundled Node.js to PATH
+    # Add bundled Node.js and Bun to PATH
     if [ -d "/opt/nodejs" ]; then
       export PATH="/opt/nodejs/bin:$PATH"
     fi
+    if [ -d "/opt/bun" ]; then
+      export PATH="/opt/bun:$PATH"
+    fi
     
-    # Start Kimaki in background with ESM support
+    # Configure Kimaki with Discord bot token via environment variable
+    export KIMAKI_BOT_TOKEN="$DISCORD_BOT_TOKEN"
+    
+    # Start Kimaki in background with Bun
     cd "$KIMAKI_DIR"
-    nohup node "$KIMAKI_DIR/bin.js" > /var/log/kimaki.log 2>&1 &
+    if command -v bun &> /dev/null; then
+      echo "DEBUG: Starting Kimaki with bun..."
+      nohup env KIMAKI_BOT_TOKEN="$DISCORD_BOT_TOKEN" bun "$KIMAKI_DIR/bin.js" > /var/log/kimaki.log 2>&1 &
+    else
+      echo "DEBUG: Starting Kimaki with node..."
+      nohup env KIMAKI_BOT_TOKEN="$DISCORD_BOT_TOKEN" node "$KIMAKI_DIR/bin.js" > /var/log/kimaki.log 2>&1 &
+    fi
     KIMAKI_PID=$!
-    sleep 3
+    echo "DEBUG: Kimaki starting with PID $KIMAKI_PID, waiting for Discord connection..."
+    sleep 10
     
-    # Check if process is running
+    # Check if process is running and show early logs
     if ps -p $KIMAKI_PID > /dev/null 2>&1; then
-      echo "DEBUG: Kimaki started successfully (PID: $KIMAKI_PID)"
+      echo "DEBUG: Kimaki process running (PID: $KIMAKI_PID)"
       KIMAKI_STARTED=true
+      echo "DEBUG: Kimaki log tail:"
+      tail -10 /var/log/kimaki.log 2>/dev/null || echo "No log yet"
     elif pgrep -f "kimaki" > /dev/null 2>&1; then
       echo "DEBUG: Kimaki running (PID: $(pgrep -f kimaki))"
       KIMAKI_STARTED=true
@@ -477,8 +506,12 @@ elif command -v npm &> /dev/null; then
   npm install -g kimaki@latest 2>/dev/null || echo "WARNING: Kimaki npm install failed"
   
   if command -v kimaki &> /dev/null; then
-    echo "DEBUG: Kimaki installed via npm, starting..."
-    nohup kimaki > /var/log/kimaki.log 2>&1 &
+    echo "DEBUG: Kimaki installed via npm, starting with KIMAKI_BOT_TOKEN..."
+    if command -v bun &> /dev/null; then
+      nohup env KIMAKI_BOT_TOKEN="$DISCORD_BOT_TOKEN" bun kimaki > /var/log/kimaki.log 2>&1 &
+    else
+      nohup env KIMAKI_BOT_TOKEN="$DISCORD_BOT_TOKEN" kimaki > /var/log/kimaki.log 2>&1 &
+    fi
     sleep 2
     if pgrep -f "kimaki" > /dev/null; then
       echo "DEBUG: Kimaki started successfully (PID: $(pgrep -f kimaki))"
@@ -513,11 +546,12 @@ if [ -n "$DISCORD_GUILD_ID" ] && [ "$DISCORD_GUILD_ID" != "null" ]; then
     echo "WARNING: Failed to create Discord channel"
   else
     echo "DEBUG: Posting welcome message..."
-    WELCOME_MSG="Welcome to SecureAgent! Your Kimaki bot is ready."
-    curl -s -X POST "https://discord.com/api/v10/channels/$CHANNEL_ID/messages" \
+    echo '{"content": "Welcome to SecureAgent! Kimaki is ready."}' > /tmp/welcome.json
+    RESPONSE=$(curl -s -X POST "https://discord.com/api/v10/channels/$CHANNEL_ID/messages" \
       -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
       -H "Content-Type: application/json" \
-      -d "{\"content\": \"$WELCOME_MSG\"}" || echo "WARNING: Failed to send Discord message"
+      -d @/tmp/welcome.json)
+    echo "DEBUG: Welcome message response: $RESPONSE"
   fi
 else
   echo "DEBUG: Skipping Discord channel (no guild ID provided)"
@@ -1397,12 +1431,14 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
       console.log('Saving project to Firestore:', { projectName, passphraseLength: passphrase.length });
       try {
         const projectIdToSave = selectedProjectId || `proj_${Date.now()}`;
+        const discordGuildIdToSave = configData?.discord_guild_id || discordGuildId;
+        console.log('Saving encrypted blob with discordGuildId:', discordGuildIdToSave || 'EMPTY');
         const encryptedConfig = await encryptData({
           gcp: {
             projectId: projectId.trim(),
             serviceAccountJson,
             discordBotToken,
-            discordGuildId
+            discordGuildId: discordGuildIdToSave
           },
           github: {
             pat: githubPat
@@ -1730,6 +1766,7 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
       // Auto-detect Discord servers the bot is in
       setDiscordDetecting(true);
       let detectedGuildId = '';
+      let guildDetectionFailed = false;
       try {
         const guildsResponse = await fetch('https://discord.com/api/v10/users/@me/guilds', {
           headers: {
@@ -1752,20 +1789,35 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
           } else {
             console.log('Bot is not in any servers. Add the bot to your Discord server first.');
             setError('Bot is not in any servers. Invite the bot to your Discord server first.');
+            guildDetectionFailed = true;
           }
         } else {
           console.warn('Could not fetch Discord guilds');
+          guildDetectionFailed = true;
         }
       } catch (guildErr) {
         console.warn('Could not detect Discord servers:', guildErr.message);
+        guildDetectionFailed = true;
       }
       setDiscordDetecting(false);
       
+      // Don't save if guild detection failed
+      if (guildDetectionFailed) {
+        setSaving(false);
+        return;
+      }
+      
       setDiscordBotToken(discordBotTokenInput);
+      console.log('Saving Discord config:', { 
+        discord_bot_token: discordBotTokenInput ? '[REDACTED]' : 'empty',
+        discord_guild_id: detectedGuildId || 'EMPTY - will skip Discord channel',
+        current_discordGuildId: discordGuildId
+      });
       await saveConfig({ 
         discord_bot_token: discordBotTokenInput,
-        discord_guild_id: detectedGuildId 
+        discord_guild_id: detectedGuildId || discordGuildId  // Use detected or current
       });
+      console.log('Discord config saved, discordGuildId state is now:', discordGuildId);
       expandNextStep(6);
     } catch (err) {
       console.error('Error saving discord bot token:', err);
@@ -1902,6 +1954,7 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
                 const proj = projects.find(p => p.id === projId);
                 if (proj) {
                   setProjectName(proj.name || '');
+                  setUseFirestore(true);
                   setPendingDecryptProject(proj.encryptedData ? proj : null);
                   setDecryptPassphrase('');
                   setDecryptError('');
@@ -2048,6 +2101,7 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
                       setDecryptPassphrase('');
                       setDecryptError('');
                       setPassphrase(decryptPassphrase);
+                      setUseFirestore(true);
                     } catch (err) {
                       console.error('Failed to decrypt project:', err);
                       setDecryptError('Incorrect passphrase or corrupted data');
@@ -2782,9 +2836,10 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
                                       { key: 'firebase_production', value: firebaseProductionData?.projectId || '' }
                                     ]
                                   }
-                                })
+                                }),
                               }
                             );
+                            console.log('VM metadata discord_guild_id:', discordGuildId ? 'SET to ' + discordGuildId : 'EMPTY - this is the bug!');
                             
                             if (vmResponse.ok) {
                               setVmZone(tryZone);
@@ -2795,6 +2850,17 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
                                 `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances/${instanceName}`,
                                 { headers: { 'Authorization': `Bearer ${token}` } }
                               );
+                              
+                              if (!instanceResp.ok) {
+                                const errData = await instanceResp.json();
+                                if (errData.error?.code === 404) {
+                                  addStep4Log(`VM not found in ${tryZone}, it may still be starting...`);
+                                } else {
+                                  addStep4Log(`Error checking VM: ${errData.error?.message || 'Unknown error'}`);
+                                }
+                                continue;
+                              }
+                              
                               const instanceData = await instanceResp.json();
                               const vmStatus = instanceData.status;
                               const ip = instanceData.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP;

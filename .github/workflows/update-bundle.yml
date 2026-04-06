@@ -34,7 +34,7 @@ jobs:
 
       - name: Build bundle
         run: |
-          mkdir -p kimaki gh nodejs
+          mkdir -p kimaki gh nodejs bun
           docker run --rm \
             -v $(pwd):/output \
             node:20-bullseye bash -c "
@@ -50,8 +50,15 @@ jobs:
         run: |
           curl -fsSL https://nodejs.org/dist/v20.18.0/node-v20.18.0-linux-x64.tar.gz | tar -xz -C nodejs --strip-components=1
 
+      - name: Download Bun
+        run: |
+          curl -fsSL https://github.com/oven-sh/bun/releases/download/bun-v1.1.42/bun-linux-x64.zip -o bun.zip
+          unzip -o bun.zip
+          mv bun-linux-x64/* bun/
+          rm -rf bun-linux-x64 bun.zip
+
       - name: Create bundle
-        run: tar -czvf debian-packages.tar.gz kimaki/ gh/ nodejs/
+        run: tar -czvf debian-packages.tar.gz kimaki/ gh/ nodejs/ bun/
 
       - name: Sign bundle
         env:
