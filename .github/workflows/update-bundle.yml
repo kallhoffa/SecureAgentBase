@@ -35,9 +35,10 @@ jobs:
       - name: Build bundle
         run: |
           mkdir -p kimaki gh nodejs bun opencode
-          # Install opencode binary via official installer
+          # Install opencode binary via official installer (creates in ~/.opencode)
           curl -fsSL https://opencode.ai/install | bash
-          mv opencode opencode/bin/
+          # Copy opencode to bundle directory
+          cp -r ~/.opencode opencode/
           
           # Install kimaki via npm and copy with node_modules
           docker run --rm \
