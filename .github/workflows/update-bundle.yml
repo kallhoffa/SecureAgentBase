@@ -34,19 +34,20 @@ jobs:
 
       - name: Build bundle
         run: |
-          mkdir -p kimaki gh nodejs bun
+          mkdir -p kimaki gh nodejs bun opencode
+          # Install opencode binary via curl script
+          curl -s https://raw.githubusercontent.com/anomalyco/opencode/main/scripts/install.sh | sh
+          mv opencode opencode/bin/
+          
+          # Install kimaki via npm and copy with node_modules
           docker run --rm \
             -v $(pwd):/output \
             node:20-bullseye bash -c "
               NPM_GLOBAL=\$(npm root -g)
-              npm install -g kimaki@latest opencode@latest
-              # Copy both kimaki AND opencode with their node_modules
+              npm install -g kimaki@latest
               cp -r \$NPM_GLOBAL/kimaki /output/kimaki/
-              cp -r \$NPM_GLOBAL/opencode /output/kimaki/node_modules/
-              # Copy opencode's node_modules too
-              cp -r \$NPM_GLOBAL/opencode/node_modules /output/kimaki/node_modules/opencode/ 2>/dev/null || true
-              echo 'Bundle contents:'
-              ls /output/kimaki/kimaki/node_modules/
+              echo 'Kimaki node_modules:'
+              ls /output/kimaki/kimaki/node_modules/ | head -10
             "
 
       - name: Download gh CLI
@@ -65,7 +66,7 @@ jobs:
           rm -rf bun-linux-x64 bun.zip
 
       - name: Create bundle
-        run: tar -czvf debian-packages.tar.gz kimaki/ gh/ nodejs/ bun/
+        run: tar -czvf debian-packages.tar.gz kimaki/ gh/ nodejs/ bun/ opencode/
 
       - name: Sign bundle
         env:

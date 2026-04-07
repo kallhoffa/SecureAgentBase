@@ -275,6 +275,11 @@ if [ "$USE_BUNDLE" = "true" ]; then
         export PATH="/opt/nodejs/bin:$PATH"
         echo "Bundle Node.js available"
       fi
+      # Add bundled OpenCode to PATH
+      if [ -d /opt/opencode ]; then
+        export PATH="/opt/opencode:$PATH"
+        echo "Bundle OpenCode available"
+      fi
       
       export BUNDLE_SUCCESS="true"
     else
@@ -287,7 +292,7 @@ fi
 ` : '';
 
   return `#!/bin/bash
-set -e
+set -euo pipefail
 export HOME=/root
 export DEBIAN_FRONTEND=noninteractive
 export USE_BUNDLE="${useBundle ? 'true' : 'false'}"
@@ -304,18 +309,26 @@ echo "Secrets loaded from metadata"
 echo "DEBUG: FIREBASE_STAGING=$FIREBASE_STAGING"
 echo "DEBUG: FIREBASE_PRODUCTION=$FIREBASE_PRODUCTION"
 
-# Re-detect Discord guild if bot token exists but guild ID is empty
-if [ -n "$DISCORD_BOT_TOKEN" ] && [ "$DISCORD_BOT_TOKEN" != "null" ] && [ -z "$DISCORD_GUILD_ID" ]; then
-  echo "DEBUG: Guild ID empty, re-detecting from bot token..."
-  GUILDS_DATA=$(curl -s "https://discord.com/api/v10/users/@me/guilds" \
-    -H "Authorization: Bot $DISCORD_BOT_TOKEN")
-  GUILD_COUNT=$(echo "$GUILDS_DATA" | grep -o '"id"' | wc -l)
-  if [ "$GUILD_COUNT" -gt 0 ]; then
-    DISCORD_GUILD_ID=$(echo "$GUILDS_DATA" | head -1 | grep -oP '"id"\s*:\s*"\K[^"]+')
-    echo "DEBUG: Re-detected guild ID: $DISCORD_GUILD_ID"
-  else
-    echo "WARNING: Bot not in any servers. Add bot to Discord server first."
+# For Kimaki Gateway mode - we don't need a Discord bot token
+# Kimaki will provide its own pre-built bot via OAuth
+if [ -n "$DISCORD_BOT_TOKEN" ] && [ "$DISCORD_BOT_TOKEN" != "null" ] && [ "$DISCORD_BOT_TOKEN" != "" ]; then
+  echo "DEBUG: Optional Discord bot token provided (for self-hosted mode)"
+  
+  # Only try to detect guild if token is provided
+  if [ -z "$DISCORD_GUILD_ID" ]; then
+    echo "DEBUG: Guild ID empty, attempting to detect from bot token..."
+    GUILDS_DATA=$(curl -s "https://discord.com/api/v10/users/@me/guilds" \
+      -H "Authorization: Bot $DISCORD_BOT_TOKEN" 2>/dev/null || echo "[]")
+    GUILD_COUNT=$(echo "$GUILDS_DATA" | grep -o '"id"' | wc -l || echo "0")
+    if [ "$GUILD_COUNT" -gt 0 ]; then
+      DISCORD_GUILD_ID=$(echo "$GUILDS_DATA" | head -1 | grep -oP '"id"\s*:\s*"\K[^"]+' || echo "")
+      if [ -n "$DISCORD_GUILD_ID" ]; then
+        echo "DEBUG: Re-detected guild ID: $DISCORD_GUILD_ID"
+      fi
+    fi
   fi
+else
+  echo "DEBUG: No Discord bot token - using Kimaki Gateway mode (OAuth will be handled by user)"
 fi
 
 # Remove man-db to speed up installs
@@ -337,6 +350,12 @@ if [ "$BUNDLE_SUCCESS" != "true" ]; then
     echo "Installing Node.js 20..."
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
     apt-get install -y --no-install-recommends nodejs
+  fi
+  
+  # Install OpenCode if not in bundle
+  if ! command -v opencode &> /dev/null && [ -d "/opt/opencode" ]; then
+    echo "Installing OpenCode from bundle..."
+    cp -r /opt/opencode/* /usr/local/ 2>/dev/null || true
   fi
 fi
 
@@ -432,9 +451,15 @@ echo "DEBUG: GitHub secrets set"
 # Add upstream back for future syncing
 git remote add upstream https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
 
-# Install and start Kimaki (try bundle first, fall back to npm)
-echo "DEBUG: Installing Kimaki..."
+# Install expect for automating Kimaki interactive prompts
+echo "DEBUG: Installing expect for Kimaki automation..."
+apt-get update -o Dpkg::Options::="--force-confdef" 2>/dev/null || true
+apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-confdef" expect 2>/dev/null || echo "WARNING: expect install failed"
+
+# Install and start Kimaki in Gateway mode
+echo "DEBUG: Setting up Kimaki in Gateway mode..."
 KIMAKI_STARTED=false
+KIMAKI_DIR=""
 
 # Check for bundled Kimaki
 if [ -d "/opt/kimaki" ]; then
@@ -447,14 +472,12 @@ if [ -d "/opt/kimaki" ]; then
     KIMAKI_DIR="/opt/kimaki/kimaki"
   else
     echo "WARNING: Kimaki bin.js not found, checking contents..."
-    ls -la /opt/kimaki/
-    ls -la /opt/kimaki/*/ 2>/dev/null || true
+    ls -la /opt/kimaki/ 2>/dev/null || true
   fi
   
   if [ -n "$KIMAKI_DIR" ] && [ -f "$KIMAKI_DIR/bin.js" ]; then
     chmod +x "$KIMAKI_DIR/bin.js" 2>/dev/null || true
     ln -sf "$KIMAKI_DIR/bin.js" /usr/local/bin/kimaki 2>/dev/null || true
-    echo "DEBUG: Kimaki from bundle ready, starting..."
     
     # Ensure package.json has "type": "module" for ESM support
     if [ -f "$KIMAKI_DIR/package.json" ]; then
@@ -462,64 +485,45 @@ if [ -d "/opt/kimaki" ]; then
         sed -i 's/"name"/"type": "module",\n    "name"/' "$KIMAKI_DIR/package.json" 2>/dev/null || true
       fi
     fi
-    
-    # Add bundled Node.js and Bun to PATH
-    if [ -d "/opt/nodejs" ]; then
-      export PATH="/opt/nodejs/bin:$PATH"
-    fi
-    if [ -d "/opt/bun" ]; then
-      export PATH="/opt/bun:$PATH"
-    fi
-    
-    # Configure Kimaki with Discord bot token via environment variable
-    export KIMAKI_BOT_TOKEN="$DISCORD_BOT_TOKEN"
-    
-    # Start Kimaki in background with Bun
-    cd "$KIMAKI_DIR"
-    if command -v bun &> /dev/null; then
-      echo "DEBUG: Starting Kimaki with bun..."
-      nohup env KIMAKI_BOT_TOKEN="$DISCORD_BOT_TOKEN" bun "$KIMAKI_DIR/bin.js" > /var/log/kimaki.log 2>&1 &
-    else
-      echo "DEBUG: Starting Kimaki with node..."
-      nohup env KIMAKI_BOT_TOKEN="$DISCORD_BOT_TOKEN" node "$KIMAKI_DIR/bin.js" > /var/log/kimaki.log 2>&1 &
-    fi
-    KIMAKI_PID=$!
-    echo "DEBUG: Kimaki starting with PID $KIMAKI_PID, waiting for Discord connection..."
-    sleep 10
-    
-    # Check if process is running and show early logs
-    if ps -p $KIMAKI_PID > /dev/null 2>&1; then
-      echo "DEBUG: Kimaki process running (PID: $KIMAKI_PID)"
-      KIMAKI_STARTED=true
-      echo "DEBUG: Kimaki log tail:"
-      tail -10 /var/log/kimaki.log 2>/dev/null || echo "No log yet"
-    elif pgrep -f "kimaki" > /dev/null 2>&1; then
-      echo "DEBUG: Kimaki running (PID: $(pgrep -f kimaki))"
-      KIMAKI_STARTED=true
-    else
-      echo "WARNING: Kimaki process not running, checking log..."
-      cat /var/log/kimaki.log 2>/dev/null || echo "No log file"
-    fi
   fi
+fi
+
+# Add bundled Node.js, Bun, and OpenCode to PATH
+if [ -d "/opt/nodejs" ]; then
+  export PATH="/opt/nodejs/bin:$PATH"
+  # Create symlinks for system-wide access
+  [ -f /opt/nodejs/bin/node ] && ln -sf /opt/nodejs/bin/node /usr/local/bin/node 2>/dev/null || true
+fi
+if [ -d "/opt/bun" ]; then
+  export PATH="/opt/bun:$PATH"
+  # Create symlinks for system-wide access
+  [ -f /opt/bun/bun ] && ln -sf /opt/bun/bun /usr/local/bin/bun 2>/dev/null || true
+fi
+if [ -d "/opt/opencode" ]; then
+  export PATH="/opt/opencode:$PATH"
+  # Create symlink for system-wide access
+  [ -f /opt/opencode/opencode ] && ln -sf /opt/opencode/opencode /usr/local/bin/opencode 2>/dev/null || true
+fi
+
+# Determine how to run kimaki
+if [ -n "$KIMAKI_DIR" ] && [ -f "$KIMAKI_DIR/bin.js" ]; then
+  if command -v bun &> /dev/null; then
+    KIMAKI_CMD="bun $KIMAKI_DIR/bin.js"
+  else
+    KIMAKI_CMD="node $KIMAKI_DIR/bin.js"
+  fi
+elif command -v bun &> /dev/null; then
+  KIMAKI_CMD="bun x kimaki@latest"
 elif command -v npm &> /dev/null; then
-  echo "Installing Kimaki via npm..."
-  npm install -g kimaki@latest 2>/dev/null || echo "WARNING: Kimaki npm install failed"
-  
-  if command -v kimaki &> /dev/null; then
-    echo "DEBUG: Kimaki installed via npm, starting with KIMAKI_BOT_TOKEN..."
-    if command -v bun &> /dev/null; then
-      nohup env KIMAKI_BOT_TOKEN="$DISCORD_BOT_TOKEN" bun kimaki > /var/log/kimaki.log 2>&1 &
-    else
-      nohup env KIMAKI_BOT_TOKEN="$DISCORD_BOT_TOKEN" kimaki > /var/log/kimaki.log 2>&1 &
-    fi
-    sleep 2
-    if pgrep -f "kimaki" > /dev/null; then
-      echo "DEBUG: Kimaki started successfully (PID: $(pgrep -f kimaki))"
-      KIMAKI_STARTED=true
-    fi
-  fi
+  KIMAKI_CMD="npx -y kimaki@latest"
 else
-  echo "WARNING: npm not available, skipping Kimaki installation"
+  echo "WARNING: No way to run Kimaki found"
+  KIMAKI_CMD=""
+fi
+
+if [ -n "$KIMAKI_CMD" ]; then
+  echo "DEBUG: Using Kimaki command: $KIMAKI_CMD"
+  echo "DEBUG: Kimaki bundled - user can run 'kimaki' manually via SSH to complete setup"
 fi
 
 # Install bundled gh if available
@@ -528,36 +532,6 @@ if [ -d "/opt/gh" ]; then
   cp /opt/gh/bin/gh /usr/local/bin/gh 2>/dev/null && chmod +x /usr/local/bin/gh && echo "DEBUG: gh from bundle ready"
 fi
 
-# Create Discord channel (if guild ID is available)
-if [ -n "$DISCORD_GUILD_ID" ] && [ "$DISCORD_GUILD_ID" != "null" ]; then
-  echo "DEBUG: Creating Discord channel..."
-  echo "DEBUG: DISCORD_GUILD_ID=$DISCORD_GUILD_ID"
-  echo "DEBUG: DISCORD_BOT_TOKEN length=\${#DISCORD_BOT_TOKEN}"
-  CHANNEL_DATA=$(curl -s -X POST "https://discord.com/api/v10/guilds/\${DISCORD_GUILD_ID}/channels" \
-    -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
-    -H "Content-Type: application/json" \
-    -d '{"name": "secureagent", "type": 0}')
-
-  echo "DEBUG: Discord channel response: $CHANNEL_DATA"
-
-  CHANNEL_ID=$(echo $CHANNEL_DATA | jq -r '.id')
-
-  if [ "$CHANNEL_ID" = "null" ] || [ -z "$CHANNEL_ID" ]; then
-    echo "WARNING: Failed to create Discord channel"
-  else
-    echo "DEBUG: Posting welcome message..."
-    echo '{"content": "Welcome to SecureAgent! Kimaki is ready."}' > /tmp/welcome.json
-    RESPONSE=$(curl -s -X POST "https://discord.com/api/v10/channels/$CHANNEL_ID/messages" \
-      -H "Authorization: Bot $DISCORD_BOT_TOKEN" \
-      -H "Content-Type: application/json" \
-      -d @/tmp/welcome.json)
-    echo "DEBUG: Welcome message response: $RESPONSE"
-  fi
-else
-  echo "DEBUG: Skipping Discord channel (no guild ID provided)"
-fi
-
-echo "DEBUG: Discord setup done"
 echo "=== VM Setup Complete ==="
 `;
 };
@@ -580,6 +554,8 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
   const [serviceAccountKey, setServiceAccountKey] = useState(null);
   const [githubAppInstalled, setGithubAppInstalled] = useState(false);
   const [vmIp, setVmIp] = useState('');
+  const [kimakiBotInvited, setKimakiBotInvited] = useState(false);
+  const [kimakiInstallUrl, setKimakiInstallUrl] = useState('');
   const [vmZone, setVmZone] = useState('us-east1-b');
   const [discordBotToken, setDiscordBotToken] = useState('');
   const [loading, setLoading] = useState(true);
@@ -783,6 +759,10 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
     return false;
   };
 
+  const hasGcpAccess = () => {
+    return !!(projectId && serviceAccountJson);
+  };
+
   const expandNextStep = (currentStepNum) => {
     const nextStep = currentStepNum + 1;
     if (nextStep <= 9 && !expandedSteps.includes(nextStep)) {
@@ -802,31 +782,14 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
     setExpandedSteps(prev => [...prev, step]);
   };
 
-  const isStepActive = (step) => {
-    if (step === 1) return !isStepCompleted(1);
-    if (step === 2) return isStepCompleted(1) && !isStepCompleted(2);
-    if (step === 3) return isStepCompleted(2) && !isStepCompleted(3);
-    if (step === 4) return isStepCompleted(3) && !isStepCompleted(4);
-    if (step === 5) return isStepCompleted(4) && !isStepCompleted(5);
-    if (step === 6) return isStepCompleted(5) && !isStepCompleted(6);
-    if (step === 7) return isStepCompleted(6) && !isStepCompleted(7);
-    if (step === 8) return isStepCompleted(7) && !isStepCompleted(8);
-    if (step === 9) return isStepCompleted(8) && !isStepCompleted(9);
-    return !isStepCompleted(step);
-  };
-
-  const hasGcpAccess = () => {
-    return !!(projectId && serviceAccountJson);
-  };
-
   const isStepCompleted = (step) => {
     if (step === 1) return !!user;
     if (step === 2) return !!serviceAccountJson;
     if (step === 3) return !!(firebaseStagingData?.projectId && firebaseProductionData?.projectId);
     if (step === 4) return !!githubPat;
     if (step === 5) return !!githubPat;
-    if (step === 6) return !!discordBotToken;
-    if (step === 7) return !!vmIp;
+    if (step === 6) return !!vmIp; // Step 6: Create VM (was Step 7, now Step 6)
+    if (step === 7) return kimakiBotInvited; // Step 7: Invite Kimaki Bot (was Step 8)
     return false;
   };
 
@@ -839,6 +802,17 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
     if (step === 6) return !isStepCompleted(5);
     if (step === 7) return !isStepCompleted(6);
     return false;
+  };
+
+  const isStepActive = (step) => {
+    if (step === 1) return !isStepCompleted(1);
+    if (step === 2) return isStepCompleted(1) && !isStepCompleted(2);
+    if (step === 3) return isStepCompleted(2) && !isStepCompleted(3);
+    if (step === 4) return isStepCompleted(3) && !isStepCompleted(4);
+    if (step === 5) return isStepCompleted(4) && !isStepCompleted(5);
+    if (step === 6) return isStepCompleted(5) && !isStepCompleted(6);
+    if (step === 7) return isStepCompleted(6) && !isStepCompleted(7);
+    return !isStepCompleted(step);
   };
 
   const isStepWarning = (step) => {
@@ -1362,6 +1336,53 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
       setExpandedSteps(prev => [...prev, 2]);
     }
   }, [user]);
+
+  useEffect(() => {
+    if (!vmIp) return;
+    
+    // Auto-refresh VM logs to detect Kimaki OAuth URL
+    const pollVmLogs = async () => {
+      if (!serviceAccountJson || !projectId) return;
+      
+      try {
+        const token = await getServiceAccountToken();
+        if (!token) return;
+
+        const zone = vmZone;
+        const instanceName = 'secureagent-manager';
+        
+        const response = await fetch(
+          `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances/${instanceName}/serialPort`,
+          { headers: { 'Authorization': `Bearer ${token}` } }
+        );
+        
+        if (response.ok) {
+          const data = await response.json();
+          const logs = data.contents || '';
+          
+          // Parse Kimaki OAuth URL from serial port output
+          const oauthUrlMatch = logs.match(/KIMAKI_OAUTH_URL=(https:\/\/discord\.com\/oauth2\/authorize[^"\s]*)/);
+          if (oauthUrlMatch && oauthUrlMatch[1] && !kimakiInstallUrl) {
+            console.log('Found Kimaki OAuth URL in serial port:', oauthUrlMatch[1]);
+            setKimakiInstallUrl(oauthUrlMatch[1]);
+          }
+          
+          // Check for setup pending
+          const setupPending = logs.includes('KIMAKI_SETUP_PENDING');
+          if (setupPending) {
+            console.log('Kimaki setup is pending');
+          }
+        }
+      } catch (e) {
+        // Silently fail - will retry on next poll
+      }
+    };
+    
+    const interval = setInterval(pollVmLogs, 10000);
+    pollVmLogs();
+    
+    return () => clearInterval(interval);
+  }, [vmIp, projectId, vmZone, serviceAccountJson]);
 
   const handleFileUpload = async (event) => {
     const file = event.target.files?.[0];
@@ -2544,8 +2565,9 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
           )}
         </div>
 
+        {/* Step 6: Create VM */}
         <div className="space-y-2">
-          {getStepHeader(6, "Step 6: Discord Bot", <Bot className="text-blue-600" size={24} />, isStepCompleted(6), isStepActive(6), isStepLocked(6), "Create a Discord bot and add it to your server. The VM will use this bot to create channels and send messages.", false, () => editStep(6))}
+          {getStepHeader(6, "Step 6: Create VM", <Server className="text-blue-600" size={24} />, isStepCompleted(6), isStepActive(6), isStepLocked(6), "Create a GCP VM that will fork SecureAgentBase, set up GitHub Actions, download Kimaki, and configure your Discord bot.", false, () => editStep(6))}
           
           {expandedSteps.includes(6) && !isStepCompleted(5) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
@@ -2555,128 +2577,7 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
 
           {expandedSteps.includes(6) && isStepCompleted(5) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {!serviceAccountJson && projectId && (
-                <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
-                  <p className="text-yellow-800 font-medium mb-1">Service Account Required</p>
-                  <p className="text-yellow-700 text-sm">Re-upload your service account JSON key (Step 2) to continue with Discord bot setup.</p>
-                </div>
-              )}
-              
-              <p className="text-gray-600 mb-4">
-                Configure Discord bot token. <strong>Important:</strong> Add the bot to your Discord server before creating the VM.
-              </p>
-              
-              {discordBotToken && (
-                <div className="flex items-center gap-2 text-green-600 bg-green-50 p-3 rounded-lg mb-4">
-                  <Check size={18} />
-                  <span className="text-sm font-medium">Discord bot token configured</span>
-                </div>
-              )}
-              
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                <p className="text-blue-800 font-medium mb-2">Create a Discord bot:</p>
-                <ol className="list-decimal list-inside space-y-2 text-blue-700 text-sm">
-                  <li>Go to <a href="https://discord.com/developers/applications" target="_blank" rel="noopener noreferrer" className="underline font-medium">Discord Developer Portal</a></li>
-                  <li>Click "New Application" → give it a name (e.g., "Kimaki")</li>
-                  <li>Go to "Bot" in the left sidebar → click "Add Bot"</li>
-                  <li>In "General Information", scroll down and <strong>disable "Public Bot"</strong> (prevents others from adding your bot)</li>
-                  <li>In "OAuth2" → "General", set <strong>"Default Install Link" to "None"</strong> (required when Public Bot is disabled)</li>
-                  <li>Back in "Bot", scroll down to "Privileged Gateway Intents" → enable <strong>Message Content Intent</strong> (required for Kimaki to read messages)</li>
-                  <li>Go to "OAuth2" → "URL Generator"</li>
-                  <li>Under "Scopes", check <code className="bg-blue-100 px-1">bot</code></li>
-                  <li>Under "Bot Permissions", check <strong>Send Messages</strong>, <strong>Read Message History</strong>, <strong>Manage Channels</strong>, and <strong>Use Slash Commands</strong></li>
-                  <li>Copy the generated URL at the bottom, open it in a new tab, and select your server to invite the bot</li>
-                  <li>Go back to "Bot" → click "Reset Token" → copy the token</li>
-                  <li>Enable Developer Mode in Discord (<strong>User Settings → Advanced → Developer Mode</strong>), then right-click your server name → <strong>Copy Server ID</strong></li>
-                </ol>
-              </div>
-              <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Discord Bot Token
-                </label>
-                <input
-                  type="password"
-                  value={discordBotTokenInput}
-                  onChange={(e) => setDiscordBotTokenInput(e.target.value)}
-                  placeholder="Paste your Discord bot token here"
-                  disabled={!hasGcpAccess()}
-                  className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 disabled:bg-gray-100 disabled:cursor-not-allowed"
-                />
-              </div>
-                  <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                      Discord Server ID <span className="text-gray-400 font-normal">(optional - auto-detected)</span>
-                    </label>
-                    {detectedGuilds.length > 1 ? (
-                      <select
-                        value={discordGuildId}
-                        onChange={(e) => setDiscordGuildId(e.target.value)}
-                        disabled={!hasGcpAccess()}
-                        className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 disabled:bg-gray-100 disabled:cursor-not-allowed"
-                      >
-                        <option value="">Select a server...</option>
-                        {detectedGuilds.map(guild => (
-                          <option key={guild.id} value={guild.id}>
-                            {guild.name}
-                          </option>
-                        ))}
-                      </select>
-                    ) : (
-                      <input
-                        type="text"
-                        value={discordGuildId}
-                        onChange={(e) => setDiscordGuildId(e.target.value)}
-                        placeholder="Will be auto-detected after saving token"
-                        disabled={!hasGcpAccess()}
-                        className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 disabled:bg-gray-100 disabled:cursor-not-allowed"
-                      />
-                    )}
-                    {detectedGuilds.length > 0 && (
-                      <p className="text-xs text-green-600 mt-1">
-                        ✓ Auto-detected {detectedGuilds.length} server{detectedGuilds.length > 1 ? 's' : ''}
-                        {detectedGuilds.length === 1 && ` - will use: ${detectedGuilds[0].name}`}
-                      </p>
-                    )}
-                    {discordDetecting && (
-                      <p className="text-xs text-blue-600 mt-1 animate-pulse">
-                        Detecting Discord servers...
-                      </p>
-                    )}
-                  </div>
-                  {error && discordGuildId && (
-                    <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-700 text-sm">
-                      ⚠️ {error} - You can still continue, but Discord channel won't be created.
-                    </div>
-                  )}
-                  {error && !discordGuildId && (
-                    <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-                      {error}
-                    </div>
-                  )}
-                  <button
-                    onClick={handleCreateDiscordBot}
-                    disabled={saving || discordDetecting || !discordBotTokenInput.trim() || !hasGcpAccess()}
-                    className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Bot size={18} />
-                    {saving || discordDetecting ? 'Detecting...' : 'Save Token'}
-                  </button>
-              </div>
-          )}
-        </div>
-
-        <div className="space-y-2">
-          {getStepHeader(7, "Step 7: Create VM", <Server className="text-blue-600" size={24} />, isStepCompleted(7), isStepActive(7), isStepLocked(7), "Create a GCP VM that will fork SecureAgentBase, set up GitHub Actions, download Kimaki, and configure your Discord bot.", false, () => editStep(7))}
-          
-          {expandedSteps.includes(7) && !isStepCompleted(6) && (
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
-              Complete Step 6 first to unlock this step.
-            </div>
-          )}
-
-          {expandedSteps.includes(7) && isStepCompleted(6) && (
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {isStepCompleted(7) ? (
+              {isStepCompleted(6) ? (
                 <div className="space-y-4">
                   <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
                     <Check size={20} />
@@ -2729,15 +2630,12 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
                           setError('Service account and project ID required');
                           return;
                         }
-                        if (!discordGuildId) {
-                          addStep4Log('WARNING: Discord Guild ID not set - Discord channel will not be created');
-                        }
                         setVmIp('');
                         setStep4Logs([]);
                         setVmLogs('');
                         setStep4Status('enabling');
                         setStep4Message('Getting service account token...');
-                        addStep4Log('Starting VM recreation process...');
+                        addStep4Log('Starting VM creation process...');
                         
                         const token = await getServiceAccountToken();
                         if (!token) {
@@ -2829,7 +2727,6 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
                                     items: [
                                       { key: 'startup-script', value: startupScript },
                                       { key: 'github_token', value: githubPat },
-                                      { key: 'discord_bot_token', value: discordBotToken },
                                       { key: 'discord_guild_id', value: discordGuildId || '' },
                                       { key: 'github_owner', value: '' },
                                       { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
@@ -2896,6 +2793,7 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
                               vmCreated = true;
                               setStep4Status('complete');
                               setStep4Message('VM created successfully!');
+                              expandNextStep(6);
                               expandNextStep(7);
                               break;
                             } else {
@@ -3105,7 +3003,6 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
                                       items: [
                                         { key: 'startup-script', value: startupScript },
                                         { key: 'github_token', value: githubPat },
-                                        { key: 'discord_bot_token', value: discordBotToken },
                                         { key: 'discord_guild_id', value: discordGuildId || '' },
                                         { key: 'github_owner', value: '' },
                                         { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
@@ -3346,7 +3243,6 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
                                       items: [
                                         { key: 'startup-script', value: startupScript },
                                         { key: 'github_token', value: githubPat },
-                                        { key: 'discord_bot_token', value: discordBotToken },
                                         { key: 'discord_guild_id', value: discordGuildId || '' },
                                         { key: 'github_owner', value: '' },
                                         { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
@@ -3458,6 +3354,110 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
           )}
         </div>
 
+        {/* Step 7: Invite Kimaki Bot */}
+        <div className="space-y-2">
+          {getStepHeader(7, "Step 7: Invite Kimaki Bot", <Bot className="text-blue-600" size={24} />, isStepCompleted(7), isStepActive(7), isStepLocked(7), "Click the install link to add Kimaki's bot to your Discord server. This is required for Kimaki to respond to messages.", false, () => editStep(7))}
+          
+          {expandedSteps.includes(7) && !isStepCompleted(6) && (
+            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
+              Complete Step 6 first to unlock this step.
+            </div>
+          )}
+
+          {expandedSteps.includes(7) && isStepCompleted(6) && (
+            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
+              {kimakiBotInvited ? (
+                <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
+                  <Check size={20} />
+                  <span className="font-medium">Kimaki bot invited successfully!</span>
+                </div>
+              ) : kimakiInstallUrl ? (
+                <div className="space-y-4">
+                  <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
+                    <Check size={20} />
+                    <span className="font-medium">Kimaki is ready! Click below to invite the bot.</span>
+                  </div>
+                  
+                  <p className="text-gray-600">
+                    Click the button below to add Kimaki's bot to your Discord server. After adding the bot, 
+                    slash commands will become available in your server.
+                  </p>
+                  
+                  <a
+                    href={kimakiInstallUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-lg font-medium"
+                  >
+                    <Bot size={20} />
+                    Add Kimaki Bot to Discord
+                  </a>
+                  
+                  <div className="text-sm text-gray-500">
+                    <p>After clicking the link:</p>
+                    <ol className="list-decimal list-inside mt-2 space-y-1">
+                      <li>Select your Discord server</li>
+                      <li>Click "Authorize"</li>
+                      <li>Complete the captcha if prompted</li>
+                      <li>Type <code>/</code> in Discord to see available commands</li>
+                    </ol>
+                  </div>
+                  
+                  <button
+                    onClick={() => setKimakiBotInvited(true)}
+                    className="text-blue-600 hover:text-blue-700 text-sm underline"
+                  >
+                    I've added the bot - continue
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <p className="text-gray-600">
+                    After the VM is created, Kimaki will start and provide an install link. 
+                    Click the link below to add Kimaki's bot to your Discord server.
+                  </p>
+                  
+                  <div className="text-center py-8">
+                    <div className="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full mx-auto mb-4"></div>
+                    <p className="text-gray-600">Waiting for Kimaki to start on the VM...</p>
+                  </div>
+                  
+                  <button
+                    onClick={() => setKimakiBotInvited(true)}
+                    className="text-blue-600 hover:text-blue-700 text-sm underline"
+                  >
+                    I've added the bot - continue
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-between pt-4 border-t">
+          <button
+            onClick={handleDisconnect}
+            className="text-red-600 hover:text-red-700 flex items-center gap-2"
+          >
+            <Trash2 size={18} />
+            Disconnect Infrastructure
+          </button>
+          {!useFirestore && (
+            <button
+              onClick={handleSaveConfig}
+              disabled={saving || !projectId.trim()}
+              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium disabled:opacity-50"
+            >
+              {saving ? 'Saving...' : 'Save Configuration'}
+            </button>
+          )}
+          {useFirestore && (
+            <span className="text-sm text-gray-500">
+              Auto-saving enabled
+            </span>
+          )}
+        </div>
+
         <div className="mt-8 pt-6 border-t border-gray-200">
           <h2 className="text-lg font-semibold text-gray-800 mb-4">Resources</h2>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -3516,30 +3516,6 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
               Kimaki CLI
             </a>
           </div>
-        </div>
-
-        <div className="flex items-center justify-between pt-4 border-t">
-          <button
-            onClick={handleDisconnect}
-            className="text-red-600 hover:text-red-700 flex items-center gap-2"
-          >
-            <Trash2 size={18} />
-            Disconnect Infrastructure
-          </button>
-          {!useFirestore && (
-            <button
-              onClick={handleSaveConfig}
-              disabled={saving || !projectId.trim()}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium disabled:opacity-50"
-            >
-              {saving ? 'Saving...' : 'Save Configuration'}
-            </button>
-          )}
-          {useFirestore && (
-            <span className="text-sm text-gray-500">
-              Auto-saving enabled
-            </span>
-          )}
         </div>
       </div>
     </div>
