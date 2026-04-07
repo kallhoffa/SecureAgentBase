@@ -38,8 +38,15 @@ jobs:
           docker run --rm \
             -v $(pwd):/output \
             node:20-bullseye bash -c "
-              npm install -g kimaki@latest
-              cp -r \$(npm root -g)/kimaki /output/kimaki/
+              NPM_GLOBAL=\$(npm root -g)
+              npm install -g kimaki@latest opencode@latest
+              # Copy both kimaki AND opencode with their node_modules
+              cp -r \$NPM_GLOBAL/kimaki /output/kimaki/
+              cp -r \$NPM_GLOBAL/opencode /output/kimaki/node_modules/
+              # Copy opencode's node_modules too
+              cp -r \$NPM_GLOBAL/opencode/node_modules /output/kimaki/node_modules/opencode/ 2>/dev/null || true
+              echo 'Bundle contents:'
+              ls /output/kimaki/kimaki/node_modules/
             "
 
       - name: Download gh CLI
