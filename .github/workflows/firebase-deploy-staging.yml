@@ -45,9 +45,6 @@ jobs:
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
-      - name: Setup staging rules
-        run: cp firestore.staging.rules firestore.rules
-
       - name: Deploy to Firebase Staging
         uses: w9jds/firebase-action@master
         with:
