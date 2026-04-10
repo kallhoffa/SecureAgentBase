@@ -222,3 +222,19 @@ The bundle includes pre-downloaded .deb packages for:
 ## License
 
 Apache 2.0
+
+---
+
+## TODO
+
+### High Priority
+- [ ] **End-to-end testing** - Test with real GCP/Firebase/GitHub/Discord integration
+- [ ] **Document bundle setup** - Users should build their own bundles. Don't rely on maintainer's GCS bucket for security/trust reasons
+- [ ] **Add bundle download to workflows** - Add step to deploy workflows for faster VM startup. Users configure their own `GCS_BUCKET` secret
+
+### Known Issues
+- ⚠️ Secrets embedded in GCP VM metadata (visible in Console/logs)
+- ⚠️ Weak passphrase requirements (min 4 characters, no strength validation)
+- ⚠️ No unit tests (only placeholder test exists)
+- ⚠️ `infra-setup.jsx` is 3400+ lines, needs refactoring
+- ⚠️ No rate limiting on auth endpoints

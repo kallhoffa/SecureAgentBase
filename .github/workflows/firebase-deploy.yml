@@ -55,14 +55,14 @@ jobs:
         run: |
           echo "Waiting for production to deploy..."
           sleep 30
-          npx playwright test tests/e2e/smoke.spec.js --retries=2
+          npx playwright test e2e/smoke.spec.js --retries=2
         env:
-          TEST_URL: https://${{ vars.VITE_PRODUCTION_URL }}
+          TEST_URL: https://${{ vars.PRODUCTION_URL }}
 
       - name: Run Full E2E Tests on Production
-        run: npx playwright test tests/e2e --retries=2
+        run: npx playwright test e2e --retries=2
         env:
-          TEST_URL: https://${{ vars.VITE_PRODUCTION_URL }}
+          TEST_URL: https://${{ vars.PRODUCTION_URL }}
 
       - name: Upload logs on failure
         if: failure()
