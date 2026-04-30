@@ -299,7 +299,7 @@ export USE_BUNDLE="${useBundle ? 'true' : 'false'}"
 echo "=== VM Setup Started ==="
 
 GITHUB_TOKEN=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/github_token" -H "Metadata-Flavor: Google")
-DISCORD_BOT_TOKEN=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/discord_bot_token" -H "Metadata-Flavor: Google")
+DISCORD_BOT_TOKEN=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/discord_bot_token" -H "Metadata-Flavor: Google" | tr -d '[:space:]')
 DISCORD_GUILD_ID=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/discord_guild_id" -H "Metadata-Flavor: Google")
 GITHUB_OWNER=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/github_owner" -H "Metadata-Flavor: Google")
 FIREBASE_STAGING=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_staging" -H "Metadata-Flavor: Google")
@@ -308,6 +308,7 @@ FIREBASE_PRODUCTION=$(curl -s "http://metadata.google.internal/computeMetadata/v
 echo "Secrets loaded from metadata"
 echo "DEBUG: FIREBASE_STAGING=$FIREBASE_STAGING"
 echo "DEBUG: FIREBASE_PRODUCTION=$FIREBASE_PRODUCTION"
+echo "DEBUG: DISCORD_BOT_TOKEN is set: $([ -n "$DISCORD_BOT_TOKEN" ] && echo 'YES' || echo 'NO')"
 
 # For Kimaki Gateway mode - we don't need a Discord bot token
 # Kimaki will provide its own pre-built bot via OAuth
@@ -387,8 +388,11 @@ if ! command -v gh &> /dev/null; then
 fi
 
 # Authenticate GitHub
-echo $GITHUB_TOKEN | gh auth login --with-token
-gh auth setup-git
+echo "DEBUG: Authenticate GitHub..."
+echo $GITHUB_TOKEN | gh auth login --with-token || { echo "ERROR: gh auth login failed!"; exit 1; }
+echo "DEBUG: gh auth login succeeded"
+gh auth setup-git || { echo "ERROR: gh auth setup-git failed!"; exit 1; }
+echo "DEBUG: gh auth setup-git succeeded"
 
 # Get authenticated user to verify correct owner
 GH_USER=$(gh api user --jq .login)
@@ -397,22 +401,23 @@ echo "Expected owner: $GITHUB_OWNER"
 
 # Clone SecureAgentBase and set up upstream
 cd /opt
-if [ -d "SecureAgentBase" ]; then
+if [ -d "SecureAgentBase" ] && [ -d "SecureAgentBase/.git" ]; then
+  # Already cloned, just cd into it
   cd SecureAgentBase
-  git remote add upstream https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
-  git fetch upstream 2>/dev/null || true
-  git checkout main 2>/dev/null || true
-  git merge upstream/main 2>/dev/null || true
+  echo "SecureAgentBase already exists, using existing repo"
 else
-  git clone --depth 1 https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
+  # Clean up any partial/incomplete directory first
+  rm -rf SecureAgentBase 2>/dev/null || true
+  echo "Cloning SecureAgentBase..."
+  git clone --depth 1 https://github.com/kallhoffa/SecureAgentBase.git || { echo "Clone failed!"; exit 1; }
   cd SecureAgentBase
   # Reinitialize git for fresh repo (single commit)
   rm -rf .git
   git init -b main
   git add -A
   git commit -m "Initial commit from SecureAgentBase"
-  git remote add upstream https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
 fi
+git remote add upstream https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
 
 # Remove upstream to avoid "multiple remotes" error with gh cli
 git remote remove upstream 2>/dev/null || true
@@ -427,17 +432,19 @@ fi
 echo "Using repo owner: $REPO_OWNER"
 
 # Check if repo exists, create if not
+echo "DEBUG: Checking if repo exists..."
 REPO_EXISTS=false
 if gh repo view "\${REPO_OWNER}/\${FIREBASE_STAGING}" 2>/dev/null; then
   REPO_EXISTS=true
+  echo "DEBUG: Repo exists"
 fi
 
-  if [ "$REPO_EXISTS" = true ]; then
-  echo "Repo exists, pushing..."
+if [ "$REPO_EXISTS" = true ]; then
+  echo "DEBUG: Repo exists, pushing..."
   git remote add origin "https://github.com/\${REPO_OWNER}/\${FIREBASE_STAGING}.git" 2>/dev/null || true
   git push -u origin main --force || { echo "Push failed!"; exit 1; }
 else
-  echo "Creating new repo..."
+  echo "DEBUG: Creating new repo..."
   gh repo create "$FIREBASE_STAGING" --public --source=. --push || { echo "Repo create failed!"; exit 1; }
 fi
 echo "DEBUG: GitHub push done"
@@ -500,9 +507,19 @@ if [ -d "/opt/bun" ]; then
   [ -f /opt/bun/bun ] && ln -sf /opt/bun/bun /usr/local/bin/bun 2>/dev/null || true
 fi
 if [ -d "/opt/opencode" ]; then
-  export PATH="/opt/opencode:$PATH"
-  # Create symlink for system-wide access
-  [ -f /opt/opencode/opencode ] && ln -sf /opt/opencode/opencode /usr/local/bin/opencode 2>/dev/null || true
+  echo "DEBUG: Setting up OpenCode from bundle..."
+  # Handle both /opt/opencode/opencode and /opt/opencode/.opencode/bin/opencode
+  if [ -f "/opt/opencode/.opencode/bin/opencode" ]; then
+    export PATH="/opt/opencode/.opencode/bin:$PATH"
+    ln -sf /opt/opencode/.opencode/bin/opencode /usr/local/bin/opencode 2>/dev/null || true
+    echo "DEBUG: OpenCode found at /opt/opencode/.opencode/bin/opencode"
+  elif [ -f "/opt/opencode/opencode" ]; then
+    export PATH="/opt/opencode:$PATH"
+    ln -sf /opt/opencode/opencode /usr/local/bin/opencode 2>/dev/null || true
+    echo "DEBUG: OpenCode found at /opt/opencode/opencode"
+  else
+    echo "DEBUG: OpenCode binary not found in bundle"
+  fi
 fi
 
 # Determine how to run kimaki
@@ -523,7 +540,65 @@ fi
 
 if [ -n "$KIMAKI_CMD" ]; then
   echo "DEBUG: Using Kimaki command: $KIMAKI_CMD"
-  echo "DEBUG: Kimaki bundled - user can run 'kimaki' manually via SSH to complete setup"
+  
+  # Set environment variables for Kimaki
+  export KIMAKI_BOT_TOKEN="$DISCORD_BOT_TOKEN"
+  export DISCORD_GUILD_ID="$DISCORD_GUILD_ID"
+  
+  # Test Discord token before starting Kimaki
+  echo "Testing Discord token..."
+  TOKEN_TEST=$(curl -s -H "Authorization: Bot $KIMAKI_BOT_TOKEN" https://discord.com/api/v10/users/@me 2>/dev/null || echo "CURL_FAILED")
+  
+  if echo "$TOKEN_TEST" | grep -q '"id"'; then
+    echo "DEBUG: Token valid, bot info: $(echo "$TOKEN_TEST" | grep -o '"username"[^,]*' || echo 'unknown')"
+    
+    # Check if bot is in any guild
+    GUILDS=$(curl -s -H "Authorization: Bot $KIMAKI_BOT_TOKEN" https://discord.com/api/v10/users/@me/guilds 2>/dev/null || echo "[]")
+    GUILD_COUNT=$(echo "$GUILDS" | grep -o '"id"' | wc -l 2>/dev/null || echo "0")
+    echo "DEBUG: Bot is in $GUILD_COUNT guild(s)"
+    
+    if [ "$GUILD_COUNT" -eq 0 ]; then
+      echo "WARNING: Bot is not in any Discord server! Invite it first."
+      echo "WARNING: Kimaki will fail to connect properly without a guild."
+    fi
+  else
+    echo "ERROR: Token test failed! Response: $TOKEN_TEST"
+    echo "WARNING: Kimaki will likely fail to connect."
+  fi
+  
+  # Test network connectivity to Discord
+  echo "Testing network connectivity to Discord..."
+  if curl -s --connect-timeout 5 https://discord.com/api/v10/gateway > /dev/null 2>&1; then
+    echo "DEBUG: Network connection to Discord OK"
+  else
+    echo "ERROR: Cannot reach Discord API - check DNS/firewall!"
+    echo "DEBUG: Testing DNS..."
+    nslookup discord.com 2>/dev/null || echo "DNS lookup failed"
+  fi
+  
+  # Start Kimaki
+  echo "Starting Kimaki..."
+  
+  # Create log file
+  touch /var/log/kimaki.log
+  
+  # Run Kimaki in background
+  nohup $KIMAKI_CMD >> /var/log/kimaki.log 2>&1 &
+  KIMAKI_PID=$!
+  echo "Kimaki started with PID $KIMAKI_PID"
+  
+  # Save PID for later management
+  echo $KIMAKI_PID > /var/run/kimaki.pid
+  
+  # Wait a bit and check if it's running
+  sleep 5
+  if ps -p $KIMAKI_PID > /dev/null 2>&1; then
+    echo "DEBUG: Kimaki is running"
+  else
+    echo "WARNING: Kimaki may have failed to start, check /var/log/kimaki.log"
+    echo "DEBUG: Last few lines of log:"
+    tail -10 /var/log/kimaki.log 2>/dev/null || echo "Log file not found"
+  fi
 fi
 
 # Install bundled gh if available
@@ -557,8 +632,11 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
   const [kimakiBotInvited, setKimakiBotInvited] = useState(false);
   const [kimakiInstallUrl, setKimakiInstallUrl] = useState('');
   const [vmZone, setVmZone] = useState('us-east1-b');
-  const [discordBotToken, setDiscordBotToken] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [vmMachineType, setVmMachineType] = useState('e2-medium');
+const [discordBotToken, setDiscordBotToken] = useState('');
+const [discordClientId, setDiscordClientId] = useState('');
+const [discordInviteUrl, setDiscordInviteUrl] = useState('');
+const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
@@ -595,12 +673,12 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
   const [firebaseProductionData, setFirebaseProductionData] = useState<{ projectId?: string }>({});
   const [githubPat, setGithubPat] = useState('');
   const [discordBotTokenInput, setDiscordBotTokenInput] = useState('');
-  const [discordGuildId, setDiscordGuildId] = useState('');
-  const [detectedGuilds, setDetectedGuilds] = useState([]);
-  const [discordDetecting, setDiscordDetecting] = useState(false);
+const [discordGuildId, setDiscordGuildId] = useState('');
+const [discordDetecting, setDiscordDetecting] = useState(false);
   const [vmHttpsUrl, setVmHttpsUrl] = useState('');
   const [formProgressLoaded, setFormProgressLoaded] = useState(false);
   const [useOptimizedBundle, setUseOptimizedBundle] = useState(false);
+  const [showRecreateOptions, setShowRecreateOptions] = useState(false);
 
   const [currentStep, setCurrentStep] = useState(1);
   const [expandedSteps, setExpandedSteps] = useState([1]);
@@ -788,8 +866,8 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
     if (step === 3) return !!(firebaseStagingData?.projectId && firebaseProductionData?.projectId);
     if (step === 4) return !!githubPat;
     if (step === 5) return !!githubPat;
-    if (step === 6) return !!vmIp; // Step 6: Create VM (was Step 7, now Step 6)
-    if (step === 7) return kimakiBotInvited; // Step 7: Invite Kimaki Bot (was Step 8)
+    if (step === 6) return !!discordBotToken; // Step 6: Discord Bot
+    if (step === 7) return !!vmIp; // Step 7: Create VM
     return false;
   };
 
@@ -1120,7 +1198,7 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
           },
           body: JSON.stringify({
             name: instanceName,
-            machineType: `zones/${zone}/machineTypes/e2-micro`,
+            machineType: `zones/${zone}/machineTypes/${vmMachineType}`,
             disks: [{
               boot: true,
               autoDelete: true,
@@ -1383,6 +1461,17 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
     
     return () => clearInterval(interval);
   }, [vmIp, projectId, vmZone, serviceAccountJson]);
+
+  // Auto-generate Discord invite URL when token is loaded from storage
+  useEffect(() => {
+    if (!discordBotToken || discordInviteUrl || !discordClientId) return;
+
+    // Generate invite URL using manually entered Client ID
+    const perms = '2147551248';
+    const url = `https://discord.com/oauth2/authorize?client_id=${discordClientId}&permissions=${perms}&integration_type=0&scope=bot`;
+    setDiscordInviteUrl(url);
+    console.log('Discord invite URL regenerated from saved token and client ID');
+  }, [discordBotToken, discordClientId]);
 
   const handleFileUpload = async (event) => {
     const file = event.target.files?.[0];
@@ -1770,6 +1859,11 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
       return;
     }
 
+    if (!discordClientId.trim()) {
+      setError('Please enter your Discord Application Client ID');
+      return;
+    }
+
     if (!hasGcpAccess()) {
       const missing = [];
       if (!projectId) missing.push('GCP Project ID');
@@ -1777,75 +1871,43 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
       setError(`Missing: ${missing.join(', ')}. Complete Step 2 to configure.`);
       return;
     }
-    
-    const accessToken = await getAccessToken();
-    
+
     setSaving(true);
     setError(null);
+    setDiscordDetecting(true);
 
     try {
-      // Auto-detect Discord servers the bot is in
-      setDiscordDetecting(true);
-      let detectedGuildId = '';
-      let guildDetectionFailed = false;
-      try {
-        const guildsResponse = await fetch('https://discord.com/api/v10/users/@me/guilds', {
-          headers: {
-            'Authorization': `Bot ${discordBotTokenInput}`,
-          },
-        });
-        
-        if (guildsResponse.ok) {
-          const guilds = await guildsResponse.json();
-          setDetectedGuilds(guilds);
-          
-          if (guilds.length === 1) {
-            detectedGuildId = guilds[0].id;
-            setDiscordGuildId(detectedGuildId);
-            console.log('Auto-detected Discord server:', guilds[0].name);
-          } else if (guilds.length > 1) {
-            detectedGuildId = guilds[0].id;
-            setDiscordGuildId(detectedGuildId);
-            console.log(`Bot is in ${guilds.length} servers. Auto-selected first: ${guilds[0].name}`);
-          } else {
-            console.log('Bot is not in any servers. Add the bot to your Discord server first.');
-            setError('Bot is not in any servers. Invite the bot to your Discord server first.');
-            guildDetectionFailed = true;
-          }
-        } else {
-          console.warn('Could not fetch Discord guilds');
-          guildDetectionFailed = true;
-        }
-      } catch (guildErr) {
-        console.warn('Could not detect Discord servers:', guildErr.message);
-        guildDetectionFailed = true;
-      }
-      setDiscordDetecting(false);
-      
-      // Don't save if guild detection failed
-      if (guildDetectionFailed) {
-        setSaving(false);
-        return;
-      }
-      
+      // Generate invite URL using the manually entered Client ID
+      const perms = '2147551248'; // Send Messages, Read History, Manage Channels, Use Slash Commands
+      const inviteUrl = `https://discord.com/oauth2/authorize?client_id=${discordClientId}&permissions=${perms}&integration_type=0&scope=bot`;
+      setDiscordInviteUrl(inviteUrl);
+
+      // Discord guild detection now happens server-side on the VM
+      // The VM startup script already auto-detects guilds using the bot token from metadata
+      // User can also manually enter their Guild ID in the field below
+      let detectedGuildId = discordGuildId;
+
       setDiscordBotToken(discordBotTokenInput);
-      console.log('Saving Discord config:', { 
-        discord_bot_token: discordBotTokenInput ? '[REDACTED]' : 'empty',
-        discord_guild_id: detectedGuildId || 'EMPTY - will skip Discord channel',
-        current_discordGuildId: discordGuildId
+      console.log('Saving Discord config:', {
+        discord_bot_token: '[REDACTED]',
+        discord_guild_id: detectedGuildId || 'EMPTY',
+        invite_url_generated: !!inviteUrl
       });
-      await saveConfig({ 
+
+      await saveConfig({
         discord_bot_token: discordBotTokenInput,
-        discord_guild_id: detectedGuildId || discordGuildId  // Use detected or current
+        discord_guild_id: detectedGuildId || discordGuildId
       });
-      console.log('Discord config saved, discordGuildId state is now:', discordGuildId);
-      expandNextStep(6);
+
+      console.log('Discord config saved');
+      expandNextStep(7);
     } catch (err) {
       console.error('Error saving discord bot token:', err);
       setError(err.message);
+    } finally {
+      setSaving(false);
+      setDiscordDetecting(false);
     }
-
-    setSaving(false);
   };
 
   const pendingConfig = !user && loadFromLocalStorage();
@@ -2565,9 +2627,9 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
           )}
         </div>
 
-        {/* Step 6: Create VM */}
+        {/* Step 6: Discord Bot */}
         <div className="space-y-2">
-          {getStepHeader(6, "Step 6: Create VM", <Server className="text-blue-600" size={24} />, isStepCompleted(6), isStepActive(6), isStepLocked(6), "Create a GCP VM that will fork SecureAgentBase, set up GitHub Actions, download Kimaki, and configure your Discord bot.", false, () => editStep(6))}
+          {getStepHeader(6, "Step 6: Discord Bot", <Bot className="text-blue-600" size={24} />, isStepCompleted(6), isStepActive(6), isStepLocked(6), "Configure your Discord bot token and server. The VM will use this to interact with Discord.", false, () => editStep(6))}
           
           {expandedSteps.includes(6) && !isStepCompleted(5) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
@@ -2577,284 +2639,170 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
 
           {expandedSteps.includes(6) && isStepCompleted(5) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {isStepCompleted(6) ? (
-                <div className="space-y-4">
-                  <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
-                    <Check size={20} />
-                    <span className="font-medium">VM created and ready at {vmIp}</span>
-                  </div>
-                  
-                  <div className="border border-gray-200 rounded-lg p-4">
-                    <div className="flex items-center justify-between mb-3">
-                      <h3 className="font-medium text-gray-700">VM Serial Port Logs</h3>
-                      <button
-                        onClick={fetchVmLogs}
-                        disabled={loadingVmLogs}
-                        className="text-sm bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded-lg flex items-center gap-1"
-                      >
-                        {loadingVmLogs ? (
-                          <span className="animate-spin">⟳</span>
-                        ) : (
-                          <span>↻</span>
-                        )}
-                        Refresh Logs
-                      </button>
-                    </div>
-                    {loadingVmLogs ? (
-                      <div className="flex items-center justify-center py-8 text-blue-600">
-                        <div className="animate-spin mr-2">⟳</div>
-                        Fetching VM logs...
-                      </div>
-                    ) : vmLogs ? (
-                      <pre className="bg-gray-900 text-green-400 p-3 rounded text-xs font-mono max-h-64 overflow-y-auto whitespace-pre-wrap">
-                        {vmLogs}
-                      </pre>
-                    ) : (
-                      <p className="text-gray-500 text-sm">Click "Refresh Logs" to view VM startup output</p>
-                    )}
-                  </div>
-
-                  <div className="flex items-center gap-4 flex-wrap">
-                    <label className="flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={useOptimizedBundle}
-                        onChange={(e) => setUseOptimizedBundle(e.target.checked)}
-                        className="w-4 h-4 rounded border-gray-300"
-                      />
-                      <span className="text-sm text-gray-600">Optimized</span>
-                    </label>
-                    <button
-                      onClick={async () => {
-                        if (!serviceAccountJson || !projectId) {
-                          setError('Service account and project ID required');
-                          return;
-                        }
-                        setVmIp('');
-                        setStep4Logs([]);
-                        setVmLogs('');
-                        setStep4Status('enabling');
-                        setStep4Message('Getting service account token...');
-                        addStep4Log('Starting VM creation process...');
-                        
-                        const token = await getServiceAccountToken();
-                        if (!token) {
-                          setError('Failed to authenticate with service account');
-                          setStep4Status('error');
-                          return;
-                        }
-                        addStep4Log('Service account authenticated');
-                        
-                        const apis = [
-                          { name: 'compute.googleapis.com', displayName: 'Compute Engine API' },
-                          { name: 'cloudresourcemanager.googleapis.com', displayName: 'Cloud Resource Manager API' },
-                          { name: 'serviceusage.googleapis.com', displayName: 'Service Usage API' }
-                        ];
-                        
-                        for (const api of apis) {
-                          setStep4Message(`Enabling ${api.displayName}...`);
-                          addStep4Log(`Enabling ${api.displayName}...`);
-                          
-                          try {
-                            const response = await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/${api.name}:enable`, {
-                              method: 'POST',
-                              headers: {
-                                'Authorization': `Bearer ${token}`,
-                                'Content-Type': 'application/json'
-                              }
-                            });
-                            
-                            if (response.ok) {
-                              addStep4Log(`${api.displayName} enabled`);
-                            } else {
-                              const errData = await response.json().catch(() => ({}));
-                              const errMsg = errData.error?.message || '';
-                              if (errMsg.includes('billing')) {
-                                setError('Billing must be enabled on your GCP project');
-                                addStep4Log(`ERROR: Billing required for ${api.displayName}`);
-                              } else if (errMsg.includes('already') || errMsg.includes('enabled')) {
-                                addStep4Log(`${api.displayName} already enabled`);
-                              } else {
-                                addStep4Log(`Note: ${errMsg || 'Continuing...'}`);
-                              }
-                            }
-                          } catch (e) {
-                            addStep4Log(`Error enabling ${api.displayName}: ${e.message}`);
-                          }
-                          
-                          await new Promise(r => setTimeout(r, 1500));
-                        }
-                        
-                        setStep4Message('Creating VM...');
-                        addStep4Log('Creating VM...');
-                        
-                        const zone = vmZone;
-                        const instanceName = 'secureagent-manager';
-                        const startupScript = getStartupScript(useOptimizedBundle);
-
-                        const zones = [vmZone, 'us-central1-b', 'us-central1-c', 'us-west1-a', 'us-west1-b', 'us-east1-c', 'us-east1-d', 'europe-west1-d', 'asia-east1-a'];
-                        let vmCreated = false;
-                        
-                        for (const tryZone of zones) {
-                          try {
-                            setStep4Message(`Creating VM in ${tryZone}...`);
-                            addStep4Log(`Attempting VM creation in ${tryZone}...`);
-                            
-                            const vmResponse = await fetch(
-                              `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances`,
-                              {
-                                method: 'POST',
-                                headers: {
-                                  'Authorization': `Bearer ${token}`,
-                                  'Content-Type': 'application/json'
-                                },
-                                body: JSON.stringify({
-                                  name: instanceName,
-                                  machineType: `zones/${tryZone}/machineTypes/e2-micro`,
-                                  disks: [{
-                                    boot: true,
-                                    autoDelete: true,
-                                    initializeParams: {
-                                      diskSizeGb: '10',
-                                      sourceImage: 'projects/debian-cloud/global/images/family/debian-11',
-                                    },
-                                  }],
-                                  networkInterfaces: [{
-                                    network: 'global/networks/default',
-                                    accessConfigs: [{ type: 'ONE_TO_ONE_NAT' }],
-                                  }],
-                                  metadata: {
-                                    items: [
-                                      { key: 'startup-script', value: startupScript },
-                                      { key: 'github_token', value: githubPat },
-                                      { key: 'discord_guild_id', value: discordGuildId || '' },
-                                      { key: 'github_owner', value: '' },
-                                      { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
-                                      { key: 'firebase_production', value: firebaseProductionData?.projectId || '' }
-                                    ]
-                                  }
-                                }),
-                              }
-                            );
-                            console.log('VM metadata discord_guild_id:', discordGuildId ? 'SET to ' + discordGuildId : 'EMPTY - this is the bug!');
-                            
-                            if (vmResponse.ok) {
-                              setVmZone(tryZone);
-                              addStep4Log(`VM creation started in ${tryZone}, waiting for completion...`);
-                              await new Promise(r => setTimeout(r, 15000));
-                              
-                              const instanceResp = await fetch(
-                                `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances/${instanceName}`,
-                                { headers: { 'Authorization': `Bearer ${token}` } }
-                              );
-                              
-                              if (!instanceResp.ok) {
-                                const errData = await instanceResp.json();
-                                if (errData.error?.code === 404) {
-                                  addStep4Log(`VM not found in ${tryZone}, it may still be starting...`);
-                                } else {
-                                  addStep4Log(`Error checking VM: ${errData.error?.message || 'Unknown error'}`);
-                                }
-                                continue;
-                              }
-                              
-                              const instanceData = await instanceResp.json();
-                              const vmStatus = instanceData.status;
-                              const ip = instanceData.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP;
-                              
-                              if (vmStatus !== 'RUNNING') {
-                                addStep4Log(`VM status: ${vmStatus} - waiting for startup...`);
-                                
-                                await new Promise(r => setTimeout(r, 10000));
-                                
-                                const recheckResp = await fetch(
-                                  `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances/${instanceName}`,
-                                  { headers: { 'Authorization': `Bearer ${token}` } }
-                                );
-                                const recheckData = await recheckResp.json();
-                                const recheckStatus = recheckData.status;
-                                
-                                if (recheckStatus !== 'RUNNING') {
-                                  addStep4Log(`VM failed to start. Status: ${recheckStatus}`);
-                                  if (recheckStatus === 'TERMINATED') {
-                                    setError('VM terminated. Check startup script logs in GCP Console for errors.');
-                                  } else {
-                                    setError(`VM is in "${recheckStatus}" state. Please check GCP Console.`);
-                                  }
-                                  setStep4Status('error');
-                                  break;
-                                }
-                              }
-                              
-                              if (ip) {
-                                setVmIp(ip);
-                                addStep4Log(`VM ready at ${ip}`);
-                              }
-                              vmCreated = true;
-                              setStep4Status('complete');
-                              setStep4Message('VM created successfully!');
-                              expandNextStep(6);
-                              expandNextStep(7);
-                              break;
-                            } else {
-                              const err = await vmResponse.json();
-                              const errStr = JSON.stringify(err);
-                              const errMsg = err.error?.message || '';
-                              const errStatus = err.error?.status || '';
-                              const statusMsg = err.status?.message || '';
-                              
-                              addStep4Log(`VM response not ok: ${errMsg || statusMsg || errStr}`);
-                              
-                              if (errStr.toLowerCase().includes('zone') && 
-                                  (errStr.toLowerCase().includes('exhausted') || 
-                                   errStr.toLowerCase().includes('unavailable') ||
-                                   errStr.toLowerCase().includes('resource'))) {
-                                addStep4Log(`Zone ${tryZone} may be out of capacity, trying next zone...`);
-                                continue;
-                              }
-                              
-                              if (errMsg.includes('ZONE_RESOURCE_POOL_EXHAUSTED') || 
-                                  errStr.includes('RESOURCE_EXHAUSTED') ||
-                                  errStr.includes('resource_availability') ||
-                                  errStatus === 'RESOURCE_EXHAUSTED' ||
-                                  statusMsg.includes('ZONE_RESOURCE_POOL_EXHAUSTED') ||
-                                  (errMsg.includes('unavailable') && errMsg.includes('zone'))) {
-                                addStep4Log(`Zone ${tryZone} out of capacity, trying next zone...`);
-                                continue;
-                              }
-                              
-                              addStep4Log(`VM creation failed: ${errMsg || statusMsg || errStr}`);
-                              setError(`Failed to create VM: ${errMsg || statusMsg}`);
-                              setStep4Status('error');
-                              break;
-                            }
-                            } catch (e: any) {
-                              const errMsg = e?.message || e?.name || 'Unknown error';
-                              addStep4Log(`Error creating VM in ${tryZone}: ${errMsg}, trying next zone...`);
-                              continue;
-                            }
-                        }
-                        
-                        if (!vmCreated) {
-                          addStep4Log('All zones exhausted, could not create VM');
-                          setError('All zones are out of capacity. Please try again later.');
-                          setStep4Status('error');
-                        }
-                      }}
-                    className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg"
-                  >
-                    Recreate VM
-                  </button>
-                  </div>
+              {(isStepCompleted(6) && !expandedSteps.includes(6)) ? (
+                <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
+                  <Check size={20} />
+                  <span className="font-medium">Discord bot configured</span>
                 </div>
               ) : (
+                   <>
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                      <p className="text-blue-800 font-medium mb-2">Create a Discord bot:</p>
+                      <ol className="list-decimal list-inside space-y-2 text-blue-700 text-sm">
+                        <li>Go to <a href="https://discord.com/developers/applications" target="_blank" rel="noopener noreferrer" className="underline font-medium">Discord Developer Portal</a></li>
+                        <li>Click "New Application" → give it a name (e.g., "Kimaki")</li>
+                        <li>Go to "Bot" in the left sidebar → click "Add Bot"</li>
+                        <li>Go to "OAuth2" → "General" → set <strong>"Default Install Link" to "None"</strong></li>
+                        <li>Go to "Bot" → "General Information" → <strong>disable "Public Bot"</strong></li>
+                        <li>In "Bot", scroll to "Privileged Gateway Intents" → enable <strong>Message Content Intent</strong> (required for Kimaki to read messages)</li>
+                        <li>Go to "Bot" → click "Reset Token" → copy the token</li>
+                        <li>Enter the token below, then click "Generate Invite Link" to invite the bot to your server</li>
+                        <li>Enable Developer Mode in Discord (<strong>User Settings → Advanced → Developer Mode</strong>), then right-click your server name → <strong>Copy Server ID</strong></li>
+                      </ol>
+                    </div>
+
+                    <div className="mb-4">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Discord Bot Token:</label>
+                      <input
+                        type="password"
+                        value={discordBotTokenInput}
+                        onChange={(e) => {
+                          setDiscordBotTokenInput(e.target.value);
+                          setDiscordInviteUrl('');
+                        }}
+                        placeholder="MTE4MzEyODU2MTc0ODQxMDA5OH.GxXxXx.xxxxxxxx"
+                        className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
+                      />
+                      <p className="text-gray-500 text-xs mt-1">
+                        Your bot token from Discord Developer Portal → Bot → Reset Token
+                      </p>
+                    </div>
+
+                    {discordInviteUrl && (
+                      <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+                        <p className="text-green-800 text-sm mb-2 font-medium">✓ Invite URL generated!</p>
+                        <a
+                          href={discordInviteUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 underline text-sm break-all"
+                        >
+                          {discordInviteUrl}
+                        </a>
+                        <p className="text-green-700 text-xs mt-2">
+                          Open this link to invite your bot to your Discord server.
+                        </p>
+                      </div>
+                    )}
+
+                   {discordBotToken && !discordGuildId && (
+                     <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                       <p className="text-yellow-700 text-sm">
+                         Bot token saved but no Discord server detected. Make sure the bot is in your server using the invite link above.
+                       </p>
+                     </div>
+                   )}
+
+                    {error && (
+                     <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                       {error}
+                     </div>
+                   )}
+                   <button
+                     onClick={handleCreateDiscordBot}
+                     disabled={!discordBotTokenInput.trim() || discordDetecting}
+                     className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg flex items-center gap-2"
+                   >
+                     {discordDetecting ? (
+                       <>
+                         <span className="animate-spin">⟳</span>
+                         Saving...
+                       </>
+                     ) : (
+                       'Save Discord Bot'
+                     )}
+                   </button>
+                 </>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Step 7: Create VM */}
+        <div className="space-y-2">
+          {getStepHeader(7, "Step 7: Create VM", <Server className="text-blue-600" size={24} />, isStepCompleted(7), isStepActive(7), isStepLocked(7), "Create a GCP VM that will fork SecureAgentBase, set up GitHub Actions, download Kimaki, and configure your Discord bot.", false, () => editStep(7))}
+
+          {expandedSteps.includes(7) && !isStepCompleted(6) && (
+            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
+              Complete Step 6 first to unlock this step.
+            </div>
+          )}
+
+          {expandedSteps.includes(7) && isStepCompleted(6) && (
+             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
+               {isStepCompleted(7) && !showRecreateOptions ? (
+                 <div className="space-y-4">
+                   <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
+                     <Check size={20} />
+                     <span className="font-medium">VM created and ready at {vmIp}</span>
+                   </div>
+                   
+                   <div className="border border-gray-200 rounded-lg p-4">
+                     <div className="flex items-center justify-between mb-3">
+                       <h3 className="font-medium text-gray-700">VM Serial Port Logs</h3>
+                       <button
+                         onClick={fetchVmLogs}
+                         disabled={loadingVmLogs}
+                         className="text-sm bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded-lg flex items-center gap-1"
+                       >
+                         {loadingVmLogs ? (
+                           <span className="animate-spin">⟳</span>
+                         ) : (
+                           <span>↻</span>
+                         )}
+                         Refresh Logs
+                       </button>
+                     </div>
+                     {loadingVmLogs ? (
+                       <div className="flex items-center justify-center py-8 text-blue-600">
+                         <div className="animate-spin mr-2">⟳</div>
+                         Fetching VM logs...
+                       </div>
+                     ) : vmLogs ? (
+                       <pre className="bg-gray-900 text-green-400 p-3 rounded text-xs font-mono max-h-64 overflow-y-auto whitespace-pre-wrap">
+                         {vmLogs}
+                       </pre>
+                     ) : (
+                       <p className="text-gray-500 text-sm">Click "Refresh Logs" to view VM startup output</p>
+                     )}
+                   </div>
+
+                   <div className="flex items-center gap-4 flex-wrap">
+                     <label className="flex items-center gap-2 cursor-pointer">
+                       <input
+                         type="checkbox"
+                         checked={useOptimizedBundle}
+                         onChange={(e) => setUseOptimizedBundle(e.target.checked)}
+                         className="w-4 h-4 rounded border-gray-300"
+                       />
+                       <span className="text-sm text-gray-600">Optimized</span>
+                     </label>
+                      <button
+                        onClick={() => { setShowRecreateOptions(true); setStep4Status('idle'); setError(null); }}
+                        className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg"
+                      >
+                        Recreate VM
+                      </button>
+                   </div>
+                 </div>
+               ) : (
                 <>
                   <p className="text-gray-600 mb-4">
                     Enable required APIs and create a VM. The VM will automatically fork SecureAgentBase, set up GitHub Actions, download Kimaki, and create a Discord channel.
                   </p>
                   
                   <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">GCP Zone (free e2-micro):</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">GCP Zone:</label>
                     <select
                       value={vmZone}
                       onChange={(e) => setVmZone(e.target.value)}
@@ -2875,6 +2823,24 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
                       <option value="asia-southeast1-a">asia-southeast1-a</option>
                       <option value="asia-southeast1-b">asia-southeast1-b</option>
                     </select>
+                  </div>
+                  
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Machine Type:</label>
+                    <select
+                      value={vmMachineType}
+                      onChange={(e) => setVmMachineType(e.target.value)}
+                      className="w-full px-3 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
+                    >
+                      <option value="e2-micro">e2-micro (1 vCPU, 1GB RAM - Free)</option>
+                      <option value="e2-small">e2-small (2 vCPU, 2GB RAM - ~$6-12/mo)</option>
+                      <option value="e2-medium">e2-medium (2 vCPU, 4GB RAM - ~$12-24/mo)</option>
+                    </select>
+                    {vmMachineType === 'e2-micro' && (
+                      <p className="mt-2 text-xs text-yellow-700 bg-yellow-50 p-2 rounded">
+                        Warning: e2-micro may not have enough memory to run Kimaki + OpenCode. Consider e2-small.
+                      </p>
+                    )}
                   </div>
                   
                   <div className="mb-4 p-4 bg-blue-50 border border-blue-200 rounded-lg">
@@ -2986,7 +2952,7 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
                                   },
                                   body: JSON.stringify({
                                     name: instanceName,
-                                    machineType: `zones/${tryZone}/machineTypes/e2-micro`,
+                                    machineType: `zones/${tryZone}/machineTypes/${vmMachineType}`,
                                     disks: [{
                                       boot: true,
                                       autoDelete: true,
@@ -2999,16 +2965,17 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
                                       network: 'global/networks/default',
                                       accessConfigs: [{ type: 'ONE_TO_ONE_NAT' }],
                                     }],
-                                    metadata: {
-                                      items: [
-                                        { key: 'startup-script', value: startupScript },
-                                        { key: 'github_token', value: githubPat },
-                                        { key: 'discord_guild_id', value: discordGuildId || '' },
-                                        { key: 'github_owner', value: '' },
-                                        { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
-                                        { key: 'firebase_production', value: firebaseProductionData?.projectId || '' }
-                                      ]
-                                    }
+                                     metadata: {
+                                       items: [
+                                         { key: 'startup-script', value: startupScript },
+                                         { key: 'github_token', value: githubPat },
+                                         { key: 'discord_bot_token', value: discordBotToken || '' },
+                                         { key: 'discord_guild_id', value: discordGuildId || '' },
+                                         { key: 'github_owner', value: '' },
+                                         { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
+                                         { key: 'firebase_production', value: firebaseProductionData?.projectId || '' }
+                                       ]
+                                     }
                                   })
                                 }
                               );
@@ -3054,11 +3021,12 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
                                   setVmIp(ip);
                                   addStep4Log(`VM ready at ${ip}`);
                                 }
-                                vmCreated = true;
-                                setStep4Status('complete');
-                                setStep4Message('VM created successfully!');
-                                expandNextStep(7);
-                                break;
+                                 vmCreated = true;
+                                 setStep4Status('complete');
+                                 setStep4Message('VM created successfully!');
+                                 setShowRecreateOptions(false);
+                                 expandNextStep(7);
+                                 break;
                               } else {
                                 const err = await vmResponse.json();
                                 const errStr = JSON.stringify(err);
@@ -3226,7 +3194,7 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
                                   },
                                   body: JSON.stringify({
                                     name: instanceName,
-                                    machineType: `zones/${tryZone}/machineTypes/e2-micro`,
+                                    machineType: `zones/${tryZone}/machineTypes/${vmMachineType}`,
                                     disks: [{
                                       boot: true,
                                       autoDelete: true,
@@ -3239,16 +3207,17 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
                                       network: 'global/networks/default',
                                       accessConfigs: [{ type: 'ONE_TO_ONE_NAT' }],
                                     }],
-                                    metadata: {
-                                      items: [
-                                        { key: 'startup-script', value: startupScript },
-                                        { key: 'github_token', value: githubPat },
-                                        { key: 'discord_guild_id', value: discordGuildId || '' },
-                                        { key: 'github_owner', value: '' },
-                                        { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
-                                        { key: 'firebase_production', value: firebaseProductionData?.projectId || '' }
-                                      ]
-                                    }
+                                     metadata: {
+                                       items: [
+                                         { key: 'startup-script', value: startupScript },
+                                         { key: 'github_token', value: githubPat },
+                                         { key: 'discord_bot_token', value: discordBotToken || '' },
+                                         { key: 'discord_guild_id', value: discordGuildId || '' },
+                                         { key: 'github_owner', value: '' },
+                                         { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
+                                         { key: 'firebase_production', value: firebaseProductionData?.projectId || '' }
+                                       ]
+                                     }
                                   })
                                 }
                               );
@@ -3294,11 +3263,12 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
                                   setVmIp(ip);
                                   addStep4Log(`VM ready at ${ip}`);
                                 }
-                                vmCreated = true;
-                                setStep4Status('complete');
-                                setStep4Message('VM created successfully!');
-                                expandNextStep(7);
-                                break;
+                                 vmCreated = true;
+                                 setStep4Status('complete');
+                                 setStep4Message('VM created successfully!');
+                                 setShowRecreateOptions(false);
+                                 expandNextStep(7);
+                                 break;
                               } else {
                                 const err = await vmResponse.json();
                                 const errStr = JSON.stringify(err);
@@ -3349,86 +3319,6 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
                       </button>
                     </div>
                 </>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* Step 7: Invite Kimaki Bot */}
-        <div className="space-y-2">
-          {getStepHeader(7, "Step 7: Invite Kimaki Bot", <Bot className="text-blue-600" size={24} />, isStepCompleted(7), isStepActive(7), isStepLocked(7), "Click the install link to add Kimaki's bot to your Discord server. This is required for Kimaki to respond to messages.", false, () => editStep(7))}
-          
-          {expandedSteps.includes(7) && !isStepCompleted(6) && (
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
-              Complete Step 6 first to unlock this step.
-            </div>
-          )}
-
-          {expandedSteps.includes(7) && isStepCompleted(6) && (
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {kimakiBotInvited ? (
-                <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
-                  <Check size={20} />
-                  <span className="font-medium">Kimaki bot invited successfully!</span>
-                </div>
-              ) : kimakiInstallUrl ? (
-                <div className="space-y-4">
-                  <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
-                    <Check size={20} />
-                    <span className="font-medium">Kimaki is ready! Click below to invite the bot.</span>
-                  </div>
-                  
-                  <p className="text-gray-600">
-                    Click the button below to add Kimaki's bot to your Discord server. After adding the bot, 
-                    slash commands will become available in your server.
-                  </p>
-                  
-                  <a
-                    href={kimakiInstallUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-2 bg-purple-600 hover:bg-purple-700 text-white px-6 py-3 rounded-lg font-medium"
-                  >
-                    <Bot size={20} />
-                    Add Kimaki Bot to Discord
-                  </a>
-                  
-                  <div className="text-sm text-gray-500">
-                    <p>After clicking the link:</p>
-                    <ol className="list-decimal list-inside mt-2 space-y-1">
-                      <li>Select your Discord server</li>
-                      <li>Click "Authorize"</li>
-                      <li>Complete the captcha if prompted</li>
-                      <li>Type <code>/</code> in Discord to see available commands</li>
-                    </ol>
-                  </div>
-                  
-                  <button
-                    onClick={() => setKimakiBotInvited(true)}
-                    className="text-blue-600 hover:text-blue-700 text-sm underline"
-                  >
-                    I've added the bot - continue
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <p className="text-gray-600">
-                    After the VM is created, Kimaki will start and provide an install link. 
-                    Click the link below to add Kimaki's bot to your Discord server.
-                  </p>
-                  
-                  <div className="text-center py-8">
-                    <div className="animate-spin w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full mx-auto mb-4"></div>
-                    <p className="text-gray-600">Waiting for Kimaki to start on the VM...</p>
-                  </div>
-                  
-                  <button
-                    onClick={() => setKimakiBotInvited(true)}
-                    className="text-blue-600 hover:text-blue-700 text-sm underline"
-                  >
-                    I've added the bot - continue
-                  </button>
-                </div>
               )}
             </div>
           )}
