@@ -2662,23 +2662,37 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                     </div>
 
                     <div className="mb-4">
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Discord Bot Token:</label>
-                      <input
-                        type="password"
-                        value={discordBotTokenInput}
-                        onChange={(e) => {
-                          setDiscordBotTokenInput(e.target.value);
-                          setDiscordInviteUrl('');
-                        }}
-                        placeholder="MTE4MzEyODU2MTc0ODQxMDA5OH.GxXxXx.xxxxxxxx"
-                        className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
-                      />
-                      <p className="text-gray-500 text-xs mt-1">
-                        Your bot token from Discord Developer Portal → Bot → Reset Token
-                      </p>
-                    </div>
+                       <label className="block text-sm font-medium text-gray-700 mb-2">Discord Application Client ID:</label>
+                       <input
+                         type="text"
+                         value={discordClientId}
+                         onChange={(e) => setDiscordClientId(e.target.value)}
+                         placeholder="1183128561748410098"
+                         className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
+                       />
+                       <p className="text-gray-500 text-xs mt-1">
+                         Found in Discord Developer Portal → General Information → Application ID (copy and paste this value)
+                       </p>
+                     </div>
 
-                    {discordInviteUrl && (
+                     <div className="mb-4">
+                       <label className="block text-sm font-medium text-gray-700 mb-2">Discord Bot Token:</label>
+                       <input
+                         type="password"
+                         value={discordBotTokenInput}
+                         onChange={(e) => {
+                           setDiscordBotTokenInput(e.target.value);
+                           setDiscordInviteUrl('');
+                         }}
+                         placeholder="MTE4MzEyODU2MTc0ODQxMDA5OH.GxXxXx.xxxxxxxx"
+                         className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
+                       />
+                       <p className="text-gray-500 text-xs mt-1">
+                         Your bot token from Discord Developer Portal → Bot → Reset Token
+                       </p>
+                     </div>
+
+                     {discordInviteUrl && (
                       <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
                         <p className="text-green-800 text-sm mb-2 font-medium">✓ Invite URL generated!</p>
                         <a
