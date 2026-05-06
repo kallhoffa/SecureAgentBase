@@ -292,7 +292,9 @@ fi
 ` : '';
 
   return `#!/bin/bash
-set -euo pipefail
+# Allow unset variables (don't use -u) to prevent early exit
+# Continue on errors so kimaki systemd service gets created
+set +e
 export HOME=/root
 export DEBIAN_FRONTEND=noninteractive
 export USE_BUNDLE="${useBundle ? 'true' : 'false'}"
@@ -464,24 +466,7 @@ apt-get update -o Dpkg::Options::="--force-confdef" 2>/dev/null || true
 apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-confdef" expect 2>/dev/null || echo "WARNING: expect install failed"
 
 # Install and start Kimaki in Gateway mode
-echo "DEBUG: Setting up Kimaki in Gateway mode..."
-KIMAKI_STARTED=false
-KIMAKI_DIR=""
-
-# Check for bundled Kimaki
-if [ -d "/opt/kimaki" ]; then
-  echo "Kimaki found in bundle..."
-  
-  # Check actual structure
-  if [ -f "/opt/kimaki/bin.js" ]; then
-    KIMAKI_DIR="/opt/kimaki"
-  elif [ -f "/opt/kimaki/kimaki/bin.js" ]; then
-    KIMAKI_DIR="/opt/kimaki/kimaki"
-  else
-    echo "WARNING: Kimaki bin.js not found, checking contents..."
-    ls -la /opt/kimaki/ 2>/dev/null || true
-  fi
-  
+  echo "DEBUG: Setting up Kimaki in Gateway mode..."
   if [ -n "$KIMAKI_DIR" ] && [ -f "$KIMAKI_DIR/bin.js" ]; then
     chmod +x "$KIMAKI_DIR/bin.js" 2>/dev/null || true
     ln -sf "$KIMAKI_DIR/bin.js" /usr/local/bin/kimaki 2>/dev/null || true
@@ -493,7 +478,6 @@ if [ -d "/opt/kimaki" ]; then
       fi
     fi
   fi
-fi
 
 # Add bundled Node.js, Bun, and OpenCode to PATH
 if [ -d "/opt/nodejs" ]; then
@@ -522,21 +506,42 @@ if [ -d "/opt/opencode" ]; then
   fi
 fi
 
-# Determine how to run kimaki
+  # Determine how to run kimaki (use full paths for systemd)
 if [ -n "$KIMAKI_DIR" ] && [ -f "$KIMAKI_DIR/bin.js" ]; then
-  if command -v bun &> /dev/null; then
-    KIMAKI_CMD="bun $KIMAKI_DIR/bin.js"
+  if [ -f "/opt/bun/bun" ]; then
+    KIMAKI_CMD="/opt/bun/bun $KIMAKI_DIR/bin.js"
+  elif command -v bun &> /dev/null; then
+    KIMAKI_CMD="$(which bun) $KIMAKI_DIR/bin.js"
   else
     KIMAKI_CMD="node $KIMAKI_DIR/bin.js"
   fi
+elif [ -f "/opt/bun/bun" ]; then
+  KIMAKI_CMD="/opt/bun/bun x kimaki@latest"
 elif command -v bun &> /dev/null; then
-  KIMAKI_CMD="bun x kimaki@latest"
+  KIMAKI_CMD="$(which bun) x kimaki@latest"
 elif command -v npm &> /dev/null; then
   KIMAKI_CMD="npx -y kimaki@latest"
 else
   echo "WARNING: No way to run Kimaki found"
   KIMAKI_CMD=""
 fi
+
+  # Patch kimaki to disable background upgrade
+  if [ -n "$KIMAKI_DIR" ]; then
+    echo "Patching kimaki to disable background upgrade..."
+    find "$KIMAKI_DIR" -name "*.js" -type f 2>/dev/null | while read f; do
+      if grep -q "backgroundUpgradeKimaki" "$f" 2>/dev/null; then
+        # Comment out the upgrade logic - replace the function body
+        sed -i '/export async function backgroundUpgradeKimaki/,/^}/c\
+export async function backgroundUpgradeKimaki() {\
+  // Patched - auto-upgrade disabled\
+  return;\
+}' "$f" 2>/dev/null || true
+        echo "Patched $f"
+        break
+      fi
+    done
+  fi
 
 if [ -n "$KIMAKI_CMD" ]; then
   echo "DEBUG: Using Kimaki command: $KIMAKI_CMD"
@@ -576,30 +581,72 @@ if [ -n "$KIMAKI_CMD" ]; then
     nslookup discord.com 2>/dev/null || echo "DNS lookup failed"
   fi
   
-  # Start Kimaki
-  echo "Starting Kimaki..."
+  # Create systemd service for Kimaki to survive metadata script exit
+  echo "Creating kimaki systemd service..."
   
-  # Create log file
-  touch /var/log/kimaki.log
+  cat > /etc/systemd/system/kimaki.service << 'KIMAKI_EOF'
+[Unit]
+Description=Kimaki Discord Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root
+Environment="HOME=/root"
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/bun:/opt/nodejs/bin:/opt/opencode/.opencode/bin:/opt/kimaki"
+Environment="KIMAKI_BOT_TOKEN=__DISCORD_BOT_TOKEN__"
+Environment="DISCORD_GUILD_ID=__DISCORD_GUILD_ID__"
+Environment="GITHUB_TOKEN=__GITHUB_TOKEN__"
+Environment="GITHUB_OWNER=__GITHUB_OWNER__"
+Environment="FIREBASE_STAGING=__FIREBASE_STAGING__"
+Environment="FIREBASE_PRODUCTION=__FIREBASE_PRODUCTION__"
+# Disable opencode auto-update to prevent disconnection issues
+Environment="OPENCODE_DISABLE_AUTOUPDATE=1"
+ExecStart=__KIMAKI_CMD__
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+KIMAKI_EOF
+
+  # Replace placeholders with actual values
+  sed -i "s|__DISCORD_BOT_TOKEN__|$DISCORD_BOT_TOKEN|g" /etc/systemd/system/kimaki.service
+  sed -i "s|__DISCORD_GUILD_ID__|$DISCORD_GUILD_ID|g" /etc/systemd/system/kimaki.service
+  sed -i "s|__KIMAKI_CMD__|$KIMAKI_CMD|g" /etc/systemd/system/kimaki.service
+  sed -i "s|__GITHUB_TOKEN__|$GITHUB_TOKEN|g" /etc/systemd/system/kimaki.service
+  sed -i "s|__GITHUB_OWNER__|$GITHUB_OWNER|g" /etc/systemd/system/kimaki.service
+  sed -i "s|__FIREBASE_STAGING__|$FIREBASE_STAGING|g" /etc/systemd/system/kimaki.service
+  sed -i "s|__FIREBASE_PRODUCTION__|$FIREBASE_PRODUCTION|g" /etc/systemd/system/kimaki.service
   
-  # Run Kimaki in background
-  nohup $KIMAKI_CMD >> /var/log/kimaki.log 2>&1 &
-  KIMAKI_PID=$!
-  echo "Kimaki started with PID $KIMAKI_PID"
+  # Reload systemd and start service
+  systemctl daemon-reload
+  systemctl enable kimaki.service
+  systemctl start kimaki.service
   
-  # Save PID for later management
-  echo $KIMAKI_PID > /var/run/kimaki.pid
+  echo "Kimaki systemd service created and started"
+  sleep 3
+  systemctl status kimaki.service --no-pager || true
   
-  # Wait a bit and check if it's running
+  # Wait a bit and check if service is running
   sleep 5
-  if ps -p $KIMAKI_PID > /dev/null 2>&1; then
-    echo "DEBUG: Kimaki is running"
+  if systemctl is-active --quiet kimaki.service; then
+    echo "DEBUG: Kimaki service is running"
   else
-    echo "WARNING: Kimaki may have failed to start, check /var/log/kimaki.log"
+    echo "WARNING: Kimaki service may have failed to start, check logs"
     echo "DEBUG: Last few lines of log:"
+    journalctl -u kimaki.service --no-pager -n 20 2>/dev/null || echo "No journal logs yet"
     tail -10 /var/log/kimaki.log 2>/dev/null || echo "Log file not found"
   fi
 fi
+
+# NOTE: Project creation is now handled by the kimaki systemd service
+# The service will create the project when it starts
+echo "Skipping project creation - handled by kimaki systemd service"
 
 # Install bundled gh if available
 if [ -d "/opt/gh" ]; then
