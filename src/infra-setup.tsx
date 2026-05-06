@@ -643,7 +643,7 @@ Requires=kimaki.service
 [Service]
 Type=oneshot
 User=root
-WorkingDirectory=/root/.kimaki/projects/SecureAgentBase
+WorkingDirectory=/root/.kimaki/projects
 ExecStart=/bin/bash -c 'for i in $(seq 1 30); do systemctl is-active --quiet kimaki.service || exit 1; if kimaki project add /root/.kimaki/projects/SecureAgentBase; then echo "Project registered" >> /var/log/kimaki-register.log; exit 0; fi; echo "Attempt $i failed" >> /var/log/kimaki-register.log; sleep 10; done; echo "Registration failed after 30 attempts" >> /var/log/kimaki-register.log'
 Restart=on-failure
 RestartSec=30
