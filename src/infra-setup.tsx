@@ -603,10 +603,9 @@ Environment="GITHUB_OWNER=__GITHUB_OWNER__"
 Environment="FIREBASE_STAGING=__FIREBASE_STAGING__"
 Environment="FIREBASE_PRODUCTION=__FIREBASE_PRODUCTION__"
 # Disable opencode auto-update to prevent disconnection issues
-Environment="OPENCODE_DISABLE_AUTOUPDATE=1"
-ExecStart=__KIMAKI_CMD__
-ExecStartPost=/bin/bash /opt/register-project.sh
-Restart=always
+  Environment="OPENCODE_DISABLE_AUTOUPDATE=1"
+  ExecStart=__KIMAKI_CMD__
+  Restart=always
 RestartSec=10
 StandardOutput=journal
 StandardError=journal
@@ -632,6 +631,15 @@ KIMAKI_EOF
   echo "Kimaki systemd service created and started"
   sleep 3
   systemctl status kimaki.service --no-pager || true
+  
+  # Register the project (retry until success)
+  (for i in $(seq 1 30); do
+    sleep 10
+    systemctl is-active --quiet kimaki.service || break
+    cd /root/.kimaki/projects/SecureAgentBase && kimaki project add /root/.kimaki/projects/SecureAgentBase >> /var/log/kimaki-register.log 2>&1 && break
+    echo "Project registration attempt $i failed, retrying..." | tee -a /var/log/kimaki-register.log
+  done) &
+  echo "Project registration started in background"
   
   # Wait a bit and check if service is running
   sleep 5
