@@ -624,45 +624,6 @@ KIMAKI_EOF
   sed -i "s|__FIREBASE_STAGING__|$FIREBASE_STAGING|g" /etc/systemd/system/kimaki.service
   sed -i "s|__FIREBASE_PRODUCTION__|$FIREBASE_PRODUCTION|g" /etc/systemd/system/kimaki.service
   
-  # Create project registration script
-  cat > /opt/register-project.sh << 'REGISTER_EOF'
-#!/bin/bash
-# Wait for OpenCode server to be ready
-for i in $(seq 1 30); do
-  if nc -z 127.0.0.1 42437 2>/dev/null || curl -s http://127.0.0.1:42437 > /dev/null 2>&1; then
-    echo "OpenCode server is ready"
-    break
-  fi
-  echo "Waiting for OpenCode server... ($i/30)"
-  sleep 5
-done
-
-# Register the project with kimaki
-cd /opt/SecureAgentBase
-kimaki project add /opt/SecureAgentBase >> /var/log/kimaki-register.log 2>&1
-echo "Project registration complete"
-REGISTER_EOF
-  chmod +x /opt/register-project.sh
-
-  # Create OpenCode config with default model
-  mkdir -p /root/.config/opencode
-  cat > /root/.config/opencode/opencode.json << 'OPENCODE_EOF'
-{
-  "$schema": "https://opencode.ai/config.json",
-  "model": "opencode/big-pickle"
-}
-OPENCODE_EOF
-
-  # Also create project-level config
-  if [ -d "/opt/SecureAgentBase" ]; then
-    cat > /opt/SecureAgentBase/opencode.json << 'PROJ_OPENCODE_EOF'
-{
-  "$schema": "https://opencode.ai/config.json",
-  "model": "opencode/big-pickle"
-}
-PROJ_OPENCODE_EOF
-  fi
-
   # Reload systemd and start service
   systemctl daemon-reload
   systemctl enable kimaki.service
@@ -671,6 +632,15 @@ PROJ_OPENCODE_EOF
   echo "Kimaki systemd service created and started"
   sleep 3
   systemctl status kimaki.service --no-pager || true
+  
+  # Register the project (retry until success)
+  (for i in $(seq 1 30); do
+    sleep 10
+    systemctl is-active --quiet kimaki.service || break
+    cd /opt/SecureAgentBase && kimaki project add /opt/SecureAgentBase && break
+    echo "Project registration attempt $i failed, retrying..."
+  done) &
+  echo "Project registration scheduled"
   
   # Wait a bit and check if service is running
   sleep 5
