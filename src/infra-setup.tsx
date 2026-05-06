@@ -644,6 +644,25 @@ echo "Project registration complete"
 REGISTER_EOF
   chmod +x /opt/register-project.sh
 
+  # Create OpenCode config with default model
+  mkdir -p /root/.config/opencode
+  cat > /root/.config/opencode/opencode.json << 'OPENCODE_EOF'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "opencode/big-pickle"
+}
+OPENCODE_EOF
+
+  # Also create project-level config
+  if [ -d "/opt/SecureAgentBase" ]; then
+    cat > /opt/SecureAgentBase/opencode.json << 'PROJ_OPENCODE_EOF'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "opencode/big-pickle"
+}
+PROJ_OPENCODE_EOF
+  fi
+
   # Reload systemd and start service
   systemctl daemon-reload
   systemctl enable kimaki.service
