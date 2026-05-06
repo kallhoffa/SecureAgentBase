@@ -605,6 +605,7 @@ Environment="FIREBASE_PRODUCTION=__FIREBASE_PRODUCTION__"
 # Disable opencode auto-update to prevent disconnection issues
 Environment="OPENCODE_DISABLE_AUTOUPDATE=1"
 ExecStart=__KIMAKI_CMD__
+ExecStartPost=/bin/bash -c 'cd /opt/SecureAgentBase && for i in $(seq 1 30); do systemctl is-active --quiet kimaki.service && kimaki project add /opt/SecureAgentBase && break; sleep 5; done'
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -631,20 +632,6 @@ KIMAKI_EOF
   echo "Kimaki systemd service created and started"
   sleep 3
   systemctl status kimaki.service --no-pager || true
-
-  # Register the cloned repo as an OpenCode project
-  echo "Registering /opt/SecureAgentBase as OpenCode project..."
-  cd /opt/SecureAgentBase 2>/dev/null || true
-  if command -v opencode &> /dev/null; then
-    # Run opencode setup project non-interactively
-    opencode "setup project" --non-interactive 2>/dev/null || \
-    opencode "setup project" <<< "y" 2>/dev/null || \
-    echo "WARNING: Could not auto-register project with OpenCode"
-  fi
-
-  # Add project to Kimaki after a delay (kimaki needs to be fully started)
-  (sleep 30 && kimaki project add /opt/SecureAgentBase >> /var/log/kimaki-project-add.log 2>&1 || true) &
-  echo "Project registration scheduled"
   
   # Wait a bit and check if service is running
   sleep 5
