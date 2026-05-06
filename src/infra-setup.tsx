@@ -632,14 +632,29 @@ KIMAKI_EOF
   sleep 3
   systemctl status kimaki.service --no-pager || true
   
-  # Register the project (retry until success)
-  (for i in $(seq 1 30); do
-    sleep 10
-    systemctl is-active --quiet kimaki.service || break
-    cd /root/.kimaki/projects/SecureAgentBase && kimaki project add /root/.kimaki/projects/SecureAgentBase >> /var/log/kimaki-register.log 2>&1 && break
-    echo "Project registration attempt $i failed, retrying..." | tee -a /var/log/kimaki-register.log
-  done) &
-  echo "Project registration started in background"
+  # Create project registration service
+  cat > /etc/systemd/system/kimaki-register.service << 'REGISTER_EOF'
+[Unit]
+Description=Register SecureAgentBase with Kimaki
+After=kimaki.service
+Wants=kimaki.service
+Requires=kimaki.service
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/root/.kimaki/projects/SecureAgentBase
+ExecStart=/bin/bash -c 'for i in $(seq 1 30); do systemctl is-active --quiet kimaki.service || exit 1; if kimaki project add /root/.kimaki/projects/SecureAgentBase; then echo "Project registered" >> /var/log/kimaki-register.log; exit 0; fi; echo "Attempt $i failed" >> /var/log/kimaki-register.log; sleep 10; done; echo "Registration failed after 30 attempts" >> /var/log/kimaki-register.log'
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
+REGISTER_EOF
+  chmod +x /etc/systemd/system/kimaki-register.service
+  systemctl enable kimaki-register.service
+
+  # Reload systemd and start service
   
   # Wait a bit and check if service is running
   sleep 5
