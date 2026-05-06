@@ -605,7 +605,7 @@ Environment="FIREBASE_PRODUCTION=__FIREBASE_PRODUCTION__"
 # Disable opencode auto-update to prevent disconnection issues
 Environment="OPENCODE_DISABLE_AUTOUPDATE=1"
 ExecStart=__KIMAKI_CMD__
-ExecStartPost=/bin/bash -c 'cd /opt/SecureAgentBase && for i in $(seq 1 30); do systemctl is-active --quiet kimaki.service && kimaki project add /opt/SecureAgentBase && break; sleep 5; done'
+ExecStartPost=/bin/bash /opt/register-project.sh
 Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -624,6 +624,26 @@ KIMAKI_EOF
   sed -i "s|__FIREBASE_STAGING__|$FIREBASE_STAGING|g" /etc/systemd/system/kimaki.service
   sed -i "s|__FIREBASE_PRODUCTION__|$FIREBASE_PRODUCTION|g" /etc/systemd/system/kimaki.service
   
+  # Create project registration script
+  cat > /opt/register-project.sh << 'REGISTER_EOF'
+#!/bin/bash
+# Wait for OpenCode server to be ready
+for i in $(seq 1 30); do
+  if nc -z 127.0.0.1 42437 2>/dev/null || curl -s http://127.0.0.1:42437 > /dev/null 2>&1; then
+    echo "OpenCode server is ready"
+    break
+  fi
+  echo "Waiting for OpenCode server... ($i/30)"
+  sleep 5
+done
+
+# Register the project with kimaki
+cd /opt/SecureAgentBase
+kimaki project add /opt/SecureAgentBase >> /var/log/kimaki-register.log 2>&1
+echo "Project registration complete"
+REGISTER_EOF
+  chmod +x /opt/register-project.sh
+
   # Reload systemd and start service
   systemctl daemon-reload
   systemctl enable kimaki.service
