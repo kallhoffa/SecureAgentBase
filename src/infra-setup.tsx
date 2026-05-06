@@ -641,8 +641,8 @@ for i in $(seq 1 60); do
   systemctl is-active --quiet kimaki.service || exit 1
   
   # Try to register the project
-  cd /opt/SecureAgentBase
-  if kimaki project add /opt/SecureAgentBase 2>&1 | tee -a /var/log/kimaki-register.log; then
+  cd /root/.kimaki/projects/SecureAgentBase
+  if kimaki project add /root/.kimaki/projects/SecureAgentBase 2>&1 | tee -a /var/log/kimaki-register.log; then
     echo "Project registered successfully" | tee -a /var/log/kimaki-register.log
     exit 0
   fi
