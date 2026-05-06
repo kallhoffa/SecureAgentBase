@@ -633,29 +633,6 @@ KIMAKI_EOF
   sleep 3
   systemctl status kimaki.service --no-pager || true
   
-  # Register the project after OpenCode is ready (retry logic in script)
-  cat > /opt/register-project.sh << 'REGISTER_EOF'
-#!/bin/bash
-for i in $(seq 1 60); do
-  # Check if kimaki is still running
-  systemctl is-active --quiet kimaki.service || exit 1
-  
-  # Try to register the project
-  cd /root/.kimaki/projects/SecureAgentBase
-  if kimaki project add /root/.kimaki/projects/SecureAgentBase 2>&1 | tee -a /var/log/kimaki-register.log; then
-    echo "Project registered successfully" | tee -a /var/log/kimaki-register.log
-    exit 0
-  fi
-  
-  echo "Attempt $i failed, retrying in 10s..." | tee -a /var/log/kimaki-register.log
-  sleep 10
-done
-echo "Project registration failed after 60 attempts" | tee -a /var/log/kimaki-register.log
-REGISTER_EOF
-  chmod +x /opt/register-project.sh
-  (nohup /opt/register-project.sh > /dev/null 2>&1 &)
-  echo "Project registration started in background"
-  
   # Wait a bit and check if service is running
   sleep 5
   if systemctl is-active --quiet kimaki.service; then
