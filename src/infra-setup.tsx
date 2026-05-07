@@ -401,24 +401,59 @@ GH_USER=$(gh api user --jq .login)
 echo "Authenticated as: $GH_USER"
 echo "Expected owner: $GITHUB_OWNER"
 
-# Clone SecureAgentBase and set up upstream
-cd /opt
-if [ -d "SecureAgentBase" ] && [ -d "SecureAgentBase/.git" ]; then
-  # Already cloned, just cd into it
-  cd SecureAgentBase
-  echo "SecureAgentBase already exists, using existing repo"
-else
-  # Clean up any partial/incomplete directory first
-  rm -rf SecureAgentBase 2>/dev/null || true
-  echo "Cloning SecureAgentBase..."
-  git clone --depth 1 https://github.com/kallhoffa/SecureAgentBase.git || { echo "Clone failed!"; exit 1; }
-  cd SecureAgentBase
-  # Reinitialize git for fresh repo (single commit)
-  rm -rf .git
-  git init -b main
-  git add -A
-  git commit -m "Initial commit from SecureAgentBase"
-fi
+  # Clone SecureAgentBase into kimaki's expected project directory
+  mkdir -p /root/.kimaki/projects
+  cd /root/.kimaki/projects
+  
+  if [ -d "SecureAgentBase" ] && [ -d "SecureAgentBase/.git" ]; then
+    cd SecureAgentBase
+    echo "SecureAgentBase already exists in kimaki projects, using existing repo"
+  else
+    # Clean up any partial/incomplete directory first
+    rm -rf SecureAgentBase 2>/dev/null || true
+    
+    # Try to use bundled SecureAgentBase first (from /opt)
+    if [ -d "/opt/SecureAgentBase" ]; then
+      echo "Using bundled SecureAgentBase from /opt..."
+      cp -r /opt/SecureAgentBase SecureAgentBase
+      cd SecureAgentBase
+      # Reinitialize git for fresh repo (single commit)
+      rm -rf .git
+      git init -b main
+      git add -A
+      git commit -m "Initial commit from SecureAgentBase bundle"
+      echo "SecureAgentBase copied from bundle"
+    else
+      # Fall back to git clone
+      echo "Cloning SecureAgentBase into kimaki projects..."
+      git clone --depth 1 https://github.com/kallhoffa/SecureAgentBase.git || { echo "Clone failed!"; exit 1; }
+      cd SecureAgentBase
+      # Reinitialize git for fresh repo (single commit)
+      rm -rf .git
+      git init -b main
+      git add -A
+      git commit -m "Initial commit from SecureAgentBase"
+    fi
+  fi
+  
+  # Create OpenCode config for kimaki user
+  su - kimaki -c "mkdir -p ~/.config/opencode && \
+    cat > ~/.config/opencode/opencode.json << 'EOF'
+{
+  \"\$schema\": \"https://opencode.ai/config.json\",
+  \"model\": \"opencode/big-pickle\"
+}
+EOF"
+  
+  # Also create project-level config
+  su - kimaki -c "if [ -d ~/.kimaki/projects/SecureAgentBase ]; then
+    cat > ~/.kimaki/projects/SecureAgentBase/opencode.json << 'EOF'
+{
+  \"\$schema\": \"https://opencode.ai/config.json\",
+  \"model\": \"opencode/big-pickle\"
+}
+EOF"
+  fi"
 git remote add upstream https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
 
 # Remove upstream to avoid "multiple remotes" error with gh cli
@@ -464,6 +499,15 @@ git remote add upstream https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/
 echo "DEBUG: Installing expect for Kimaki automation..."
 apt-get update -o Dpkg::Options::="--force-confdef" 2>/dev/null || true
 apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-confdef" expect 2>/dev/null || echo "WARNING: expect install failed"
+
+# Set KIMAKI_DIR if not already set
+if [ -z "$KIMAKI_DIR" ] && [ -d "/opt/kimaki/kimaki" ]; then
+  KIMAKI_DIR="/opt/kimaki/kimaki"
+  echo "DEBUG: KIMAKI_DIR set to $KIMAKI_DIR"
+elif [ -z "$KIMAKI_DIR" ] && [ -d "/opt/kimaki" ]; then
+  KIMAKI_DIR="/opt/kimaki"
+  echo "DEBUG: KIMAKI_DIR set to $KIMAKI_DIR"
+fi
 
 # Install and start Kimaki in Gateway mode
   echo "DEBUG: Setting up Kimaki in Gateway mode..."
@@ -557,12 +601,12 @@ if [ -n "$KIMAKI_CMD" ]; then
   if echo "$TOKEN_TEST" | grep -q '"id"'; then
     echo "DEBUG: Token valid, bot info: $(echo "$TOKEN_TEST" | grep -o '"username"[^,]*' || echo 'unknown')"
     
-    # Check if bot is in any guild
-    GUILDS=$(curl -s -H "Authorization: Bot $KIMAKI_BOT_TOKEN" https://discord.com/api/v10/users/@me/guilds 2>/dev/null || echo "[]")
-    GUILD_COUNT=$(echo "$GUILDS" | grep -o '"id"' | wc -l 2>/dev/null || echo "0")
-    echo "DEBUG: Bot is in $GUILD_COUNT guild(s)"
-    
-    if [ "$GUILD_COUNT" -eq 0 ]; then
+  # Check if bot is in any guild
+  GUILDS=$(curl -s -H "Authorization: Bot $DISCORD_BOT_TOKEN" https://discord.com/api/v10/users/@me/guilds 2>/dev/null || echo "[]")
+  GUILD_COUNT=$(echo "$GUILDS" | grep -o '"id"' | wc -l 2>/dev/null || echo "0")
+  echo "DEBUG: Bot is in $GUILD_COUNT guild(s)"
+  
+  if [ "$GUILD_COUNT" -eq 0 ]; then
       echo "WARNING: Bot is not in any Discord server! Invite it first."
       echo "WARNING: Kimaki will fail to connect properly without a guild."
     fi
@@ -593,9 +637,9 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/root
+WorkingDirectory=/root/.kimaki/projects
 Environment="HOME=/root"
-Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/bun:/opt/nodejs/bin:/opt/opencode/.opencode/bin:/opt/kimaki"
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/bun:/opt/nodejs/bin:/opt/opencode/.opencode/bin:/root/.kimaki/kimaki"
 Environment="KIMAKI_BOT_TOKEN=__DISCORD_BOT_TOKEN__"
 Environment="DISCORD_GUILD_ID=__DISCORD_GUILD_ID__"
 Environment="GITHUB_TOKEN=__GITHUB_TOKEN__"
@@ -603,8 +647,8 @@ Environment="GITHUB_OWNER=__GITHUB_OWNER__"
 Environment="FIREBASE_STAGING=__FIREBASE_STAGING__"
 Environment="FIREBASE_PRODUCTION=__FIREBASE_PRODUCTION__"
 # Disable opencode auto-update to prevent disconnection issues
-  Environment="OPENCODE_DISABLE_AUTOUPDATE=1"
-  ExecStart=__KIMAKI_CMD__
+Environment="OPENCODE_DISABLE_AUTOUPDATE=1"
+ExecStart=__KIMAKI_CMD__
   Restart=always
 RestartSec=10
 StandardOutput=journal
@@ -632,27 +676,81 @@ KIMAKI_EOF
   sleep 3
   systemctl status kimaki.service --no-pager || true
   
-  # Create project registration service
-  cat > /etc/systemd/system/kimaki-register.service << 'REGISTER_EOF'
+# Create a separate script for project registration (more reliable than inline)
+cat > /usr/local/bin/kimaki-register.sh << 'REGISTER_SCRIPT'
+#!/bin/bash
+set +e
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/bun:/opt/nodejs/bin:/opt/opencode/.opencode/bin:/root/.kimaki/kimaki"
+export HOME=/root
+export OPENCODE_DISABLE_AUTOUPDATE=1
+
+# Wait for kimaki to be ready
+for i in $(seq 1 60); do
+  if systemctl is-active --quiet kimaki.service; then
+    echo "$(date): Kimaki is active, proceeding with registration..." >> /var/log/kimaki-register.log
+    break
+  fi
+  echo "$(date): Waiting for kimaki.service... attempt $i" >> /var/log/kimaki-register.log
+  sleep 5
+done
+
+# Determine KIMAKI_CMD
+if [ -f "/opt/kimaki/kimaki/bin.js" ]; then
+  if [ -f "/opt/bun/bun" ]; then
+    KIMAKI_CMD="/opt/bun/bun /opt/kimaki/kimaki/bin.js"
+  else
+    KIMAKI_CMD="node /opt/kimaki/kimaki/bin.js"
+  fi
+elif command -v kimaki &> /dev/null; then
+  KIMAKI_CMD="kimaki"
+else
+  KIMAKI_CMD="npx -y kimaki@latest"
+fi
+
+echo "$(date): Using KIMAKI_CMD: $KIMAKI_CMD" >> /var/log/kimaki-register.log
+
+# Check if project directory exists
+if [ ! -d "/root/.kimaki/projects/SecureAgentBase" ]; then
+  echo "$(date): ERROR: /root/.kimaki/projects/SecureAgentBase does not exist!" >> /var/log/kimaki-register.log
+  exit 1
+fi
+
+# Try to register the project
+for i in $(seq 1 30); do
+  echo "$(date): Attempting to register project (attempt $i)..." >> /var/log/kimaki-register.log
+  if $KIMAKI_CMD project add /root/.kimaki/projects/SecureAgentBase >> /var/log/kimaki-register.log 2>&1; then
+    echo "$(date): Project registered successfully!" >> /var/log/kimaki-register.log
+    exit 0
+  fi
+  echo "$(date): Attempt $i failed, retrying in 10s..." >> /var/log/kimaki-register.log
+  sleep 10
+done
+
+echo "$(date): Registration failed after 30 attempts" >> /var/log/kimaki-register.log
+exit 1
+REGISTER_SCRIPT
+
+chmod +x /usr/local/bin/kimaki-register.sh
+
+# Create project registration service
+cat > /etc/systemd/system/kimaki-register.service << 'REGISTER_EOF'
 [Unit]
 Description=Register SecureAgentBase with Kimaki
 After=kimaki.service
 Wants=kimaki.service
-Requires=kimaki.service
 
 [Service]
 Type=oneshot
 User=root
-WorkingDirectory=/root/.kimaki/projects
-ExecStart=/bin/bash -c 'for i in $(seq 1 30); do systemctl is-active --quiet kimaki.service || exit 1; if kimaki project add /root/.kimaki/projects/SecureAgentBase; then echo "Project registered" >> /var/log/kimaki-register.log; exit 0; fi; echo "Attempt $i failed" >> /var/log/kimaki-register.log; sleep 10; done; echo "Registration failed after 30 attempts" >> /var/log/kimaki-register.log'
-Restart=on-failure
-RestartSec=30
+ExecStart=/usr/local/bin/kimaki-register.sh
+RemainAfterExit=yes
 
 [Install]
 WantedBy=multi-user.target
 REGISTER_EOF
-  chmod +x /etc/systemd/system/kimaki-register.service
-  systemctl enable kimaki-register.service
+
+systemctl daemon-reload
+systemctl enable kimaki-register.service
 
   # Reload systemd and start service
   
