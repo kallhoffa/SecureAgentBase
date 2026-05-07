@@ -423,12 +423,15 @@ else
   # Clone with verbose output and retry
   for i in $(seq 1 3); do
     echo "Clone attempt $i..."
-    if git clone --depth 1 https://github.com/kallhoffa/SecureAgentBase.git 2>&1; then
+    git clone --depth 1 https://github.com/kallhoffa/SecureAgentBase.git SecureAgentBase 2>&1
+    CLONE_RESULT=$?
+    if [ $CLONE_RESULT -eq 0 ] && [ -d "SecureAgentBase/.git" ]; then
       echo "Clone succeeded!"
       CLONE_SUCCESS=true
       break
     else
-      echo "Clone attempt $i failed, waiting 5s..."
+      echo "Clone attempt $i failed (exit code: $CLONE_RESULT), waiting 5s..."
+      rm -rf SecureAgentBase 2>/dev/null || true
       sleep 5
     fi
   done
@@ -438,6 +441,8 @@ if [ "$CLONE_SUCCESS" != "true" ]; then
   echo "ERROR: Failed to clone SecureAgentBase after 3 attempts!"
   echo "DEBUG: Contents of /root/.kimaki/projects after failed clone:"
   ls -la /root/.kimaki/projects/
+  echo "DEBUG: Testing network to GitHub..."
+  curl -I https://github.com 2>&1 | head -5 || echo "Cannot reach GitHub"
   exit 1
 fi
 
