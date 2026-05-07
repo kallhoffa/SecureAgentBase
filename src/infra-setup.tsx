@@ -592,19 +592,27 @@ else
   KIMAKI_CMD=""
 fi
 
-  # Patch kimaki to disable background upgrade
+  # Patch kimaki to disable background upgrade - aggressive approach
   if [ -n "$KIMAKI_DIR" ]; then
     echo "Patching kimaki to disable background upgrade..."
+    # Find and patch all JS files that contain the upgrade function
     find "$KIMAKI_DIR" -name "*.js" -type f 2>/dev/null | while read f; do
       if grep -q "backgroundUpgradeKimaki" "$f" 2>/dev/null; then
-        # Comment out the upgrade logic - replace the function body
-        sed -i '/export async function backgroundUpgradeKimaki/,/^}/c\
-export async function backgroundUpgradeKimaki() {\
-  // Patched - auto-upgrade disabled\
-  return;\
-}' "$f" 2>/dev/null || true
+        # Replace the entire function with a no-op
+        sed -i 's/export async function backgroundUpgradeKimaki[^}]*}/export async function backgroundUpgradeKimaki() {\n  return;\n}/g' "$f" 2>/dev/null || true
+        # Also try patching the upgrade check
+        sed -i 's/await backgroundUpgradeKimaki();//g' "$f" 2>/dev/null || true
+        sed -i 's/backgroundUpgradeKimaki();//g' "$f" 2>/dev/null || true
         echo "Patched $f"
         break
+      fi
+    done
+    
+    # Also patch the opencode upgrade check if it exists
+    find "$KIMAKI_DIR" -name "*.js" -type f 2>/dev/null | while read f; do
+      if grep -q "autoUpdate\|auto-update\|upgrade" "$f" 2>/dev/null; then
+        sed -i 's/autoUpdate[^;]*/false/g' "$f" 2>/dev/null || true
+        sed -i 's/enableAutoUpdate[^;]*/false/g' "$f" 2>/dev/null || true
       fi
     done
   fi
