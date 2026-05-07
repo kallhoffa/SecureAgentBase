@@ -401,40 +401,57 @@ GH_USER=$(gh api user --jq .login)
 echo "Authenticated as: $GH_USER"
 echo "Expected owner: $GITHUB_OWNER"
 
-  # Clone SecureAgentBase into kimaki's expected project directory
-  mkdir -p /root/.kimaki/projects
-  cd /root/.kimaki/projects
+echo "DEBUG: Starting SecureAgentBase clone process..."
+# Clone SecureAgentBase into kimaki's expected project directory
+mkdir -p /root/.kimaki/projects
+cd /root/.kimaki/projects || { echo "ERROR: Cannot cd to /root/.kimaki/projects"; exit 1; }
+echo "DEBUG: Current directory: $(pwd)"
+echo "DEBUG: Directory contents before clone: $(ls -la)"
+echo "DEBUG: git version: $(git --version 2>&1)"
+echo "DEBUG: gh auth status: $(gh auth status 2>&1 | head -3)"
+
+CLONE_SUCCESS=false
+if [ -d "SecureAgentBase" ] && [ -d "SecureAgentBase/.git" ]; then
+  cd SecureAgentBase
+  echo "SecureAgentBase already exists in kimaki projects, using existing repo"
+  CLONE_SUCCESS=true
+else
+  # Clean up any partial/incomplete directory first
+  rm -rf SecureAgentBase 2>/dev/null || true
+  echo "Cloning SecureAgentBase into kimaki projects..."
   
-  if [ -d "SecureAgentBase" ] && [ -d "SecureAgentBase/.git" ]; then
-    cd SecureAgentBase
-    echo "SecureAgentBase already exists in kimaki projects, using existing repo"
-  else
-    # Clean up any partial/incomplete directory first
-    rm -rf SecureAgentBase 2>/dev/null || true
-    
-    # Try to use bundled SecureAgentBase first (from /opt)
-    if [ -d "/opt/SecureAgentBase" ]; then
-      echo "Using bundled SecureAgentBase from /opt..."
-      cp -r /opt/SecureAgentBase SecureAgentBase
-      cd SecureAgentBase
-      # Reinitialize git for fresh repo (single commit)
-      rm -rf .git
-      git init -b main
-      git add -A
-      git commit -m "Initial commit from SecureAgentBase bundle"
-      echo "SecureAgentBase copied from bundle"
+  # Clone with verbose output and retry
+  for i in $(seq 1 3); do
+    echo "Clone attempt $i..."
+    if git clone --depth 1 https://github.com/kallhoffa/SecureAgentBase.git 2>&1; then
+      echo "Clone succeeded!"
+      CLONE_SUCCESS=true
+      break
     else
-      # Fall back to git clone
-      echo "Cloning SecureAgentBase into kimaki projects..."
-      git clone --depth 1 https://github.com/kallhoffa/SecureAgentBase.git || { echo "Clone failed!"; exit 1; }
-      cd SecureAgentBase
-      # Reinitialize git for fresh repo (single commit)
-      rm -rf .git
-      git init -b main
-      git add -A
-      git commit -m "Initial commit from SecureAgentBase"
+      echo "Clone attempt $i failed, waiting 5s..."
+      sleep 5
     fi
-  fi
+  done
+fi
+
+if [ "$CLONE_SUCCESS" != "true" ]; then
+  echo "ERROR: Failed to clone SecureAgentBase after 3 attempts!"
+  echo "DEBUG: Contents of /root/.kimaki/projects after failed clone:"
+  ls -la /root/.kimaki/projects/
+  exit 1
+fi
+
+cd /root/.kimaki/projects/SecureAgentBase || { echo "ERROR: Cannot cd to SecureAgentBase"; exit 1; }
+echo "DEBUG: In SecureAgentBase directory: $(pwd)"
+
+# Reinitialize git for fresh repo (single commit) - only if we just cloned
+if [ ! -d ".git" ] || [ "$CLONE_SUCCESS" = "true" ]; then
+  echo "Reinitializing git repo..."
+  rm -rf .git
+  git init -b main
+  git add -A
+  git commit -m "Initial commit from SecureAgentBase"
+fi
   
   # Create OpenCode config for kimaki user
   su - kimaki -c "mkdir -p ~/.config/opencode && \
@@ -744,6 +761,8 @@ Type=oneshot
 User=root
 ExecStart=/usr/local/bin/kimaki-register.sh
 RemainAfterExit=yes
+# Don't fail if kimaki isn't running (for debugging)
+StartLimitIntervalSec=0
 
 [Install]
 WantedBy=multi-user.target
