@@ -458,24 +458,24 @@ if [ ! -d ".git" ] || [ "$CLONE_SUCCESS" = "true" ]; then
   git commit -m "Initial commit from SecureAgentBase"
 fi
   
-  # Create OpenCode config for kimaki user
-  su - kimaki -c "mkdir -p ~/.config/opencode && \
-    cat > ~/.config/opencode/opencode.json << 'EOF'
+  # Create OpenCode config for root (Kimaki runs as root)
+  mkdir -p /root/.config/opencode
+  cat > /root/.config/opencode/opencode.json << 'EOF'
 {
-  \"\$schema\": \"https://opencode.ai/config.json\",
-  \"model\": \"opencode/big-pickle\"
+  "$schema": "https://opencode.ai/config.json",
+  "model": "opencode/big-pickle"
 }
-EOF"
+EOF
   
   # Also create project-level config
-  su - kimaki -c "if [ -d ~/.kimaki/projects/SecureAgentBase ]; then
-    cat > ~/.kimaki/projects/SecureAgentBase/opencode.json << 'EOF'
+  if [ -d "/root/.kimaki/projects/SecureAgentBase" ]; then
+    cat > /root/.kimaki/projects/SecureAgentBase/opencode.json << 'EOF'
 {
-  \"\$schema\": \"https://opencode.ai/config.json\",
-  \"model\": \"opencode/big-pickle\"
+  "$schema": "https://opencode.ai/config.json",
+  "model": "opencode/big-pickle"
 }
-EOF"
-  fi"
+EOF
+  fi
 git remote add upstream https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
 
 # Remove upstream to avoid "multiple remotes" error with gh cli
@@ -626,7 +626,7 @@ if [ -n "$KIMAKI_CMD" ]; then
   # Check if bot is in any guild
   GUILDS=$(curl -s -H "Authorization: Bot $DISCORD_BOT_TOKEN" https://discord.com/api/v10/users/@me/guilds 2>/dev/null || echo "[]")
   GUILD_COUNT=$(echo "$GUILDS" | grep -o '"id"' | wc -l 2>/dev/null || echo "0")
-  echo "DEBUG: Bot is in $GUILD_COUNT guild(s)"
+  echo "DEBUG: Bot is in $GUILD_COUNT guilds"
   
   if [ "$GUILD_COUNT" -eq 0 ]; then
       echo "WARNING: Bot is not in any Discord server! Invite it first."
