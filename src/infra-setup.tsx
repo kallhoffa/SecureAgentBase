@@ -766,7 +766,6 @@ Type=oneshot
 User=root
 ExecStart=/usr/local/bin/kimaki-register.sh
 RemainAfterExit=yes
-# Don't fail if kimaki isn't running (for debugging)
 StartLimitIntervalSec=0
 
 [Install]
