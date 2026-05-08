@@ -592,20 +592,29 @@ else
   KIMAKI_CMD=""
 fi
 
-  # Patch kimaki to disable background upgrade - aggressive approach
-  if [ -n "$KIMAKI_DIR" ]; then
-    echo "Patching kimaki to disable background upgrade..."
-    # Find and patch all JS files that contain the upgrade function
-    find "$KIMAKI_DIR" -name "*.js" -type f 2>/dev/null | while read f; do
-      if grep -q "backgroundUpgradeKimaki" "$f" 2>/dev/null; then
-        # Replace the entire function with a no-op
-        sed -i 's/export async function backgroundUpgradeKimaki[^}]*}/export async function backgroundUpgradeKimaki() {\n  return;\n}/g' "$f" 2>/dev/null || true
-        # Also try patching the upgrade check
-        sed -i 's/await backgroundUpgradeKimaki();//g' "$f" 2>/dev/null || true
-        sed -i 's/backgroundUpgradeKimaki();//g' "$f" 2>/dev/null || true
-        echo "Patched $f"
-        break
-      fi
+  echo "Pinning kimaki to version 0.8.1 to prevent auto-upgrade..."
+  
+  # Remove any existing kimaki installation
+  rm -rf /opt/kimaki 2>/dev/null || true
+  
+  # Install specific version that doesn't auto-upgrade
+  if [ -f "/opt/bun/bun" ]; then
+    cd /opt
+    /opt/bun/bun x kimaki@0.8.1 --yes 2>&1
+    KIMAKI_DIR="/opt/kimaki"
+  elif command -v npm &> /dev/null; then
+    npm install -g kimaki@0.8.1 2>&1
+    KIMAKI_DIR="$(npm root -g)/kimaki"
+  fi
+  
+  if [ -d "$KIMAKI_DIR" ]; then
+    echo "Kimaki 0.8.1 installed at $KIMAKI_DIR"
+  else
+    echo "WARNING: Failed to install kimaki 0.8.1"
+  fi
+    
+    echo "Kimaki auto-upgrade disabled"
+  fi
     done
     
     # Also patch the opencode upgrade check if it exists
