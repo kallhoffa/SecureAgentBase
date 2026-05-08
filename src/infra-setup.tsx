@@ -766,15 +766,13 @@ chmod +x /usr/local/bin/kimaki-register.sh
 cat > /etc/systemd/system/kimaki-register.service << 'REGISTER_EOF'
 [Unit]
 Description=Register SecureAgentBase with Kimaki
-After=kimaki.service
-Wants=kimaki.service
+After=network-online.target
 
 [Service]
 Type=oneshot
 User=root
 ExecStart=/usr/local/bin/kimaki-register.sh
 RemainAfterExit=yes
-StartLimitIntervalSec=0
 
 [Install]
 WantedBy=multi-user.target
@@ -782,6 +780,7 @@ REGISTER_EOF
 
 systemctl daemon-reload
 systemctl enable kimaki-register.service
+systemctl start kimaki-register.service
 
   # Reload systemd and start service
   
