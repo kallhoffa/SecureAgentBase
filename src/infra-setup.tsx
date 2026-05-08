@@ -600,7 +600,7 @@ fi
   # Install specific version that doesn't auto-upgrade
   if [ -f "/opt/bun/bun" ]; then
     cd /opt
-    /opt/bun/bun x kimaki@0.8.1 --yes 2>&1
+    /opt/bun/bun install -g kimaki@0.8.1 2>&1
     KIMAKI_DIR="/opt/kimaki"
   elif command -v npm &> /dev/null; then
     npm install -g kimaki@0.8.1 2>&1
@@ -612,8 +612,6 @@ fi
   else
     echo "WARNING: Failed to install kimaki 0.8.1"
   fi
-    
-    echo "Kimaki auto-upgrade disabled"
   fi
     done
     
