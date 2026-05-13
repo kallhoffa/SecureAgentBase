@@ -586,42 +586,59 @@ elif [ -f "/opt/bun/bun" ]; then
 elif command -v bun &> /dev/null; then
   KIMAKI_CMD="$(which bun) x kimaki@latest"
 elif command -v npm &> /dev/null; then
-  KIMAKI_CMD="npx -y kimaki@latest"
+  KIMAKI_CMD="/opt/bun/bun /root/.bun/install/global/node_modules/kimaki/bin.js"
 else
   echo "WARNING: No way to run Kimaki found"
   KIMAKI_CMD=""
 fi
 
-  echo "Pinning kimaki to version 0.8.1 to prevent auto-upgrade..."
+  echo "Installing kimaki (auto-upgrade will be disabled below)..."
   
   # Remove any existing kimaki installation
   rm -rf /opt/kimaki 2>/dev/null || true
   
-  # Install specific version that doesn't auto-upgrade
+  # Install latest kimaki via bun (auto-upgrade is disabled via sed below)
+  BUN_GLOBAL_NM="/root/.bun/install/global/node_modules/kimaki"
   if [ -f "/opt/bun/bun" ]; then
-    cd /opt
-    /opt/bun/bun install -g kimaki@0.8.1 2>&1
-    KIMAKI_DIR="/opt/kimaki"
+    /opt/bun/bun install -g kimaki 2>&1
+    KIMAKI_DIR="$BUN_GLOBAL_NM"
+    if [ ! -d "$KIMAKI_DIR" ]; then
+      KIMAKI_DIR="$(/opt/bun/bun pm bin -g 2>/dev/null | sed 's|/bin$|/node_modules/kimaki|')"
+    fi
+    # Add bun global bin to PATH so subprocesses find kimaki
+    export PATH="$PATH:/root/.bun/bin"
   elif command -v npm &> /dev/null; then
-    npm install -g kimaki@0.8.1 2>&1
+    npm install -g kimaki 2>&1
     KIMAKI_DIR="$(npm root -g)/kimaki"
   fi
   
   if [ -d "$KIMAKI_DIR" ]; then
-    echo "Kimaki 0.8.1 installed at $KIMAKI_DIR"
+    echo "Kimaki installed at $KIMAKI_DIR (version: $(/opt/bun/bun "$KIMAKI_DIR/bin.js" --version 2>/dev/null || echo 'unknown'))"
   else
-    echo "WARNING: Failed to install kimaki 0.8.1"
+    echo "WARNING: Failed to install kimaki"
   fi
+  
+  # Disable kimaki's built-in background upgrade function
+  # Function defined in dist/upgrade.js, called in dist/cli-runner.js
+  # Strategy: keep upgrade.js intact (preserves all exports for imports), only comment out the call site
+  if [ -n "$KIMAKI_DIR" ] && [ -d "$KIMAKI_DIR" ]; then
+    echo "Patching kimaki auto-upgrade..."
+    # Comment out the call in cli-runner.js (pattern: void backgroundUpgradeKimaki)
+    if [ -f "$KIMAKI_DIR/dist/cli-runner.js" ]; then
+      sed -i 's/void backgroundUpgradeKimaki/\/\/ void backgroundUpgradeKimaki/g' "$KIMAKI_DIR/dist/cli-runner.js" 2>/dev/null || true
+    fi
   fi
-    done
-    
-    # Also patch the opencode upgrade check if it exists
-    find "$KIMAKI_DIR" -name "*.js" -type f 2>/dev/null | while read f; do
-      if grep -q "autoUpdate\|auto-update\|upgrade" "$f" 2>/dev/null; then
-        sed -i 's/autoUpdate[^;]*/false/g' "$f" 2>/dev/null || true
-        sed -i 's/enableAutoUpdate[^;]*/false/g' "$f" 2>/dev/null || true
-      fi
-    done
+
+  # Recalculate KIMAKI_CMD after pinning to 0.8.1 (KIMAKI_DIR changed)
+  if [ -n "$KIMAKI_DIR" ] && [ -f "$KIMAKI_DIR/bin.js" ]; then
+    if [ -f "/opt/bun/bun" ]; then
+      KIMAKI_CMD="/opt/bun/bun $KIMAKI_DIR/bin.js"
+    elif command -v bun &> /dev/null; then
+      KIMAKI_CMD="$(which bun) $KIMAKI_DIR/bin.js"
+    else
+      KIMAKI_CMD="node $KIMAKI_DIR/bin.js"
+    fi
+    echo "DEBUG: Recalculated KIMAKI_CMD after pin: $KIMAKI_CMD"
   fi
 
 if [ -n "$KIMAKI_CMD" ]; then
@@ -703,6 +720,8 @@ KIMAKI_EOF
   sed -i "s|__GITHUB_OWNER__|$GITHUB_OWNER|g" /etc/systemd/system/kimaki.service
   sed -i "s|__FIREBASE_STAGING__|$FIREBASE_STAGING|g" /etc/systemd/system/kimaki.service
   sed -i "s|__FIREBASE_PRODUCTION__|$FIREBASE_PRODUCTION|g" /etc/systemd/system/kimaki.service
+  # Remove DISCORD_GUILD_ID line if empty (empty string causes bot issues)
+  sed -i '/Environment="DISCORD_GUILD_ID="$/d' /etc/systemd/system/kimaki.service
   
   # Reload systemd and start service
   systemctl daemon-reload
@@ -717,7 +736,7 @@ KIMAKI_EOF
 cat > /usr/local/bin/kimaki-register.sh << 'REGISTER_SCRIPT'
 #!/bin/bash
 set +e
-export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/bun:/opt/nodejs/bin:/opt/opencode/.opencode/bin:/root/.kimaki/kimaki"
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/bun:/opt/nodejs/bin:/opt/opencode/.opencode/bin:/root/.kimaki/kimaki:/root/.bun/bin"
 export HOME=/root
 export OPENCODE_DISABLE_AUTOUPDATE=1
 
@@ -788,11 +807,23 @@ REGISTER_EOF
 systemctl daemon-reload
 systemctl enable kimaki-register.service
 systemctl start kimaki-register.service
-
-  # Reload systemd and start service
   
-  # Wait a bit and check if service is running
-  sleep 5
+  # Wait for project registration to finish, then restart kimaki
+  # so it reinitializes with any DB changes made by the register script
+  echo "Waiting for project registration to complete..."
+  for i in $(seq 1 24); do
+    if systemctl is-active --quiet kimaki-register.service; then
+      sleep 5  # still running, check again
+    else
+      echo "Registration finished, restarting kimaki..."
+      systemctl restart kimaki.service || true
+      sleep 3
+      break
+    fi
+    sleep 5
+  done
+  
+  # Check if service is running
   if systemctl is-active --quiet kimaki.service; then
     echo "DEBUG: Kimaki service is running"
   else
@@ -1006,6 +1037,76 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     setLoadingVmLogs(false);
   };
 
+  const deleteVm = async () => {
+    if (!serviceAccountJson || !projectId) {
+      setError('Service account and project ID required');
+      return;
+    }
+
+    setDeletingVm(true);
+    setError(null);
+    setStep4Message('Deleting VM...');
+    addStep4Log('Starting VM deletion process...');
+
+    try {
+      const token = await getServiceAccountToken();
+      if (!token) {
+        setError('Failed to authenticate with service account');
+        setDeletingVm(false);
+        return;
+      }
+      addStep4Log('Service account authenticated');
+
+      const instanceName = 'secureagent-manager';
+      const zones = [vmZone, 'us-central1-b', 'us-central1-c', 'us-west1-a', 'us-west1-b', 'us-east1-c', 'us-east1-d', 'europe-west1-d', 'asia-east1-a'];
+      let deleted = false;
+
+      for (const zone of zones) {
+        addStep4Log(`Checking for VM in ${zone}...`);
+        const checkResp = await fetch(
+          `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances/${instanceName}`,
+          { headers: { 'Authorization': `Bearer ${token}` } }
+        );
+
+        if (!checkResp.ok) continue;
+
+        addStep4Log(`Found VM in ${zone}, deleting...`);
+        const deleteResp = await fetch(
+          `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances/${instanceName}`,
+          {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` }
+          }
+        );
+
+        if (deleteResp.ok) {
+          addStep4Log(`VM deleted from ${zone}`);
+          deleted = true;
+          setVmIp('');
+          setStep4Status('idle');
+          setStep4Message('');
+          break;
+        } else {
+          const err = await deleteResp.json().catch(() => ({}));
+          addStep4Log(`Failed to delete in ${zone}: ${err.error?.message || 'Unknown error'}`);
+        }
+      }
+
+      if (deleted) {
+        addStep4Log('VM deleted successfully');
+        setStep4Status('idle');
+        setStep4Message('VM deleted');
+      } else {
+        addStep4Log('No VM found in any zone');
+        setStep4Message('No VM found to delete');
+      }
+    } catch (e) {
+      setError(`Failed to delete VM: ${e.message}`);
+      addStep4Log(`Error: ${e.message}`);
+    }
+    setDeletingVm(false);
+  };
+
   const importPrivateKey = async (pem) => {
     const pemHeader = '-----BEGIN PRIVATE KEY-----';
     const pemFooter = '-----END PRIVATE KEY-----';
@@ -1110,6 +1211,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
   const [creatingProject, setCreatingProject] = useState(false);
   const [enablingApis, setEnablingApis] = useState(false);
   const [creatingVm, setCreatingVm] = useState(false);
+  const [deletingVm, setDeletingVm] = useState(false);
 
   const fetchGcpProjects = async (token) => {
     setLoadingProjects(true);
@@ -2997,23 +3099,33 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                      )}
                    </div>
 
-                   <div className="flex items-center gap-4 flex-wrap">
-                     <label className="flex items-center gap-2 cursor-pointer">
-                       <input
-                         type="checkbox"
-                         checked={useOptimizedBundle}
-                         onChange={(e) => setUseOptimizedBundle(e.target.checked)}
-                         className="w-4 h-4 rounded border-gray-300"
-                       />
-                       <span className="text-sm text-gray-600">Optimized</span>
-                     </label>
-                      <button
-                        onClick={() => { setShowRecreateOptions(true); setStep4Status('idle'); setError(null); }}
-                        className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg"
-                      >
-                        Recreate VM
-                      </button>
-                   </div>
+                    <div className="flex items-center gap-4 flex-wrap">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={useOptimizedBundle}
+                          onChange={(e) => setUseOptimizedBundle(e.target.checked)}
+                          className="w-4 h-4 rounded border-gray-300"
+                        />
+                        <span className="text-sm text-gray-600">Optimized</span>
+                      </label>
+                       <button
+                         onClick={async () => {
+                           if (!confirm('Delete the VM? This will destroy it. A new one can be recreated.')) return;
+                           await deleteVm();
+                         }}
+                         disabled={deletingVm}
+                         className="bg-gray-700 hover:bg-gray-800 text-white px-4 py-2 rounded-lg disabled:opacity-50"
+                       >
+                         {deletingVm ? 'Deleting...' : 'Delete VM'}
+                       </button>
+                       <button
+                         onClick={() => { setShowRecreateOptions(true); setStep4Status('idle'); setError(null); }}
+                         className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
+                       >
+                         Recreate VM
+                       </button>
+                    </div>
                  </div>
                ) : (
                 <>
