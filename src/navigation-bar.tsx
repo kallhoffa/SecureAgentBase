@@ -30,6 +30,7 @@ const NavigationBar: React.FC<NavigationBarProps> = ({ navigate: navigationOverr
           <a href="/" className="flex items-center">
             <h1 className="text-2xl font-bold text-blue-900">
               SecureAgentBase
+              <span className="ml-2 text-xs font-medium text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">v0.1.0</span>
             </h1>
           </a>
 
