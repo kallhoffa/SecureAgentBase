@@ -934,6 +934,17 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
   const [step4Logs, setStep4Logs] = useState([]);
   const [step4Retrying, setStep4Retrying] = useState(false);
 
+  const [oidcSetupStatus, setOidcSetupStatus] = useState('idle');
+  const [oidcSetupMessage, setOidcSetupMessage] = useState('');
+  const [oidcSetupStep, setOidcSetupStep] = useState('');
+  const [gcpSaStagingEmail, setGcpSaStagingEmail] = useState('');
+  const [gcpSaProductionEmail, setGcpSaProductionEmail] = useState('');
+  const [gcpWifPoolName, setGcpWifPoolName] = useState('');
+  const [gcpWifProviderName, setGcpWifProviderName] = useState('');
+  const [githubVarUploading, setGithubVarUploading] = useState(false);
+  const [githubVarUploaded, setGithubVarUploaded] = useState(false);
+  const [githubRepoName, setGithubRepoName] = useState('');
+
   const addStep3Log = (message) => {
     const timestamp = new Date().toLocaleTimeString();
     setStep3Logs(prev => [...prev, { time: timestamp, message }]);
@@ -942,6 +953,336 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
   const addStep4Log = (message) => {
     const timestamp = new Date().toLocaleTimeString();
     setStep4Logs(prev => [...prev, { time: timestamp, message }]);
+  };
+
+  const addOidcLog = (message) => {
+    const timestamp = new Date().toLocaleTimeString();
+    console.log(`[OIDC] ${message}`);
+    setOidcSetupMessage(message);
+  };
+
+  const gcpApiFetch = async (url, token, opts?) => {
+    const options = opts || {};
+    const response = await fetch(url, {
+      method: (options as any).method || 'GET',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...((options as any).headers || {}) },
+      body: (options as any).body || undefined
+    });
+    if (!response.ok) {
+      const err = await response.text().catch(() => response.statusText);
+      throw new Error(`GCP API error (${response.status}): ${err}`);
+    }
+    return response.json();
+  };
+
+  const githubApiFetch = async (pat, path, opts?) => {
+    const options = opts || {};
+    const response = await fetch(`https://api.github.com${path}`, {
+      method: (options as any).method || 'GET',
+      headers: { 'Authorization': `Bearer ${pat}`, 'Accept': 'application/vnd.github.v3+json', 'Content-Type': 'application/json', ...((options as any).headers || {}) },
+      body: (options as any).body || undefined
+    });
+    if (!response.ok) {
+      const err = await response.text().catch(() => response.statusText);
+      throw new Error(`GitHub API error (${response.status}): ${err}`);
+    }
+    return response.json();
+  };
+
+  const createWorkloadIdentityPool = async (token, gcpProjectId, poolId) => {
+    addOidcLog('Creating workload identity pool...');
+    const pool = await gcpApiFetch(
+      `https://iam.googleapis.com/v1/projects/${gcpProjectId}/locations/global/workloadIdentityPools?workloadIdentityPoolId=${poolId}`,
+      token,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          displayName: 'Firebase Deploy Pool',
+          description: 'For GitHub Actions Firebase deployment via OIDC'
+        })
+      }
+    );
+    // If pool already exists, fetch it
+    if (pool.error?.message?.includes('already exists')) {
+      const existing = await gcpApiFetch(
+        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/locations/global/workloadIdentityPools/${poolId}`,
+        token
+      );
+      return existing.name;
+    }
+    return pool.name;
+  };
+
+  const createWorkloadIdentityProvider = async (token, gcpProjectId, poolId, providerId, repoFullName) => {
+    addOidcLog('Creating workload identity provider for GitHub...');
+    try {
+      const provider = await gcpApiFetch(
+        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/locations/global/workloadIdentityPools/${poolId}/providers?workloadIdentityPoolProviderId=${providerId}`,
+        token,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            displayName: 'GitHub Actions',
+            description: 'OIDC provider for GitHub Actions',
+            disabled: false,
+            attributeMapping: {
+              'google.subject': 'assertion.sub',
+              'attribute.actor': 'assertion.actor',
+              'attribute.repository': 'assertion.repository',
+              'attribute.ref': 'assertion.ref'
+            },
+            attributeCondition: `assertion.repository == '${repoFullName}'`,
+            oidc: {
+              issuerUri: 'https://token.actions.githubusercontent.com'
+            }
+          })
+        }
+      );
+      return provider.name;
+    } catch (e) {
+      // If already exists, fetch it
+      const existing = await gcpApiFetch(
+        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/locations/global/workloadIdentityPools/${poolId}/providers/${providerId}`,
+        token
+      );
+      return existing.name;
+    }
+  };
+
+  const createDeployServiceAccount = async (token, gcpProjectId, accountId, displayName) => {
+    addOidcLog(`Creating service account: ${displayName}...`);
+    try {
+      const sa = await gcpApiFetch(
+        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts?accountId=${accountId}`,
+        token,
+        {
+          method: 'POST',
+          body: JSON.stringify({ displayName })
+        }
+      );
+      return sa.email;
+    } catch (e) {
+      const existing = await gcpApiFetch(
+        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts/${accountId}@${gcpProjectId}.iam.gserviceaccount.com`,
+        token
+      );
+      return existing.email;
+    }
+  };
+
+  const grantFirebaseRoles = async (token, firebaseProjectId, saEmail) => {
+    addOidcLog(`Granting Firebase deploy roles to ${saEmail} on ${firebaseProjectId}...`);
+    try {
+      const policy = await gcpApiFetch(
+        `https://cloudresourcemanager.googleapis.com/v1/projects/${firebaseProjectId}:getIamPolicy`,
+        token,
+        { method: 'POST' }
+      );
+
+      const bindings = policy.bindings || [];
+      const existingStaging = bindings.find(b => b.role === 'roles/firebasehosting.admin');
+      const existingFirestore = bindings.find(b => b.role === 'roles/firestore.admin');
+
+      if (!existingStaging || !existingStaging.members.includes(`serviceAccount:${saEmail}`)) {
+        if (!existingStaging) {
+          bindings.push({ role: 'roles/firebasehosting.admin', members: [`serviceAccount:${saEmail}`] });
+        } else {
+          existingStaging.members.push(`serviceAccount:${saEmail}`);
+        }
+      }
+      if (!existingFirestore || !existingFirestore.members.includes(`serviceAccount:${saEmail}`)) {
+        if (!existingFirestore) {
+          bindings.push({ role: 'roles/firestore.admin', members: [`serviceAccount:${saEmail}`] });
+        } else {
+          existingFirestore.members.push(`serviceAccount:${saEmail}`);
+        }
+      }
+
+      await gcpApiFetch(
+        `https://cloudresourcemanager.googleapis.com/v1/projects/${firebaseProjectId}:setIamPolicy`,
+        token,
+        {
+          method: 'POST',
+          body: JSON.stringify({ policy: { bindings, etag: policy.etag } })
+        }
+      );
+    } catch (e) {
+      addOidcLog(`Warning: Could not grant Firebase roles on ${firebaseProjectId}: ${e.message}`);
+      throw e;
+    }
+  };
+
+  const grantPoolAccessToSA = async (token, gcpProjectId, saEmail, poolName) => {
+    addOidcLog(`Granting pool access to impersonate ${saEmail}...`);
+    const member = `principalSet://iam.googleapis.com/${poolName}/attribute.repository/${githubRepoName}`;
+    try {
+      const policy = await gcpApiFetch(
+        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts/${saEmail}:getIamPolicy`,
+        token,
+        { method: 'POST' }
+      );
+      const bindings = policy.bindings || [];
+      const existing = bindings.find(b => b.role === 'roles/iam.workloadIdentityUser');
+      if (!existing || !existing.members.includes(member)) {
+        if (!existing) {
+          bindings.push({ role: 'roles/iam.workloadIdentityUser', members: [member] });
+        } else {
+          existing.members.push(member);
+        }
+      }
+      await gcpApiFetch(
+        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts/${saEmail}:setIamPolicy`,
+        token,
+        {
+          method: 'POST',
+          body: JSON.stringify({ policy: { bindings, etag: policy.etag } })
+        }
+      );
+    } catch (e) {
+      // First-time policy fetch may return 404 if no policy exists
+      const defaultPolicy = {
+        bindings: [{
+          role: 'roles/iam.workloadIdentityUser',
+          members: [member]
+        }]
+      };
+      await gcpApiFetch(
+        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts/${saEmail}:setIamPolicy`,
+        token,
+        {
+          method: 'POST',
+          body: JSON.stringify({ policy: defaultPolicy })
+        }
+      );
+    }
+  };
+
+  const setGitHubVariable = async (pat, repoFull, name, value) => {
+    // Try to create, fall back to update
+    try {
+      await githubApiFetch(pat, `/repos/${repoFull}/actions/variables`, {
+        method: 'POST',
+        body: JSON.stringify({ name, value })
+      });
+    } catch {
+      await githubApiFetch(pat, `/repos/${repoFull}/actions/variables/${name}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ name, value })
+      });
+    }
+  };
+
+  const setupOidcInfrastructure = async () => {
+    if (!githubPat || !githubRepoName) return;
+    setOidcSetupStatus('creating');
+    setOidcSetupStep('Starting OIDC setup...');
+    
+    try {
+      const token = await getAccessToken();
+      if (!token) {
+        setError('Need GCP access token. Please reconnect your Google account or re-upload service account key.');
+        setOidcSetupStatus('error');
+        return;
+      }
+
+      const gcpProject = projectId;
+      const poolId = 'firebase-deploy-pool';
+      const providerId = 'github-provider';
+
+      // Create workload identity pool
+      setOidcSetupStep('Creating workload identity pool...');
+      const poolName = await createWorkloadIdentityPool(token, gcpProject, poolId);
+      setGcpWifPoolName(poolName);
+
+      // Create workload identity provider
+      setOidcSetupStep('Creating GitHub OIDC provider...');
+      const providerName = await createWorkloadIdentityProvider(token, gcpProject, poolId, providerId, githubRepoName);
+      setGcpWifProviderName(providerName);
+
+      // Create staging deploy SA (if we have staging firebase project)
+      const stagingProjectId = firebaseStagingData?.projectId;
+      const prodProjectId = firebaseProductionData?.projectId;
+
+      if (stagingProjectId) {
+        setOidcSetupStep('Creating staging deploy service account...');
+        const stagingSaEmail = await createDeployServiceAccount(token, gcpProject, 'firebase-deploy-staging', 'Firebase Staging Deployer');
+        setGcpSaStagingEmail(stagingSaEmail);
+        
+        setOidcSetupStep('Granting Firebase roles for staging...');
+        await grantFirebaseRoles(token, stagingProjectId, stagingSaEmail);
+        
+        setOidcSetupStep('Granting pool access to staging SA...');
+        await grantPoolAccessToSA(token, gcpProject, stagingSaEmail, poolName);
+      }
+
+      if (prodProjectId) {
+        setOidcSetupStep('Creating production deploy service account...');
+        const prodSaEmail = await createDeployServiceAccount(token, gcpProject, 'firebase-deploy-prod', 'Firebase Production Deployer');
+        setGcpSaProductionEmail(prodSaEmail);
+        
+        setOidcSetupStep('Granting Firebase roles for production...');
+        await grantFirebaseRoles(token, prodProjectId, prodSaEmail);
+        
+        setOidcSetupStep('Granting pool access to production SA...');
+        await grantPoolAccessToSA(token, gcpProject, prodSaEmail, poolName);
+      }
+
+      setOidcSetupStatus('done');
+      setOidcSetupStep('OIDC infrastructure ready');
+    } catch (err) {
+      console.error('OIDC setup failed:', err);
+      setOidcSetupStatus('error');
+      setOidcSetupStep(`Failed: ${err.message}`);
+      setError('OIDC setup failed: ' + err.message);
+    }
+  };
+
+  const uploadGitHubVars = async () => {
+    if (!githubPat || !githubRepoName) return;
+    setGithubVarUploading(true);
+    
+    try {
+      // Upload Firebase config as GitHub variables (API keys are client-side, not truly secret)
+      const firebaseStaging = firebaseStagingData as any;
+      const firebaseProd = firebaseProductionData as any;
+      if (firebaseStaging) {
+        await setGitHubVariable(githubPat, githubRepoName, 'FIREBASE_API_KEY_STAGING', firebaseStaging.apiKey || '');
+        await setGitHubVariable(githubPat, githubRepoName, 'FIREBASE_AUTH_DOMAIN_STAGING', firebaseStaging.authDomain || '');
+        await setGitHubVariable(githubPat, githubRepoName, 'FIREBASE_PROJECT_ID_STAGING', firebaseStaging.projectId || '');
+        await setGitHubVariable(githubPat, githubRepoName, 'FIREBASE_STORAGE_BUCKET_STAGING', firebaseStaging.storageBucket || '');
+        await setGitHubVariable(githubPat, githubRepoName, 'FIREBASE_MESSAGING_SENDER_ID_STAGING', firebaseStaging.messagingSenderId || '');
+        await setGitHubVariable(githubPat, githubRepoName, 'FIREBASE_APP_ID_STAGING', firebaseStaging.appId || '');
+        await setGitHubVariable(githubPat, githubRepoName, 'FIREBASE_MEASUREMENT_ID_STAGING', firebaseStaging.measurementId || '');
+      }
+
+      if (firebaseProd) {
+        await setGitHubVariable(githubPat, githubRepoName, 'FIREBASE_API_KEY_PRODUCTION', firebaseProd.apiKey || '');
+        await setGitHubVariable(githubPat, githubRepoName, 'FIREBASE_AUTH_DOMAIN_PRODUCTION', firebaseProd.authDomain || '');
+        await setGitHubVariable(githubPat, githubRepoName, 'FIREBASE_PROJECT_ID_PRODUCTION', firebaseProd.projectId || '');
+        await setGitHubVariable(githubPat, githubRepoName, 'FIREBASE_STORAGE_BUCKET_PRODUCTION', firebaseProd.storageBucket || '');
+        await setGitHubVariable(githubPat, githubRepoName, 'FIREBASE_MESSAGING_SENDER_ID_PRODUCTION', firebaseProd.messagingSenderId || '');
+        await setGitHubVariable(githubPat, githubRepoName, 'FIREBASE_APP_ID_PRODUCTION', firebaseProd.appId || '');
+        await setGitHubVariable(githubPat, githubRepoName, 'FIREBASE_MEASUREMENT_ID_PRODUCTION', firebaseProd.measurementId || '');
+      }
+
+      // Upload OIDC variables
+      if (gcpWifProviderName) {
+        await setGitHubVariable(githubPat, githubRepoName, 'GCP_WIF_PROVIDER', gcpWifProviderName);
+      }
+      if (gcpSaStagingEmail) {
+        await setGitHubVariable(githubPat, githubRepoName, 'GCP_SA_STAGING', gcpSaStagingEmail);
+      }
+      if (gcpSaProductionEmail) {
+        await setGitHubVariable(githubPat, githubRepoName, 'GCP_SA_PRODUCTION', gcpSaProductionEmail);
+      }
+
+      setGithubVarUploaded(true);
+    } catch (err) {
+      console.error('Failed to upload GitHub vars:', err);
+      setError('Failed to upload GitHub variables: ' + err.message);
+    } finally {
+      setGithubVarUploading(false);
+    }
   };
 
   const getServiceAccountToken = async () => {
@@ -2917,18 +3258,64 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                     onClick={async () => {
                       setError(null);
                       if (githubPat.trim() && githubPat.startsWith('ghp_')) {
-                        if (!expandedSteps.includes(6)) {
-                          setExpandedSteps(prev => [...prev, 6]);
+                        try {
+                          // Determine repo owner from PAT
+                          const userData = await githubApiFetch(githubPat, '/user');
+                          const owner = userData.login;
+                          const repoName = `${owner}/SecureAgentBase`;
+                          setGithubRepoName(repoName);
+
+                          // Set up OIDC infrastructure (WIF pool, provider, SAs)
+                          await setupOidcInfrastructure();
+
+                          // Upload all GitHub variables and secrets
+                          await uploadGitHubVars();
+
+                          if (!expandedSteps.includes(6)) {
+                            setExpandedSteps(prev => [...prev, 6]);
+                          }
+                        } catch (err) {
+                          setError('GitHub setup failed: ' + err.message);
                         }
                       } else {
                         setError('Please enter a valid GitHub PAT (starts with ghp_)');
                       }
                     }}
-                    disabled={!githubPat.trim()}
+                    disabled={!githubPat.trim() || githubVarUploading}
                     className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg"
                   >
-                    Save GitHub PAT
+                    {githubVarUploading ? 'Setting up OIDC...' : 'Save & Setup OIDC Deployment'}
                   </button>
+                  
+                  {oidcSetupStatus === 'creating' && (
+                    <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                      <div className="flex items-center gap-2 text-blue-700">
+                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                        <span className="text-sm font-medium">{oidcSetupStep}</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {oidcSetupStatus === 'done' && githubVarUploaded && (
+                    <div className="mt-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+                      <div className="flex items-center gap-2 text-green-700">
+                        <Check size={18} />
+                        <span className="text-sm font-medium">
+                          OIDC configured & GitHub variables uploaded. Repo: {githubRepoName}
+                        </span>
+                      </div>
+                      <p className="text-green-600 text-xs mt-1">
+                        Staging SA: {gcpSaStagingEmail} | Prod SA: {gcpSaProductionEmail}
+                      </p>
+                    </div>
+                  )}
+
+                  {oidcSetupStatus === 'error' && (
+                    <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2">
+                      <AlertTriangle className="text-red-500" size={18} />
+                      <span className="text-red-700 text-sm">{oidcSetupStep}</span>
+                    </div>
+                  )}
                 </>
               )}
             </div>
