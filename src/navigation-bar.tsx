@@ -1,8 +1,11 @@
-import { LogOut, User } from 'lucide-react';
+import { LogOut, User, CheckSquare } from 'lucide-react';
 import { useNavigate, NavigateFunction } from 'react-router-dom';
 import { useAuth } from './firestore-utils/auth-context';
 import { useNotification } from './firestore-utils/notification-context';
 import { Firestore } from 'firebase/firestore';
+
+const isAppMode = import.meta.env.VITE_APP_MODE === 'true';
+const appName = import.meta.env.VITE_APP_NAME || (isAppMode ? 'SecureAgentBase' : 'Your App');
 
 interface NavigationBarProps {
   navigate?: NavigateFunction;
@@ -29,15 +32,24 @@ const NavigationBar: React.FC<NavigationBarProps> = ({ navigate: navigationOverr
         <div className="flex items-center justify-between h-16">
           <a href="/" className="flex items-center">
             <h1 className="text-2xl font-bold text-blue-900">
-              SecureAgentBase
-              <span className="ml-2 text-xs font-medium text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">v0.1.0</span>
+              {appName}
+              {isAppMode && (
+                <span className="ml-2 text-xs font-medium text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">v0.1.0</span>
+              )}
             </h1>
           </a>
 
           <div className="flex items-center space-x-4">
-            <a href="/infra-setup" className="text-gray-600 hover:text-blue-600 text-sm font-medium">
-              Deploy
-            </a>
+            {isAppMode ? (
+              <a href="/infra-setup" className="text-gray-600 hover:text-blue-600 text-sm font-medium">
+                Deploy
+              </a>
+            ) : user && (
+              <a href="/tasks" className="text-gray-600 hover:text-blue-600 text-sm font-medium flex items-center gap-1">
+                <CheckSquare size={16} />
+                Tasks
+              </a>
+            )}
             <a href="/about" className="text-gray-600 hover:text-blue-600 text-sm font-medium">
               About
             </a>

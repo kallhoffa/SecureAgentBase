@@ -15,8 +15,11 @@ import Profile from './profile';
 import InfraSetup from './infra-setup';
 import CreateApp from './create-app';
 import GitHubCallback from './github-callback';
+import { Dashboard, Tasks } from './template';
 import { NotificationProvider } from './firestore-utils/notification-context';
 import { RequireAuth, RedirectIfAuthed } from './components/ProtectedRoute';
+
+const isAppMode = import.meta.env.VITE_APP_MODE === 'true';
 
 interface RootLayoutProps {
   db: Firestore;
@@ -45,7 +48,10 @@ const HomePage: React.FC = () => {
     );
   }
   
-  return <LandingPage />;
+  if (isAppMode) {
+    return <LandingPage />;
+  }
+  return <Dashboard />;
 };
 
 interface AppProps {
@@ -67,10 +73,17 @@ const App: React.FC<AppProps> = ({ db }) => {
             <Route path="/login" element={<RedirectIfAuthed><Login /></RedirectIfAuthed>} />
             <Route path="/signup" element={<RedirectIfAuthed><Signup /></RedirectIfAuthed>} />
             <Route path="/profile" element={<RequireAuth><Profile db={db} /></RequireAuth>} />
-            <Route path="/infra-setup" element={<RequireAuth><InfraSetup db={db} /></RequireAuth>} />
-            <Route path="/create-app" element={<RequireAuth><CreateApp db={db} /></RequireAuth>} />
+            {isAppMode && (
+              <Route path="/infra-setup" element={<RequireAuth><InfraSetup db={db} /></RequireAuth>} />
+            )}
+            {isAppMode && (
+              <Route path="/create-app" element={<RequireAuth><CreateApp db={db} /></RequireAuth>} />
+            )}
+            <Route path="/tasks" element={<RequireAuth><Tasks db={db} /></RequireAuth>} />
           </Route>
-          <Route path="/github-callback" element={<GitHubCallback db={db} />} />
+          {isAppMode && (
+            <Route path="/github-callback" element={<GitHubCallback db={db} />} />
+          )}
         </Routes>
       </BrowserRouter>
     </NotificationProvider>

@@ -41,6 +41,8 @@ jobs:
           VITE_FIREBASE_APP_ID: ${{ secrets.FIREBASE_APP_ID_STAGING }}
           VITE_FIREBASE_MEASUREMENT_ID: ${{ vars.FIREBASE_MEASUREMENT_ID_STAGING }}
           VITE_APP_VERSION: ${{ github.sha }}
+          VITE_APP_MODE: ${{ vars.VITE_APP_MODE }}
+          VITE_APP_NAME: ${{ vars.VITE_APP_NAME }}
 
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium

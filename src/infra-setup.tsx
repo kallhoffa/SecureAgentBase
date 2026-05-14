@@ -4,6 +4,14 @@ import { useNavigate } from 'react-router-dom';
 import { useNotification } from './firestore-utils/notification-context';
 import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, query, where, serverTimestamp, Firestore } from 'firebase/firestore';
 import { Check, Copy, Upload, AlertTriangle, Trash2, ExternalLink, Shield, Server, Bot } from 'lucide-react';
+import { encryptData, decryptData } from './framework/infra-setup/crypto';
+import { CloudShellScript, getStartupScript } from './framework/infra-setup/scripts';
+import {
+  gcpApiFetch, githubApiFetch, setGitHubVariable, getServiceAccountToken,
+  createWorkloadIdentityPool, createWorkloadIdentityProvider,
+  createDeployServiceAccount, grantFirebaseRoles, grantPoolAccessToSA
+} from './framework/infra-setup/api';
+import { StepHeader, Step1, Step2, Step3, Step4, Step5, Step6, Step7 } from './framework/infra-setup/steps';
 
 interface Window {
   google?: {
@@ -27,131 +35,9 @@ const INFRA_COLLECTION = 'infra_configs';
 const PROJECTS_COLLECTION = 'projects';
 const LOCALSTORAGE_KEY = 'infra_config_pending';
 const FORM_PROGRESS_KEY = 'infra_form_progress';
-const GCS_BUNDLE_URL = 'https://storage.googleapis.com/secureagent-base-bundles/debian-packages.tar.gz';
-const GCS_SIGNATURE_URL = 'https://storage.googleapis.com/secureagent-base-bundles/debian-packages.tar.gz.asc';
-const BUNDLE_SIGNER_KEY = `-----BEGIN PGP PUBLIC KEY BLOCK-----
 
-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
-rjHERDArJhbYcoArPoa/3mGjFuee
-=nNe/
------END PGP PUBLIC KEY BLOCK-----`;
 
-const generateKey = async (passphrase, salt) => {
-  const encoder = new TextEncoder();
-  const keyMaterial = await crypto.subtle.importKey(
-    'raw',
-    encoder.encode(passphrase),
-    'PBKDF2',
-    false,
-    ['deriveKey']
-  );
-  return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt, iterations: 100000, hash: 'SHA-256' },
-    keyMaterial,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt']
-  );
-};
 
-const encryptData = async (data, passphrase) => {
-  if (!passphrase) return JSON.stringify(data);
-  const encoder = new TextEncoder();
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const key = await generateKey(passphrase, salt);
-  const encrypted = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv },
-    key,
-    encoder.encode(JSON.stringify(data))
-  );
-  const result = {
-    salt: btoa(String.fromCharCode(...salt)),
-    iv: btoa(String.fromCharCode(...iv)),
-    data: btoa(String.fromCharCode(...new Uint8Array(encrypted)))
-  };
-  return JSON.stringify(result);
-};
-
-const decryptData = async (encryptedStr, passphrase) => {
-  if (!passphrase) return JSON.parse(encryptedStr);
-  try {
-    const { salt, iv, data } = JSON.parse(encryptedStr);
-    const encoder = new TextEncoder();
-    const decoder = new TextDecoder();
-    const saltArray = new Uint8Array(atob(salt).split('').map(c => c.charCodeAt(0)));
-    const ivArray = new Uint8Array(atob(iv).split('').map(c => c.charCodeAt(0)));
-    const dataArray = new Uint8Array(atob(data).split('').map(c => c.charCodeAt(0)));
-    const key = await generateKey(passphrase, saltArray);
-    const decrypted = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: ivArray },
-      key,
-      dataArray
-    );
-    return JSON.parse(decoder.decode(decrypted));
-  } catch (e) {
-    console.error('Decryption failed:', e);
-    throw new Error('Invalid passphrase or corrupted data');
-  }
-};
 
 const saveFormProgress = (data) => {
   try {
@@ -193,47 +79,6 @@ const deleteProjectFromFirestore = async (projectId, firestoreDb) => {
   await deleteDoc(doc(firestoreDb, PROJECTS_COLLECTION, projectId));
 };
 
-const CloudShellScript = ({ projectId }) => `# SecureAgent-Manager Service Account Setup
-# Run this in Google Cloud Shell (https://shell.cloud.google.com)
-
-PROJECT_ID="${projectId || 'YOUR_PROJECT_ID'}"
-
-echo "Creating SecureAgent-Manager service account..."
-
-# Create the service account
-gcloud iam service-accounts create secureagent-manager \\
-  --display-name="SecureAgent Manager" \\
-  --project=$PROJECT_ID
-
-# Grant required roles
-gcloud projects add-iam-policy-binding $PROJECT_ID \\
-  --member="serviceAccount:secureagent-manager@$PROJECT_ID.iam.gserviceaccount.com" \\
-  --role="roles/compute.admin"
-
-gcloud projects add-iam-policy-binding $PROJECT_ID \\
-  --member="serviceAccount:secureagent-manager@$PROJECT_ID.iam.gserviceaccount.com" \\
-  --role="roles/iam.serviceAccountUser"
-
-gcloud projects add-iam-policy-binding $PROJECT_ID \\
-  --member="serviceAccount:secureagent-manager@$PROJECT_ID.iam.gserviceaccount.com" \\
-  --role="roles/billing.projectManager"
-
-gcloud projects add-iam-policy-binding $PROJECT_ID \\
-  --member="serviceAccount:secureagent-manager@$PROJECT_ID.iam.gserviceaccount.com" \\
-  --role="roles/serviceusage.serviceUsageAdmin"
-
-gcloud projects add-iam-policy-binding $PROJECT_ID \\
-  --member="serviceAccount:secureagent-manager@$PROJECT_ID.iam.gserviceaccount.com" \\
-  --role="roles/secretmanager.secretAccessor"
-
-# Generate and download key
-gcloud iam service-accounts keys create ~/secureagent-manager-key.json \\
-  --iam-account="secureagent-manager@$PROJECT_ID.iam.gserviceaccount.com"
-
-echo "✅ Service account created!"
-echo "📁 Key file: ~/secureagent-manager-key.json"
-echo "⚠️  Upload this key in the SecureAgentBase portal to continue setup."
-`;
 
 const saveToLocalStorage = (data) => {
   try {
@@ -243,610 +88,6 @@ const saveToLocalStorage = (data) => {
   }
 };
 
-const getStartupScript = (useBundle = false) => {
-  const bundleSection = useBundle ? `
-# Try to download pre-bundled packages from GCS for faster setup
-if [ "$USE_BUNDLE" = "true" ]; then
-  echo "Downloading pre-bundled packages from GCS..."
-  if curl -sf --connect-timeout 15 "${GCS_BUNDLE_URL}" -o /tmp/packages.tar.gz 2>/dev/null && \\
-     curl -sf --connect-timeout 15 "${GCS_SIGNATURE_URL}" -o /tmp/packages.tar.gz.asc 2>/dev/null; then
-    echo "Bundle downloaded, verifying signature..."
-    
-    # Import trusted GPG key
-    GNUPGHOME=/tmp/gpghome
-    mkdir -p $GNUPGHOME
-    chmod 700 $GNUPGHOME
-    echo '${BUNDLE_SIGNER_KEY}' | gpg --import --no-tty 2>/dev/null || true
-    
-    # Verify signature
-    if gpg --batch --verify /tmp/packages.tar.gz.asc /tmp/packages.tar.gz 2>/dev/null; then
-      echo "Bundle signature verified!"
-      tar -xzf /tmp/packages.tar.gz -C /opt/ 2>/dev/null || true
-      
-      # Install .deb packages if present
-      if [ -d /opt/packages ]; then
-        echo "Installing from verified bundle..."
-        cd /opt/packages
-        dpkg -i *.deb 2>/dev/null || apt-get install -f -y --no-install-recommends 2>/dev/null || true
-      fi
-      
-      # Add bundled Node.js to PATH
-      if [ -d /opt/nodejs/bin ]; then
-        export PATH="/opt/nodejs/bin:$PATH"
-        echo "Bundle Node.js available"
-      fi
-      # Add bundled OpenCode to PATH
-      if [ -d /opt/opencode ]; then
-        export PATH="/opt/opencode:$PATH"
-        echo "Bundle OpenCode available"
-      fi
-      
-      export BUNDLE_SUCCESS="true"
-    else
-      echo "WARNING: Bundle signature verification failed! Using standard installation..."
-    fi
-  else
-    echo "WARNING: Could not download bundle. Using standard installation..."
-  fi
-fi
-` : '';
-
-  return `#!/bin/bash
-# Allow unset variables (don't use -u) to prevent early exit
-# Continue on errors so kimaki systemd service gets created
-set +e
-export HOME=/root
-export DEBIAN_FRONTEND=noninteractive
-export USE_BUNDLE="${useBundle ? 'true' : 'false'}"
-echo "=== VM Setup Started ==="
-
-GITHUB_TOKEN=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/github_token" -H "Metadata-Flavor: Google")
-DISCORD_BOT_TOKEN=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/discord_bot_token" -H "Metadata-Flavor: Google" | tr -d '[:space:]')
-DISCORD_GUILD_ID=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/discord_guild_id" -H "Metadata-Flavor: Google")
-GITHUB_OWNER=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/github_owner" -H "Metadata-Flavor: Google")
-FIREBASE_STAGING=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_staging" -H "Metadata-Flavor: Google")
-FIREBASE_PRODUCTION=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_production" -H "Metadata-Flavor: Google")
-
-echo "Secrets loaded from metadata"
-echo "DEBUG: FIREBASE_STAGING=$FIREBASE_STAGING"
-echo "DEBUG: FIREBASE_PRODUCTION=$FIREBASE_PRODUCTION"
-echo "DEBUG: DISCORD_BOT_TOKEN is set: $([ -n "$DISCORD_BOT_TOKEN" ] && echo 'YES' || echo 'NO')"
-
-# For Kimaki Gateway mode - we don't need a Discord bot token
-# Kimaki will provide its own pre-built bot via OAuth
-if [ -n "$DISCORD_BOT_TOKEN" ] && [ "$DISCORD_BOT_TOKEN" != "null" ] && [ "$DISCORD_BOT_TOKEN" != "" ]; then
-  echo "DEBUG: Optional Discord bot token provided (for self-hosted mode)"
-  
-  # Only try to detect guild if token is provided
-  if [ -z "$DISCORD_GUILD_ID" ]; then
-    echo "DEBUG: Guild ID empty, attempting to detect from bot token..."
-    GUILDS_DATA=$(curl -s "https://discord.com/api/v10/users/@me/guilds" \
-      -H "Authorization: Bot $DISCORD_BOT_TOKEN" 2>/dev/null || echo "[]")
-    GUILD_COUNT=$(echo "$GUILDS_DATA" | grep -o '"id"' | wc -l || echo "0")
-    if [ "$GUILD_COUNT" -gt 0 ]; then
-      DISCORD_GUILD_ID=$(echo "$GUILDS_DATA" | head -1 | grep -oP '"id"\s*:\s*"\K[^"]+' || echo "")
-      if [ -n "$DISCORD_GUILD_ID" ]; then
-        echo "DEBUG: Re-detected guild ID: $DISCORD_GUILD_ID"
-      fi
-    fi
-  fi
-else
-  echo "DEBUG: No Discord bot token - using Kimaki Gateway mode (OAuth will be handled by user)"
-fi
-
-# Remove man-db to speed up installs
-apt-get remove --purge -y man-db 2>/dev/null || true
-
-${bundleSection}
-
-# Install dependencies if bundle failed or not used
-if [ "$BUNDLE_SUCCESS" != "true" ]; then
-  echo "Installing dependencies via apt..."
-  apt-get update -o Dpkg::Options::="--force-confdef" -o APT::Get::Fix-Missing=true
-  apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-confdef" -o APT::Get::Fix-Missing=true curl git gnupg ca-certificates apt-transport-https jq unzip
-  
-  # Install Node.js 20 from bundle if available
-  if [ -d "/opt/nodejs" ]; then
-    echo "Installing Node.js from bundle..."
-    cp -r /opt/nodejs/* /usr/local/ 2>/dev/null || true
-  elif ! command -v node &> /dev/null || [ "$(node -v | cut -d. -f1 | tr -d 'v')" -lt 20 ]; then
-    echo "Installing Node.js 20..."
-    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-    apt-get install -y --no-install-recommends nodejs
-  fi
-  
-  # Install OpenCode if not in bundle
-  if ! command -v opencode &> /dev/null && [ -d "/opt/opencode" ]; then
-    echo "Installing OpenCode from bundle..."
-    cp -r /opt/opencode/* /usr/local/ 2>/dev/null || true
-  fi
-fi
-
-# Install GitHub CLI (try bundle first, then apt)
-if ! command -v gh &> /dev/null; then
-  echo "Installing GitHub CLI..."
-  # Try bundled gh first
-  if [ -f "/opt/gh/bin/gh" ]; then
-    cp /opt/gh/bin/gh /usr/local/bin/gh
-    chmod +x /usr/local/bin/gh
-    echo "DEBUG: gh installed from bundle"
-  elif [ -d "/opt/kimaki" ]; then
-    # Legacy: check in kimaki folder
-    if [ -f "/opt/kimaki/bin/gh" ]; then
-      cp /opt/kimaki/bin/gh /usr/local/bin/gh
-      chmod +x /usr/local/bin/gh
-      echo "DEBUG: gh installed from kimaki bundle"
-    fi
-  fi
-  
-  # Fall back to apt if bundle didn't work
-  if ! command -v gh &> /dev/null; then
-    echo "DEBUG: Installing gh via apt..."
-    wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg 2>/dev/null | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null || true
-    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null 2>&1 || true
-    apt-get update -o Dpkg::Options::="--force-confdef" 2>/dev/null || true
-    apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-confdef" gh 2>/dev/null || true
-  fi
-fi
-
-# Authenticate GitHub
-echo "DEBUG: Authenticate GitHub..."
-echo $GITHUB_TOKEN | gh auth login --with-token || { echo "ERROR: gh auth login failed!"; exit 1; }
-echo "DEBUG: gh auth login succeeded"
-gh auth setup-git || { echo "ERROR: gh auth setup-git failed!"; exit 1; }
-echo "DEBUG: gh auth setup-git succeeded"
-
-# Get authenticated user to verify correct owner
-GH_USER=$(gh api user --jq .login)
-echo "Authenticated as: $GH_USER"
-echo "Expected owner: $GITHUB_OWNER"
-
-echo "DEBUG: Starting SecureAgentBase clone process..."
-# Clone SecureAgentBase into kimaki's expected project directory
-mkdir -p /root/.kimaki/projects
-cd /root/.kimaki/projects || { echo "ERROR: Cannot cd to /root/.kimaki/projects"; exit 1; }
-echo "DEBUG: Current directory: $(pwd)"
-echo "DEBUG: Directory contents before clone: $(ls -la)"
-echo "DEBUG: git version: $(git --version 2>&1)"
-echo "DEBUG: gh auth status: $(gh auth status 2>&1 | head -3)"
-
-CLONE_SUCCESS=false
-if [ -d "SecureAgentBase" ] && [ -d "SecureAgentBase/.git" ]; then
-  cd SecureAgentBase
-  echo "SecureAgentBase already exists in kimaki projects, using existing repo"
-  CLONE_SUCCESS=true
-else
-  # Clean up any partial/incomplete directory first
-  rm -rf SecureAgentBase 2>/dev/null || true
-  echo "Cloning SecureAgentBase into kimaki projects..."
-  
-  # Clone with verbose output and retry
-  for i in $(seq 1 3); do
-    echo "Clone attempt $i..."
-    git clone --depth 1 https://github.com/kallhoffa/SecureAgentBase.git SecureAgentBase 2>&1
-    CLONE_RESULT=$?
-    if [ $CLONE_RESULT -eq 0 ] && [ -d "SecureAgentBase/.git" ]; then
-      echo "Clone succeeded!"
-      CLONE_SUCCESS=true
-      break
-    else
-      echo "Clone attempt $i failed (exit code: $CLONE_RESULT), waiting 5s..."
-      rm -rf SecureAgentBase 2>/dev/null || true
-      sleep 5
-    fi
-  done
-fi
-
-if [ "$CLONE_SUCCESS" != "true" ]; then
-  echo "ERROR: Failed to clone SecureAgentBase after 3 attempts!"
-  echo "DEBUG: Contents of /root/.kimaki/projects after failed clone:"
-  ls -la /root/.kimaki/projects/
-  echo "DEBUG: Testing network to GitHub..."
-  curl -I https://github.com 2>&1 | head -5 || echo "Cannot reach GitHub"
-  exit 1
-fi
-
-cd /root/.kimaki/projects/SecureAgentBase || { echo "ERROR: Cannot cd to SecureAgentBase"; exit 1; }
-echo "DEBUG: In SecureAgentBase directory: $(pwd)"
-
-# Reinitialize git for fresh repo (single commit) - only if we just cloned
-if [ ! -d ".git" ] || [ "$CLONE_SUCCESS" = "true" ]; then
-  echo "Reinitializing git repo..."
-  rm -rf .git
-  git init -b main
-  git add -A
-  git commit -m "Initial commit from SecureAgentBase"
-fi
-  
-  # Create OpenCode config for root (Kimaki runs as root)
-  mkdir -p /root/.config/opencode
-  cat > /root/.config/opencode/opencode.json << 'EOF'
-{
-  "$schema": "https://opencode.ai/config.json",
-  "model": "opencode/big-pickle"
-}
-EOF
-  
-  # Also create project-level config
-  if [ -d "/root/.kimaki/projects/SecureAgentBase" ]; then
-    cat > /root/.kimaki/projects/SecureAgentBase/opencode.json << 'EOF'
-{
-  "$schema": "https://opencode.ai/config.json",
-  "model": "opencode/big-pickle"
-}
-EOF
-  fi
-git remote add upstream https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
-
-# Remove upstream to avoid "multiple remotes" error with gh cli
-git remote remove upstream 2>/dev/null || true
-git remote remove origin 2>/dev/null || true
-
-# Use the authenticated user if owner not set
-if [ -n "$GH_USER" ]; then
-  REPO_OWNER="$GH_USER"
-else
-  REPO_OWNER="$GITHUB_OWNER"
-fi
-echo "Using repo owner: $REPO_OWNER"
-
-# Check if repo exists, create if not
-echo "DEBUG: Checking if repo exists..."
-REPO_EXISTS=false
-if gh repo view "\${REPO_OWNER}/\${FIREBASE_STAGING}" 2>/dev/null; then
-  REPO_EXISTS=true
-  echo "DEBUG: Repo exists"
-fi
-
-if [ "$REPO_EXISTS" = true ]; then
-  echo "DEBUG: Repo exists, pushing..."
-  git remote add origin "https://github.com/\${REPO_OWNER}/\${FIREBASE_STAGING}.git" 2>/dev/null || true
-  git push -u origin main --force || { echo "Push failed!"; exit 1; }
-else
-  echo "DEBUG: Creating new repo..."
-  gh repo create "$FIREBASE_STAGING" --public --source=. --push || { echo "Repo create failed!"; exit 1; }
-fi
-echo "DEBUG: GitHub push done"
-
-# Set GitHub Secrets
-echo "DEBUG: Setting GitHub secrets..."
-gh secret set FIREBASE_STAGING_PROJECT_ID --body "$FIREBASE_STAGING" -R "\${REPO_OWNER}/\${FIREBASE_STAGING}" 2>/dev/null || echo "WARNING: Failed to set FIREBASE_STAGING_PROJECT_ID"
-gh secret set FIREBASE_PRODUCTION_PROJECT_ID --body "$FIREBASE_PRODUCTION" -R "\${REPO_OWNER}/\${FIREBASE_STAGING}" 2>/dev/null || echo "WARNING: Failed to set FIREBASE_PRODUCTION_PROJECT_ID"
-echo "DEBUG: GitHub secrets set"
-
-# Add upstream back for future syncing
-git remote add upstream https://github.com/kallhoffa/SecureAgentBase.git 2>/dev/null || true
-
-# Install expect for automating Kimaki interactive prompts
-echo "DEBUG: Installing expect for Kimaki automation..."
-apt-get update -o Dpkg::Options::="--force-confdef" 2>/dev/null || true
-apt-get install -y --no-install-recommends -o Dpkg::Options::="--force-confdef" expect 2>/dev/null || echo "WARNING: expect install failed"
-
-# Set KIMAKI_DIR if not already set
-if [ -z "$KIMAKI_DIR" ] && [ -d "/opt/kimaki/kimaki" ]; then
-  KIMAKI_DIR="/opt/kimaki/kimaki"
-  echo "DEBUG: KIMAKI_DIR set to $KIMAKI_DIR"
-elif [ -z "$KIMAKI_DIR" ] && [ -d "/opt/kimaki" ]; then
-  KIMAKI_DIR="/opt/kimaki"
-  echo "DEBUG: KIMAKI_DIR set to $KIMAKI_DIR"
-fi
-
-# Install and start Kimaki in Gateway mode
-  echo "DEBUG: Setting up Kimaki in Gateway mode..."
-  if [ -n "$KIMAKI_DIR" ] && [ -f "$KIMAKI_DIR/bin.js" ]; then
-    chmod +x "$KIMAKI_DIR/bin.js" 2>/dev/null || true
-    ln -sf "$KIMAKI_DIR/bin.js" /usr/local/bin/kimaki 2>/dev/null || true
-    
-    # Ensure package.json has "type": "module" for ESM support
-    if [ -f "$KIMAKI_DIR/package.json" ]; then
-      if ! grep -q '"type": "module"' "$KIMAKI_DIR/package.json"; then
-        sed -i 's/"name"/"type": "module",\n    "name"/' "$KIMAKI_DIR/package.json" 2>/dev/null || true
-      fi
-    fi
-  fi
-
-# Add bundled Node.js, Bun, and OpenCode to PATH
-if [ -d "/opt/nodejs" ]; then
-  export PATH="/opt/nodejs/bin:$PATH"
-  # Create symlinks for system-wide access
-  [ -f /opt/nodejs/bin/node ] && ln -sf /opt/nodejs/bin/node /usr/local/bin/node 2>/dev/null || true
-fi
-if [ -d "/opt/bun" ]; then
-  export PATH="/opt/bun:$PATH"
-  # Create symlinks for system-wide access
-  [ -f /opt/bun/bun ] && ln -sf /opt/bun/bun /usr/local/bin/bun 2>/dev/null || true
-fi
-if [ -d "/opt/opencode" ]; then
-  echo "DEBUG: Setting up OpenCode from bundle..."
-  # Handle both /opt/opencode/opencode and /opt/opencode/.opencode/bin/opencode
-  if [ -f "/opt/opencode/.opencode/bin/opencode" ]; then
-    export PATH="/opt/opencode/.opencode/bin:$PATH"
-    ln -sf /opt/opencode/.opencode/bin/opencode /usr/local/bin/opencode 2>/dev/null || true
-    echo "DEBUG: OpenCode found at /opt/opencode/.opencode/bin/opencode"
-  elif [ -f "/opt/opencode/opencode" ]; then
-    export PATH="/opt/opencode:$PATH"
-    ln -sf /opt/opencode/opencode /usr/local/bin/opencode 2>/dev/null || true
-    echo "DEBUG: OpenCode found at /opt/opencode/opencode"
-  else
-    echo "DEBUG: OpenCode binary not found in bundle"
-  fi
-fi
-
-  # Determine how to run kimaki (use full paths for systemd)
-if [ -n "$KIMAKI_DIR" ] && [ -f "$KIMAKI_DIR/bin.js" ]; then
-  if [ -f "/opt/bun/bun" ]; then
-    KIMAKI_CMD="/opt/bun/bun $KIMAKI_DIR/bin.js"
-  elif command -v bun &> /dev/null; then
-    KIMAKI_CMD="$(which bun) $KIMAKI_DIR/bin.js"
-  else
-    KIMAKI_CMD="node $KIMAKI_DIR/bin.js"
-  fi
-elif [ -f "/opt/bun/bun" ]; then
-  KIMAKI_CMD="/opt/bun/bun x kimaki@latest"
-elif command -v bun &> /dev/null; then
-  KIMAKI_CMD="$(which bun) x kimaki@latest"
-elif command -v npm &> /dev/null; then
-  KIMAKI_CMD="/opt/bun/bun /root/.bun/install/global/node_modules/kimaki/bin.js"
-else
-  echo "WARNING: No way to run Kimaki found"
-  KIMAKI_CMD=""
-fi
-
-  echo "Installing kimaki (auto-upgrade will be disabled below)..."
-  
-  # Remove any existing kimaki installation
-  rm -rf /opt/kimaki 2>/dev/null || true
-  
-  # Install latest kimaki via bun (auto-upgrade is disabled via sed below)
-  BUN_GLOBAL_NM="/root/.bun/install/global/node_modules/kimaki"
-  if [ -f "/opt/bun/bun" ]; then
-    /opt/bun/bun install -g kimaki 2>&1
-    KIMAKI_DIR="$BUN_GLOBAL_NM"
-    if [ ! -d "$KIMAKI_DIR" ]; then
-      KIMAKI_DIR="$(/opt/bun/bun pm bin -g 2>/dev/null | sed 's|/bin$|/node_modules/kimaki|')"
-    fi
-    # Add bun global bin to PATH so subprocesses find kimaki
-    export PATH="$PATH:/root/.bun/bin"
-  elif command -v npm &> /dev/null; then
-    npm install -g kimaki 2>&1
-    KIMAKI_DIR="$(npm root -g)/kimaki"
-  fi
-  
-  if [ -d "$KIMAKI_DIR" ]; then
-    echo "Kimaki installed at $KIMAKI_DIR (version: $(/opt/bun/bun "$KIMAKI_DIR/bin.js" --version 2>/dev/null || echo 'unknown'))"
-  else
-    echo "WARNING: Failed to install kimaki"
-  fi
-  
-  # Disable kimaki's built-in background upgrade function
-  # Function defined in dist/upgrade.js, called in dist/cli-runner.js
-  # Strategy: keep upgrade.js intact (preserves all exports for imports), only comment out the call site
-  if [ -n "$KIMAKI_DIR" ] && [ -d "$KIMAKI_DIR" ]; then
-    echo "Patching kimaki auto-upgrade..."
-    # Comment out the call in cli-runner.js (pattern: void backgroundUpgradeKimaki)
-    if [ -f "$KIMAKI_DIR/dist/cli-runner.js" ]; then
-      sed -i 's/void backgroundUpgradeKimaki/\/\/ void backgroundUpgradeKimaki/g' "$KIMAKI_DIR/dist/cli-runner.js" 2>/dev/null || true
-    fi
-  fi
-
-  # Recalculate KIMAKI_CMD after pinning to 0.8.1 (KIMAKI_DIR changed)
-  if [ -n "$KIMAKI_DIR" ] && [ -f "$KIMAKI_DIR/bin.js" ]; then
-    if [ -f "/opt/bun/bun" ]; then
-      KIMAKI_CMD="/opt/bun/bun $KIMAKI_DIR/bin.js"
-    elif command -v bun &> /dev/null; then
-      KIMAKI_CMD="$(which bun) $KIMAKI_DIR/bin.js"
-    else
-      KIMAKI_CMD="node $KIMAKI_DIR/bin.js"
-    fi
-    echo "DEBUG: Recalculated KIMAKI_CMD after pin: $KIMAKI_CMD"
-  fi
-
-if [ -n "$KIMAKI_CMD" ]; then
-  echo "DEBUG: Using Kimaki command: $KIMAKI_CMD"
-  
-  # Set environment variables for Kimaki
-  export KIMAKI_BOT_TOKEN="$DISCORD_BOT_TOKEN"
-  export DISCORD_GUILD_ID="$DISCORD_GUILD_ID"
-  
-  # Test Discord token before starting Kimaki
-  echo "Testing Discord token..."
-  TOKEN_TEST=$(curl -s -H "Authorization: Bot $KIMAKI_BOT_TOKEN" https://discord.com/api/v10/users/@me 2>/dev/null || echo "CURL_FAILED")
-  
-  if echo "$TOKEN_TEST" | grep -q '"id"'; then
-    echo "DEBUG: Token valid, bot info: $(echo "$TOKEN_TEST" | grep -o '"username"[^,]*' || echo 'unknown')"
-    
-  # Check if bot is in any guild
-  GUILDS=$(curl -s -H "Authorization: Bot $DISCORD_BOT_TOKEN" https://discord.com/api/v10/users/@me/guilds 2>/dev/null || echo "[]")
-  GUILD_COUNT=$(echo "$GUILDS" | grep -o '"id"' | wc -l 2>/dev/null || echo "0")
-  echo "DEBUG: Bot is in $GUILD_COUNT guilds"
-  
-  if [ "$GUILD_COUNT" -eq 0 ]; then
-      echo "WARNING: Bot is not in any Discord server! Invite it first."
-      echo "WARNING: Kimaki will fail to connect properly without a guild."
-    fi
-  else
-    echo "ERROR: Token test failed! Response: $TOKEN_TEST"
-    echo "WARNING: Kimaki will likely fail to connect."
-  fi
-  
-  # Test network connectivity to Discord
-  echo "Testing network connectivity to Discord..."
-  if curl -s --connect-timeout 5 https://discord.com/api/v10/gateway > /dev/null 2>&1; then
-    echo "DEBUG: Network connection to Discord OK"
-  else
-    echo "ERROR: Cannot reach Discord API - check DNS/firewall!"
-    echo "DEBUG: Testing DNS..."
-    nslookup discord.com 2>/dev/null || echo "DNS lookup failed"
-  fi
-  
-  # Create systemd service for Kimaki to survive metadata script exit
-  echo "Creating kimaki systemd service..."
-  
-  cat > /etc/systemd/system/kimaki.service << 'KIMAKI_EOF'
-[Unit]
-Description=Kimaki Discord Bot
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/root/.kimaki/projects
-Environment="HOME=/root"
-Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/bun:/opt/nodejs/bin:/opt/opencode/.opencode/bin:/root/.kimaki/kimaki"
-Environment="KIMAKI_BOT_TOKEN=__DISCORD_BOT_TOKEN__"
-Environment="DISCORD_GUILD_ID=__DISCORD_GUILD_ID__"
-Environment="GITHUB_TOKEN=__GITHUB_TOKEN__"
-Environment="GITHUB_OWNER=__GITHUB_OWNER__"
-Environment="FIREBASE_STAGING=__FIREBASE_STAGING__"
-Environment="FIREBASE_PRODUCTION=__FIREBASE_PRODUCTION__"
-# Disable opencode auto-update to prevent disconnection issues
-Environment="OPENCODE_DISABLE_AUTOUPDATE=1"
-ExecStart=__KIMAKI_CMD__
-  Restart=always
-RestartSec=10
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
-KIMAKI_EOF
-
-  # Replace placeholders with actual values
-  sed -i "s|__DISCORD_BOT_TOKEN__|$DISCORD_BOT_TOKEN|g" /etc/systemd/system/kimaki.service
-  sed -i "s|__DISCORD_GUILD_ID__|$DISCORD_GUILD_ID|g" /etc/systemd/system/kimaki.service
-  sed -i "s|__KIMAKI_CMD__|$KIMAKI_CMD|g" /etc/systemd/system/kimaki.service
-  sed -i "s|__GITHUB_TOKEN__|$GITHUB_TOKEN|g" /etc/systemd/system/kimaki.service
-  sed -i "s|__GITHUB_OWNER__|$GITHUB_OWNER|g" /etc/systemd/system/kimaki.service
-  sed -i "s|__FIREBASE_STAGING__|$FIREBASE_STAGING|g" /etc/systemd/system/kimaki.service
-  sed -i "s|__FIREBASE_PRODUCTION__|$FIREBASE_PRODUCTION|g" /etc/systemd/system/kimaki.service
-  # Remove DISCORD_GUILD_ID line if empty (empty string causes bot issues)
-  sed -i '/Environment="DISCORD_GUILD_ID="$/d' /etc/systemd/system/kimaki.service
-  
-  # Reload systemd and start service
-  systemctl daemon-reload
-  systemctl enable kimaki.service
-  systemctl start kimaki.service
-  
-  echo "Kimaki systemd service created and started"
-  sleep 3
-  systemctl status kimaki.service --no-pager || true
-  
-# Create a separate script for project registration (more reliable than inline)
-cat > /usr/local/bin/kimaki-register.sh << 'REGISTER_SCRIPT'
-#!/bin/bash
-set +e
-export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/bun:/opt/nodejs/bin:/opt/opencode/.opencode/bin:/root/.kimaki/kimaki:/root/.bun/bin"
-export HOME=/root
-export OPENCODE_DISABLE_AUTOUPDATE=1
-
-# Wait for kimaki to be ready
-for i in $(seq 1 60); do
-  if systemctl is-active --quiet kimaki.service; then
-    echo "$(date): Kimaki is active, proceeding with registration..." >> /var/log/kimaki-register.log
-    break
-  fi
-  echo "$(date): Waiting for kimaki.service... attempt $i" >> /var/log/kimaki-register.log
-  sleep 5
-done
-
-# Determine KIMAKI_CMD
-if [ -f "/opt/kimaki/kimaki/bin.js" ]; then
-  if [ -f "/opt/bun/bun" ]; then
-    KIMAKI_CMD="/opt/bun/bun /opt/kimaki/kimaki/bin.js"
-  else
-    KIMAKI_CMD="node /opt/kimaki/kimaki/bin.js"
-  fi
-elif command -v kimaki &> /dev/null; then
-  KIMAKI_CMD="kimaki"
-else
-  KIMAKI_CMD="npx -y kimaki@latest"
-fi
-
-echo "$(date): Using KIMAKI_CMD: $KIMAKI_CMD" >> /var/log/kimaki-register.log
-
-# Check if project directory exists
-if [ ! -d "/root/.kimaki/projects/SecureAgentBase" ]; then
-  echo "$(date): ERROR: /root/.kimaki/projects/SecureAgentBase does not exist!" >> /var/log/kimaki-register.log
-  exit 1
-fi
-
-# Try to register the project
-for i in $(seq 1 30); do
-  echo "$(date): Attempting to register project (attempt $i)..." >> /var/log/kimaki-register.log
-  if $KIMAKI_CMD project add /root/.kimaki/projects/SecureAgentBase >> /var/log/kimaki-register.log 2>&1; then
-    echo "$(date): Project registered successfully!" >> /var/log/kimaki-register.log
-    exit 0
-  fi
-  echo "$(date): Attempt $i failed, retrying in 10s..." >> /var/log/kimaki-register.log
-  sleep 10
-done
-
-echo "$(date): Registration failed after 30 attempts" >> /var/log/kimaki-register.log
-exit 1
-REGISTER_SCRIPT
-
-chmod +x /usr/local/bin/kimaki-register.sh
-
-# Create project registration service
-cat > /etc/systemd/system/kimaki-register.service << 'REGISTER_EOF'
-[Unit]
-Description=Register SecureAgentBase with Kimaki
-After=network-online.target
-
-[Service]
-Type=oneshot
-User=root
-ExecStart=/usr/local/bin/kimaki-register.sh
-RemainAfterExit=yes
-
-[Install]
-WantedBy=multi-user.target
-REGISTER_EOF
-
-systemctl daemon-reload
-systemctl enable kimaki-register.service
-systemctl start kimaki-register.service
-  
-  # Wait for project registration to finish, then restart kimaki
-  # so it reinitializes with any DB changes made by the register script
-  echo "Waiting for project registration to complete..."
-  for i in $(seq 1 24); do
-    if systemctl is-active --quiet kimaki-register.service; then
-      sleep 5  # still running, check again
-    else
-      echo "Registration finished, restarting kimaki..."
-      systemctl restart kimaki.service || true
-      sleep 3
-      break
-    fi
-    sleep 5
-  done
-  
-  # Check if service is running
-  if systemctl is-active --quiet kimaki.service; then
-    echo "DEBUG: Kimaki service is running"
-  else
-    echo "WARNING: Kimaki service may have failed to start, check logs"
-    echo "DEBUG: Last few lines of log:"
-    journalctl -u kimaki.service --no-pager -n 20 2>/dev/null || echo "No journal logs yet"
-    tail -10 /var/log/kimaki.log 2>/dev/null || echo "Log file not found"
-  fi
-fi
-
-# NOTE: Project creation is now handled by the kimaki systemd service
-# The service will create the project when it starts
-echo "Skipping project creation - handled by kimaki systemd service"
-
-# Install bundled gh if available
-if [ -d "/opt/gh" ]; then
-  echo "Installing gh from bundle..."
-  cp /opt/gh/bin/gh /usr/local/bin/gh 2>/dev/null && chmod +x /usr/local/bin/gh && echo "DEBUG: gh from bundle ready"
-fi
-
-echo "=== VM Setup Complete ==="
-`;
-};
 
 const loadFromLocalStorage = () => {
   try {
@@ -1275,6 +516,10 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       if (gcpSaProductionEmail) {
         await setGitHubVariable(githubPat, githubRepoName, 'GCP_SA_PRODUCTION', gcpSaProductionEmail);
       }
+
+      // Upload app name (user can override this in GitHub settings)
+      const repoShortName = githubRepoName.split('/')[1] || 'MyApp';
+      await setGitHubVariable(githubPat, githubRepoName, 'VITE_APP_NAME', repoShortName);
 
       setGithubVarUploaded(true);
     } catch (err) {
@@ -2561,86 +1806,6 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
 
   const pendingConfig = !user && loadFromLocalStorage();
 
-  const getStepHeader = (stepNumber, title, icon, isComplete, isActive, isLocked, info, isWarning = false, onEdit = null) => {
-    const baseClasses = "flex items-center justify-between w-full p-4 rounded-lg transition-all duration-200";
-    let bgClasses = "bg-gray-50";
-    let borderClasses = "border border-gray-200";
-    let textClasses = "text-gray-500";
-    let iconColor = "text-gray-400";
-    
-    if (isWarning) {
-      bgClasses = "bg-yellow-50";
-      borderClasses = "border-2 border-yellow-500";
-      textClasses = "text-yellow-700";
-      iconColor = "text-yellow-600";
-    } else if (isComplete) {
-      bgClasses = "bg-green-50";
-      borderClasses = "border-2 border-green-500";
-      textClasses = "text-green-700";
-      iconColor = "text-green-600";
-    } else if (isActive) {
-      bgClasses = "bg-blue-50";
-      borderClasses = "border-2 border-blue-500";
-      textClasses = "text-blue-700";
-      iconColor = "text-blue-600";
-    } else if (isLocked) {
-      bgClasses = "bg-gray-50 opacity-60";
-      borderClasses = "border border-gray-200";
-    }
-
-    const handleHeaderClick = () => {
-      if (isLocked) return;
-      toggleStep(stepNumber);
-    };
-
-    return (
-      <div className={`${baseClasses} ${bgClasses} ${borderClasses} ${isLocked ? 'opacity-60' : ''}`}>
-        <button
-          onClick={handleHeaderClick}
-          disabled={isLocked}
-          className={`flex items-center gap-3 flex-1 text-left ${isLocked ? 'cursor-not-allowed' : 'cursor-pointer'}`}
-        >
-          {isComplete || isWarning ? (isWarning ? <AlertTriangle className={iconColor} size={24} /> : <Check className={iconColor} size={24} />) : icon}
-          <span className={`font-semibold ${textClasses}`}>{title}</span>
-          {isWarning && <span className="text-xs text-yellow-600 ml-2">(Re-authentication required)</span>}
-          {isLocked && <span className="text-xs text-gray-400 ml-2">(Complete previous step first)</span>}
-          {info && (
-            <div className="relative group">
-              <svg className={`w-4 h-4 ${textClasses} cursor-help`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              <div className="absolute left-0 bottom-full mb-2 w-64 p-2 bg-gray-800 text-white text-xs rounded-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-10">
-                {info}
-              </div>
-            </div>
-          )}
-        </button>
-        <div className="flex items-center gap-2">
-          {isComplete && onEdit && (
-            <button
-              onClick={(e) => { e.stopPropagation(); onEdit(); }}
-              className={`p-1.5 rounded hover:bg-green-100 text-green-600`}
-              title="Edit step"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-              </svg>
-            </button>
-          )}
-          {expandedSteps.includes(stepNumber) ? (
-            <svg className={`w-5 h-5 ${textClasses}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
-            </svg>
-          ) : (
-            <svg className={`w-5 h-5 ${textClasses}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-            </svg>
-          )}
-        </div>
-      </div>
-    );
-  };
-
   return (
     <div className="max-w-4xl mx-auto p-6">
       <div className="flex items-center justify-between mb-8">
@@ -2968,7 +2133,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
 
       <div className="space-y-4">
         <div className="space-y-2">
-          {getStepHeader(1, "Step 1: Account", <Shield className="text-blue-600" size={24} />, isStepCompleted(1), isStepActive(1), isStepLocked(1), "Sign in to continue.")}
+          <StepHeader stepNumber={1} title="Step 1: Account" icon={<Shield className="text-blue-600" size={24} />} isComplete={isStepCompleted(1)} isActive={isStepActive(1)} isLocked={isStepLocked(1)} info="Sign in to continue." expandedSteps={expandedSteps} toggleStep={toggleStep} />
           
           {expandedSteps.includes(1) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
@@ -2985,7 +2150,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
         </div>
 
         <div className="space-y-2">
-          {getStepHeader(2, "Step 2: Service Account", <Upload className="text-blue-600" size={24} />, isStepCompleted(2), isStepActive(2), isStepLocked(2), "Create a service account in your GCP project and paste the JSON key. This lets us create VMs without accessing your personal account.", isStepWarning(2), () => editStep(2))}
+          <StepHeader stepNumber={2} title="Step 2: Service Account" icon={<Upload className="text-blue-600" size={24} />} isComplete={isStepCompleted(2)} isActive={isStepActive(2)} isLocked={isStepLocked(2)} info="Create a service account in your GCP project and paste the JSON key. This lets us create VMs without accessing your personal account." isWarning={isStepWarning(2)} onEdit={() => editStep(2)} expandedSteps={expandedSteps} toggleStep={toggleStep} />
           
           {expandedSteps.includes(2) && !isStepCompleted(1) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
@@ -3071,7 +2236,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
         </div>
 
         <div className="space-y-2">
-          {getStepHeader(3, "Step 3: GCP Project", <Server className="text-blue-600" size={24} />, isStepCompleted(3), isStepActive(3), isStepLocked(3), "Select or create a GCP project for your VM.", false, () => editStep(3))}
+          <StepHeader stepNumber={3} title="Step 3: GCP Project" icon={<Server className="text-blue-600" size={24} />} isComplete={isStepCompleted(3)} isActive={isStepActive(3)} isLocked={isStepLocked(3)} info="Select or create a GCP project for your VM." onEdit={() => editStep(3)} expandedSteps={expandedSteps} toggleStep={toggleStep} />
           
           {expandedSteps.includes(3) && !isStepCompleted(2) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
@@ -3133,7 +2298,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
         </div>
 
         <div className="space-y-2">
-          {getStepHeader(4, "Step 4: Firebase Setup", <svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M3.89 15.672L6.255.461A.542.542 0 0 1 7.27.288l2.543 4.771zm16.794 3.692l-2.25-14a.54.54 0 0 0-.919-.295L3.316 19.365l7.856 4.427a1.621 1.621 0 0 0 1.588 0zM14.3 7.147l-1.82-3.482a.542.542 0 0 0-.96 0L3.53 17.984z"/></svg>, isStepCompleted(4), isStepActive(4), isStepLocked(4), "Configure Firebase hosting for your staging and production environments.", false, () => editStep(4))}
+          <StepHeader stepNumber={4} title="Step 4: Firebase Setup" icon={<svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M3.89 15.672L6.255.461A.542.542 0 0 1 7.27.288l2.543 4.771zm16.794 3.692l-2.25-14a.54.54 0 0 0-.919-.295L3.316 19.365l7.856 4.427a1.621 1.621 0 0 0 1.588 0zM14.3 7.147l-1.82-3.482a.542.542 0 0 0-.96 0L3.53 17.984z"/></svg>} isComplete={isStepCompleted(4)} isActive={isStepActive(4)} isLocked={isStepLocked(4)} info="Configure Firebase hosting for your staging and production environments." onEdit={() => editStep(4)} expandedSteps={expandedSteps} toggleStep={toggleStep} />
           
           {expandedSteps.includes(4) && !isStepCompleted(3) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
@@ -3201,7 +2366,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
         </div>
 
         <div className="space-y-2">
-          {getStepHeader(5, "Step 5: GitHub Auth", <svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>, isStepCompleted(5), isStepActive(5), isStepLocked(5), "Create a GitHub Personal Access Token for the VM to authenticate with GitHub.", false, () => editStep(5))}
+          <StepHeader stepNumber={5} title="Step 5: GitHub Auth" icon={<svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>} isComplete={isStepCompleted(5)} isActive={isStepActive(5)} isLocked={isStepLocked(5)} info="Create a GitHub Personal Access Token for the VM to authenticate with GitHub." onEdit={() => editStep(5)} expandedSteps={expandedSteps} toggleStep={toggleStep} />
           
           {expandedSteps.includes(5) && !isStepCompleted(4) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
@@ -3324,7 +2489,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
 
         {/* Step 6: Discord Bot */}
         <div className="space-y-2">
-          {getStepHeader(6, "Step 6: Discord Bot", <Bot className="text-blue-600" size={24} />, isStepCompleted(6), isStepActive(6), isStepLocked(6), "Configure your Discord bot token and server. The VM will use this to interact with Discord.", false, () => editStep(6))}
+          <StepHeader stepNumber={6} title="Step 6: Discord Bot" icon={<Bot className="text-blue-600" size={24} />} isComplete={isStepCompleted(6)} isActive={isStepActive(6)} isLocked={isStepLocked(6)} info="Configure your Discord bot token and server. The VM will use this to interact with Discord." onEdit={() => editStep(6)} expandedSteps={expandedSteps} toggleStep={toggleStep} />
           
           {expandedSteps.includes(6) && !isStepCompleted(5) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
@@ -3439,7 +2604,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
 
         {/* Step 7: Create VM */}
         <div className="space-y-2">
-          {getStepHeader(7, "Step 7: Create VM", <Server className="text-blue-600" size={24} />, isStepCompleted(7), isStepActive(7), isStepLocked(7), "Create a GCP VM that will fork SecureAgentBase, set up GitHub Actions, download Kimaki, and configure your Discord bot.", false, () => editStep(7))}
+          <StepHeader stepNumber={7} title="Step 7: Create VM" icon={<Server className="text-blue-600" size={24} />} isComplete={isStepCompleted(7)} isActive={isStepActive(7)} isLocked={isStepLocked(7)} info="Create a GCP VM that will fork SecureAgentBase, set up GitHub Actions, download Kimaki, and configure your Discord bot." onEdit={() => editStep(7)} expandedSteps={expandedSteps} toggleStep={toggleStep} />
 
           {expandedSteps.includes(7) && !isStepCompleted(6) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
