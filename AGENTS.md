@@ -179,6 +179,39 @@ src/
 - Prefix variables with `VITE_` for client-side exposure
 - Never commit secrets to repository
 
+### App Mode vs Template Mode
+- `VITE_APP_MODE=true` → shows SecureAgentBase product (landing page, infra-setup wizard, create-app). **Only set in our repo** (`kallhoffa/SecureAgentBase`) as a GitHub variable.
+- `VITE_APP_MODE` not set (default) → shows template mode (generic "Welcome to {VITE_APP_NAME}" dashboard, Tasks demo, no infra-setup).
+- `VITE_APP_NAME` → displayed as the app title in nav bar and dashboard. Falls back to `'Your App'` in template mode or `'SecureAgentBase'` in app mode.
+
+Both env vars are set in CI via GitHub Actions workflow variables.
+
+---
+
+## Session Status (May 14, 2026)
+
+### What was done
+- Added OIDC-based Firebase deploy auth (Workload Identity Federation) to infra-setup wizard
+- Refactored `infra-setup.tsx`: extracted `StepHeader` component, Step1-7 components, `crypto.ts`, `scripts.ts`, `api.ts` modules
+- Created `src/template/` with generic starter app: Dashboard (landing) + Tasks (Firestore CRUD demo)
+- Wired `VITE_APP_MODE` and `VITE_APP_NAME` env vars through workflows and infra-setup wizard
+- Committed and pushed to `origin/main` as `4475835`
+
+### What needs to be done
+1. Manually set `VITE_APP_MODE=true` and `VITE_APP_NAME=SecureAgentBase` as GitHub variables in `kallhoffa/SecureAgentBase` repo
+2. Run the infra-setup wizard in-browser to create OIDC infrastructure + GitHub variables, then push to `main` to verify staging deploy
+3. Optionally: remove local API function duplicates in `infra-setup.tsx` (lines ~204–413) that shadow imported versions from `api.ts`
+4. Optionally: remove inline step JSX from `infra-setup.tsx` and use extracted `<Step1>`–`<Step7>` components
+
+### Relevant files
+- `src/App.tsx` — routes switch based on `VITE_APP_MODE`
+- `src/navigation-bar.tsx` — uses `VITE_APP_NAME` for title
+- `src/template/{pages/Dashboard.jsx,pages/Tasks.jsx,index.jsx}` — template mode pages
+- `src/infra-setup.tsx` — 7-step wizard, uploads `VITE_APP_NAME` as GitHub variable
+- `src/framework/infra-setup/` — extracted modules (api, crypto, scripts, steps)
+- `.github/workflows/firebase-deploy-staging.yml` — staging CI/CD (OIDC auth)
+- `.github/workflows/firebase-deploy.yml` — production CI/CD (OIDC auth)
+
 ---
 
 ## First-Time Setup
