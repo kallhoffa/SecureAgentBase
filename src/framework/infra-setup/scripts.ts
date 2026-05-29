@@ -210,11 +210,25 @@ fi
 # Clone the SecureAgentBase template repository
 cd /root
 echo "DEBUG: Cloning template repository..."
-git clone https://github.com/kallhoffa/SecureAgentBase.git $REPO_NAME
+
+# Force HTTP/1.1 to avoid GitHub HTTP/2 curl 92 errors on large repos
+git config --global http.version HTTP/1.1
+git config --global http.postBuffer 524288000
+
+REPO_CLONED=false
+for i in 1 2 3; do
+  echo "Clone attempt $i..."
+  if git clone https://github.com/kallhoffa/SecureAgentBase.git $REPO_NAME; then
+    REPO_CLONED=true
+    break
+  fi
+  echo "Clone attempt $i failed, retrying in 5s..."
+  sleep 5
+done
 
 # If clone failed, fall back to creating directory manually
-if [ ! -d "$REPO_NAME" ]; then
-  echo "WARNING: Failed to clone template! Creating blank directory..."
+if [ "$REPO_CLONED" != "true" ]; then
+  echo "WARNING: Failed to clone template after 3 attempts! Creating blank directory..."
   mkdir -p $REPO_NAME
   cd $REPO_NAME
   git init
