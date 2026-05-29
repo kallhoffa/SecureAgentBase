@@ -218,7 +218,7 @@ git config --global http.postBuffer 524288000
 REPO_CLONED=false
 for i in 1 2 3; do
   echo "Clone attempt $i..."
-  if git clone https://github.com/kallhoffa/SecureAgentBase.git $REPO_NAME; then
+  if git clone --depth 1 https://github.com/kallhoffa/SecureAgentBase.git $REPO_NAME; then
     REPO_CLONED=true
     break
   fi
