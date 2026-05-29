@@ -162,28 +162,38 @@ set +e
 export HOME=/root
 export DEBIAN_FRONTEND=noninteractive
 ${bundleSection}
-# Generate unique repo name to avoid collisions
-SUFFIX=$(echo $RANDOM | md5sum | head -c 6)
-REPO_NAME="agentbase-$SUFFIX"
+# Fetch GitHub repo from metadata or use fallback
+GITHUB_REPO=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/github_repo" -H "Metadata-Flavor: Google")
+if [ -n "$GITHUB_REPO" ]; then
+  REPO_OWNER=$(echo "$GITHUB_REPO" | cut -d'/' -f1)
+  REPO_NAME=$(echo "$GITHUB_REPO" | cut -d'/' -f2)
+else
+  REPO_OWNER="kallhoffa"
+  SUFFIX=$(echo $RANDOM | md5sum | head -c 6)
+  REPO_NAME="agentbase-$SUFFIX"
+fi
+FIREBASE_STAGING=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_staging" -H "Metadata-Flavor: Google")
+FIREBASE_PRODUCTION=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_production" -H "Metadata-Flavor: Google")
+PASSPHRASE=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/encryption_passphrase" -H "Metadata-Flavor: Google")
+GITHUB_PAT=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/github_pat" -H "Metadata-Flavor: Google")
+DISCORD_BOT_TOKEN=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/discord_bot_token" -H "Metadata-Flavor: Google")
+DISCORD_GUILD_ID=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/discord_guild_id" -H "Metadata-Flavor: Google")
 
-# Use environment variables passed via metadata
-REPO_OWNER="kallhoffa"
-FIREBASE_STAGING=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_staging" -H "Metadata-Flavor: Google")
-FIREBASE_PRODUCTION=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_production" -H "Metadata-Flavor: Google")
+# Clean up any potential HTML responses from failed requests or unconfigured metadata
+for var in FIREBASE_STAGING FIREBASE_PRODUCTION PASSPHRASE GITHUB_PAT DISCORD_BOT_TOKEN DISCORD_GUILD_ID; do
+  val=\${!var}
+  if [[ "\$val" =~ "<html" || "\$val" =~ "<!" || "\$val" =~ "<HTML" ]]; then
+    eval "\$var=\"\""
+  fi
+done
 
 echo "DEBUG: REPO_OWNER=$REPO_OWNER"
 echo "DEBUG: FIREBASE_STAGING=$FIREBASE_STAGING"
 echo "DEBUG: FIREBASE_PRODUCTION=$FIREBASE_PRODUCTION"
-
-PASSPHRASE=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/encryption_passphrase" -H "Metadata-Flavor: Google")
 echo "DEBUG: PASSPHRASE length=${'${#PASSPHRASE}'}"
 
-GITHUB_PAT=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/github_pat" -H "Metadata-Flavor: Google")
-DISCORD_BOT_TOKEN=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/discord_bot_token" -H "Metadata-Flavor: Google")
-DISCORD_GUILD_ID=$(curl -s "http://metadata.google.internal/computeMetadata/v1/instance/attributes/discord_guild_id" -H "Metadata-Flavor: Google")
-
 sudo apt-get update -y || true
-sudo apt-get install -y curl git jq apt-transport-https ca-certificates gnupg2 ufw || true
+sudo apt-get install -y curl git jq apt-transport-https ca-certificates gnupg2 ufw unzip || true
 
 # Install Node.js 20.x
 curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - || true
@@ -197,30 +207,41 @@ if command -v npm &> /dev/null; then
   npm install -g kimaki@latest || true
 fi
 
-# Initialize git repo
+# Clone the SecureAgentBase template repository
 cd /root
-mkdir -p $REPO_NAME
-cd $REPO_NAME
-git init
-git checkout -b main
+echo "DEBUG: Cloning template repository..."
+git clone https://github.com/kallhoffa/SecureAgentBase.git $REPO_NAME
 
-# Configure git
-git config user.email "agent@secureagentbase.com"
-git config user.name "SecureAgent Manager"
-
-# Create .gitignore
-cat > .gitignore << 'GITEOF'
+# If clone failed, fall back to creating directory manually
+if [ ! -d "$REPO_NAME" ]; then
+  echo "WARNING: Failed to clone template! Creating blank directory..."
+  mkdir -p $REPO_NAME
+  cd $REPO_NAME
+  git init
+  echo "placeholder" > README.md
+  cat > .gitignore << 'GITEOF'
 node_modules/
 .env*
 dist/
 build/
 *.log
 GITEOF
+else
+  cd $REPO_NAME
+  # Remove template's .git folder to start fresh
+  rm -rf .git
+  git init
+fi
 
-# TODO: Clone the actual fork/template here
-echo "placeholder" > README.md
+git checkout -b main
+
+# Configure git
+git config user.email "agent@secureagentbase.com"
+git config user.name "SecureAgent Manager"
+
+# Add and commit all files
 git add .
-git commit -m "Initial commit"
+git commit -m "Initial commit of SecureAgentBase template"
 
 # Create GitHub repo and push
 if [ -n "$GITHUB_PAT" ]; then
@@ -253,7 +274,8 @@ github_token: ""
 KIMAKICONF
 
 # Create systemd service for Kimaki
-cat > /etc/systemd/system/kimaki.service << 'SERVICEEOF'
+KIMAKI_PATH=$(which kimaki)
+cat > /etc/systemd/system/kimaki.service << SERVICEEOF
 [Unit]
 Description=Kimaki Agent Service
 After=network.target
@@ -262,10 +284,11 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/root/$REPO_NAME
-ExecStart=/usr/bin/node $(which kimaki) start
+ExecStart=/usr/bin/node $KIMAKI_PATH
 Restart=on-failure
 RestartSec=10
 Environment="GITHUB_PAT=$GITHUB_PAT"
+Environment="KIMAKI_BOT_TOKEN=$DISCORD_BOT_TOKEN"
 Environment="DISCORD_BOT_TOKEN=$DISCORD_BOT_TOKEN"
 Environment="DISCORD_GUILD_ID=$DISCORD_GUILD_ID"
 Environment="PASSPHRASE=$PASSPHRASE"

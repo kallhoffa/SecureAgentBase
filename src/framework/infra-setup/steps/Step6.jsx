@@ -43,27 +43,28 @@ const Step6 = ({
           </div>
 
           <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-2">Discord Application Client ID:</label>
-            <input
-              type="text"
-              value={discordClientId}
-              onChange={(e) => setDiscordClientId(e.target.value)}
-              placeholder="1183128561748410098"
-              className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
-            />
-            <p className="text-gray-500 text-xs mt-1">
-              Found in Discord Developer Portal → General Information → Application ID
-            </p>
-          </div>
-
-          <div className="mb-4">
             <label className="block text-sm font-medium text-gray-700 mb-2">Discord Bot Token:</label>
             <input
               type="password"
               value={discordBotTokenInput}
               onChange={(e) => {
-                setDiscordBotTokenInput(e.target.value);
+                const val = e.target.value;
+                setDiscordBotTokenInput(val);
                 setDiscordInviteUrl('');
+                
+                // Auto-extract client ID from bot token if pasted
+                if (val && val.includes('.')) {
+                  try {
+                    const part = val.split('.')[0];
+                    const decoded = window.atob(part);
+                    if (/^\d{17,21}$/.test(decoded)) {
+                      setDiscordClientId(decoded);
+                      console.log('Automatically extracted Discord Client ID from pasted bot token:', decoded);
+                    }
+                  } catch (err) {
+                    console.log('Could not decode client ID from token', err);
+                  }
+                }
               }}
               placeholder="MTE4MzEyODU2MTc0ODQxMDA5OH.GxXxXx.xxxxxxxx"
               className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
@@ -86,14 +87,6 @@ const Step6 = ({
               </a>
               <p className="text-green-700 text-xs mt-2">
                 Open this link to invite your bot to your Discord server.
-              </p>
-            </div>
-          )}
-
-          {discordBotToken && !discordGuildId && (
-            <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-              <p className="text-yellow-700 text-sm">
-                Bot token saved but no Discord server detected. Make sure the bot is in your server using the invite link above.
               </p>
             </div>
           )}

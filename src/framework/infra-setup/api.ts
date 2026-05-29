@@ -27,6 +27,10 @@ export const githubApiFetch = async (pat: string, path: string, opts?: Record<st
 };
 
 export const setGitHubVariable = async (pat: string, repoFull: string, name: string, value: string) => {
+  if (!value) {
+    console.warn(`Skipping setting GitHub variable '${name}' because its value is empty.`);
+    return;
+  }
   try {
     await githubApiFetch(pat, `/repos/${repoFull}/actions/variables`, {
       method: 'POST',
@@ -96,25 +100,26 @@ export const getServiceAccountToken = async (serviceAccountJson: any) => {
 
 export const createWorkloadIdentityPool = async (token: string, gcpProjectId: string, poolId: string, log: (msg: string) => void) => {
   log('Creating workload identity pool...');
-  const pool = await gcpApiFetch(
-    `https://iam.googleapis.com/v1/projects/${gcpProjectId}/locations/global/workloadIdentityPools?workloadIdentityPoolId=${poolId}`,
-    token,
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        displayName: 'Firebase Deploy Pool',
-        description: 'For GitHub Actions Firebase deployment via OIDC'
-      })
-    }
-  );
-  if (pool.error?.message?.includes('already exists')) {
+  try {
+    const pool = await gcpApiFetch(
+      `https://iam.googleapis.com/v1/projects/${gcpProjectId}/locations/global/workloadIdentityPools?workloadIdentityPoolId=${poolId}`,
+      token,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          displayName: 'Firebase Deploy Pool',
+          description: 'For GitHub Actions Firebase deployment via OIDC'
+        })
+      }
+    );
+    return pool.name;
+  } catch (e) {
     const existing = await gcpApiFetch(
       `https://iam.googleapis.com/v1/projects/${gcpProjectId}/locations/global/workloadIdentityPools/${poolId}`,
       token
     );
     return existing.name;
   }
-  return pool.name;
 };
 
 export const createWorkloadIdentityProvider = async (token: string, gcpProjectId: string, poolId: string, providerId: string, repoFullName: string, log: (msg: string) => void) => {
@@ -156,11 +161,16 @@ export const createDeployServiceAccount = async (token: string, gcpProjectId: st
   log(`Creating service account: ${displayName}...`);
   try {
     const sa = await gcpApiFetch(
-      `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts?accountId=${accountId}`,
+      `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts`,
       token,
       {
         method: 'POST',
-        body: JSON.stringify({ displayName })
+        body: JSON.stringify({
+          accountId,
+          serviceAccount: {
+            displayName
+          }
+        })
       }
     );
     return sa.email;
@@ -184,7 +194,7 @@ export const grantFirebaseRoles = async (token: string, firebaseProjectId: strin
 
     const bindings = policy.bindings || [];
     const existingHosting = bindings.find(b => b.role === 'roles/firebasehosting.admin');
-    const existingFirestore = bindings.find(b => b.role === 'roles/firestore.admin');
+    const existingFirestore = bindings.find(b => b.role === 'roles/datastore.owner');
 
     if (!existingHosting || !existingHosting.members.includes(`serviceAccount:${saEmail}`)) {
       if (!existingHosting) {
@@ -195,7 +205,7 @@ export const grantFirebaseRoles = async (token: string, firebaseProjectId: strin
     }
     if (!existingFirestore || !existingFirestore.members.includes(`serviceAccount:${saEmail}`)) {
       if (!existingFirestore) {
-        bindings.push({ role: 'roles/firestore.admin', members: [`serviceAccount:${saEmail}`] });
+        bindings.push({ role: 'roles/datastore.owner', members: [`serviceAccount:${saEmail}`] });
       } else {
         existingFirestore.members.push(`serviceAccount:${saEmail}`);
       }

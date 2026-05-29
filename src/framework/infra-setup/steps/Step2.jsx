@@ -30,7 +30,7 @@ const Step2 = ({
               <li>Select your project from the dropdown at the top</li>
               <li>Click "+ Create Service Account"</li>
               <li>Name: <code className="bg-blue-100 px-1">secureagent</code></li>
-              <li>Grant roles: <strong>Compute Admin</strong>, <strong>Service Account User</strong>, <strong>Project Billing Manager</strong>, and <strong>Service Usage Admin</strong></li>
+              <li>Grant roles: <strong>Compute Admin</strong>, <strong>Service Account User</strong>, <strong>Project Billing Manager</strong>, <strong>Service Usage Admin</strong>, <strong>Workload Identity Pool Admin</strong>, and <strong>Security Admin</strong> (or <strong>Project IAM Admin</strong>)</li>
               <li>After creation, click <strong>Actions → Manage keys → Add key → Create new key</strong></li>
               <li>Select <strong>JSON</strong> and download</li>
               <li>Open the JSON file, copy all content, paste below</li>

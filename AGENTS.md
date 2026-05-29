@@ -259,3 +259,42 @@ This triggers the production deployment workflow.
 firebase use staging
 firebase deploy --only hosting,firestore
 ```
+
+---
+
+## 🛠️ Resolved Issues, Fixes & Current Active Status (State Preservation)
+
+As of May 20, 2026, the codebase has been extensively debugged, hardened, and streamlined. The following state preserves all critical context, resolved issues, and added automations:
+
+### 1. VM Startup & Runtime Fixes
+* **Missing Passphrase Metadata:** The GCP VM creation calls in `src/infra-setup.tsx` previously omitted the `encryption_passphrase` metadata key, causing the startup script's `curl` request to return a 404 HTML error page on the VM. This multi-line HTML code was written directly into `kimaki.service`, corrupting systemd's parser.
+  * *Fix:* Added `encryption_passphrase` to VM metadata items in `src/infra-setup.tsx` and added robust Bash Indirect Reference sanitization inside `src/framework/infra-setup/scripts.ts` to strip any potential HTML error responses from failed metadata curls.
+* **Invalid ExecStart Subcommand:** The systemd service was executing `/usr/bin/node $KIMAKI_PATH start`. However, the `kimaki` CLI has no `start` command—causing the service to exit with status `1`.
+  * *Fix:* Changed the command to `/usr/bin/node $KIMAKI_PATH` (without `start`) in `scripts.ts`.
+* **Missing `unzip` Dependency:** The VM startup script was missing the `unzip` package. When `kimaki` booted and tried to auto-install `bun` from the web, the installer crashed with `error: unzip is required to install bun`.
+  * *Fix:* Added `unzip` to the dependencies in `sudo apt-get install -y` in `scripts.ts`.
+* **Missing `KIMAKI_BOT_TOKEN` Env Variable:** The systemd service was only configuring `DISCORD_BOT_TOKEN`, but `kimaki` specifically looks for `KIMAKI_BOT_TOKEN`. Without it, `kimaki` fell back to launching its interactive TTY onboarding session, causing the non-TTY systemd daemon to crash.
+  * *Fix:* Configured the systemd service in `scripts.ts` to export `Environment="KIMAKI_BOT_TOKEN=$DISCORD_BOT_TOKEN"`.
+* **Empty Git Repository:** The VM was initializing a blank Git repo and pushing only a boilerplate `.gitignore` and `README.md`.
+  * *Fix:* Updated the startup script (`scripts.ts`) to programmatically clone the actual public template codebase (`https://github.com/kallhoffa/SecureAgentBase.git`) on the VM, clear its `.git` folder, and run a fresh `git init` to build a clean Git history starting with an "Initial commit". Includes a robust fallback if cloning fails.
+
+### 2. GitHub Actions CI/CD Pipeline Fixes
+* **Aligned GitHub Context Variables:** The setup wizard uploads public Firebase configurations as **GitHub Actions Variables** (hitting `/repos/.../actions/variables`), but the staging and production workflows (`firebase-deploy-staging.yml` and `firebase-deploy.yml`) were trying to access them via the `secrets` context (e.g. `${{ secrets.FIREBASE_API_KEY_STAGING }}`).
+  * *Fix:* Edited both workflow files to access these properties through the correct `${{ vars... }}` context.
+* **Dynamic Target Project Flags:** Both pipelines previously deployed via `-P staging` or default alias flags, which failed because the newly cloned repos did not contain local `.firebaserc` project alias configs.
+  * *Fix:* Replaced the alias flags with explicit project targets (`--project ${{ vars.FIREBASE_PROJECT_ID_... }}`).
+* **Resolved React Async State Race Condition:** In Step 5 (OIDC setup), OIDC credentials were created asynchronously, setting state variables that weren't yet available when `uploadGitHubVars()` was fired in the same click handler—causing critical variables (`GCP_WIF_PROVIDER`) to be skipped during upload.
+  * *Fix:* Refactored `setupOidcInfrastructure()` to return its data directly, passing it straight to `uploadGitHubVars(oidcData)` to bypass the React rendering lag.
+* **Resolved `204 No Content` Crash:** Updating existing repository variables on GitHub returns a `204 No Content` response with an empty body. Calling `response.json()` on these empty bodies caused `Unexpected end of JSON input` crashes.
+  * *Fix:* Updated both `gcpApiFetch` and `githubApiFetch` to check for status `204` or empty bodies, returning a clean `{}` instead of parsing empty strings.
+
+### 3. Setup Wizard Streamlining & Automation (New UX)
+* **🔌 Direct Google Cloud Connection:** Since Google OAuth access tokens are short-lived (1 hour) and are never saved persistently in Firestore for safety reasons, we added a clear **"Connect Google Cloud Account"** button directly inside **Step 2** and **Step 4** when the token is missing/expired. This auto-recovers credentials on page load or token expiry instantly.
+* **⚡ One-Click Service Account Creation (Step 2):** If connected to Google Cloud, Step 2 now features a **Programmatic Auto-Generation** section. The user simply selects their project and clicks a button—and our client-side app programmatically creates the service account, assigns all six required IAM permissions, generates a JSON key, and loads it into the setup automatically.
+* **⚡ One-Click GCP Project Creation:** Added an inline **`+ Create New Project`** toggle right inside Step 2 and Step 4. Users can type a new project name, programmatically create it, and automatically select it directly from our portal.
+* **⚡ One-Click Firebase Auto-Configuration (Step 4):** Programmatically queries the **Firebase Management API**, lists or creates the Firebase Web App, fetches its Web SDK config, and populates both staging and production project environments instantly.
+* **🤖 Auto-Extract Discord Client ID (Step 6):** Pasting your Bot Token instantly decodes the base64 prefix in your browser and automatically populates your Client ID.
+* **🤖 Pre-Baked Scopes:** Updated the Discord invite link generator to pre-bake the correct scopes directly: `scope=bot%20applications.commands` so slash commands register instantly.
+* **💾 Saved Config Cards:** If you reload the page and configurations are already stored in Firestore/localStorage, Step 2 and Step 4 will show beautiful **"Configuration Active" success cards** detailing your active Project IDs with "Clear & Reconfigure" options, eliminating confusing blank fields.
+
+Every fix has been fully built, linted, verified, and successfully deployed live to **https://agentbase.web.app**!

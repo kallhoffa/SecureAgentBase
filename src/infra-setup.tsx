@@ -99,6 +99,20 @@ const loadFromLocalStorage = () => {
   }
 };
 
+const extractClientIdFromToken = (token) => {
+  if (!token || !token.includes('.')) return '';
+  try {
+    const part = token.split('.')[0];
+    const decoded = window.atob(part);
+    if (/^\d{17,21}$/.test(decoded)) {
+      return decoded;
+    }
+  } catch (err) {
+    console.error('Could not decode client ID from token', err);
+  }
+  return '';
+};
+
 const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -163,6 +177,16 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
 
   const [billingEnabled, setBillingEnabled] = useState(null);
   const [billingChecking, setBillingChecking] = useState(false);
+  const [billingAccounts, setBillingAccounts] = useState([]);
+  const [selectedBillingAccount, setSelectedBillingAccount] = useState('');
+  const [linkingBilling, setLinkingBilling] = useState(false);
+  const [billingLinkedSuccess, setBillingLinkedSuccess] = useState(false);
+
+  const [autoGeneratingSa, setAutoGeneratingSa] = useState(false);
+  const [saAutoProgress, setSaAutoProgress] = useState('');
+  const [autoGenProjectId, setAutoGenProjectId] = useState('');
+
+  const [passphraseSaved, setPassphraseSaved] = useState(false);
 
   const [step3Status, setStep3Status] = useState('idle');
   const [step3Message, setStep3Message] = useState('');
@@ -185,6 +209,16 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
   const [githubVarUploading, setGithubVarUploading] = useState(false);
   const [githubVarUploaded, setGithubVarUploaded] = useState(false);
   const [githubRepoName, setGithubRepoName] = useState('');
+
+  const [firebaseProjects, setFirebaseProjects] = useState([]);
+  const [loadingFirebaseProjects, setLoadingFirebaseProjects] = useState(false);
+  const [selectedFirebaseStagingProject, setSelectedFirebaseStagingProject] = useState('');
+  const [selectedFirebaseProductionProject, setSelectedFirebaseProductionProject] = useState('');
+  const [creatingFirebaseProject, setCreatingFirebaseProject] = useState(false);
+  const [newFirebaseProjectName, setNewFirebaseProjectName] = useState('');
+  const [newFirebaseProjectId, setNewFirebaseProjectId] = useState('');
+  const [autoConfiguringFirebase, setAutoConfiguringFirebase] = useState(false);
+  const [firebaseAutoConfigMessage, setFirebaseAutoConfigMessage] = useState('');
 
   const addStep3Log = (message) => {
     const timestamp = new Date().toLocaleTimeString();
@@ -398,6 +432,189 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     }
   };
 
+  const listFirebaseProjects = async (token) => {
+    const resp = await fetch('https://firebase.googleapis.com/v1beta1/projects', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (!resp.ok) {
+      const err = await resp.text().catch(() => resp.statusText);
+      throw new Error(`Failed to list Firebase projects (${resp.status}): ${err}`);
+    }
+    const data = await resp.json();
+    return data.results || [];
+  };
+
+  const addFirebaseToProject = async (token, gcpProjectId) => {
+    const resp = await fetch(`https://firebase.googleapis.com/v1beta1/projects/${gcpProjectId}:addFirebase`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+    });
+    if (!resp.ok) {
+      const err = await resp.text().catch(() => resp.statusText);
+      if (err.includes('ALREADY_FIREBASE_PROJECT') || err.includes('already exists')) {
+        return { alreadyExists: true };
+      }
+      throw new Error(`Failed to add Firebase to project (${resp.status}): ${err}`);
+    }
+    return await resp.json();
+  };
+
+  const listFirebaseWebApps = async (token, firebaseProjectId) => {
+    const resp = await fetch(`https://firebase.googleapis.com/v1beta1/projects/${firebaseProjectId}/webApps`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (!resp.ok) {
+      const err = await resp.text().catch(() => resp.statusText);
+      throw new Error(`Failed to list web apps (${resp.status}): ${err}`);
+    }
+    const data = await resp.json();
+    return data.apps || [];
+  };
+
+  const createFirebaseWebApp = async (token, firebaseProjectId, displayName) => {
+    const resp = await fetch(`https://firebase.googleapis.com/v1beta1/projects/${firebaseProjectId}/webApps`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ displayName })
+    });
+    if (!resp.ok) {
+      const err = await resp.text().catch(() => resp.statusText);
+      throw new Error(`Failed to create web app (${resp.status}): ${err}`);
+    }
+    return await resp.json();
+  };
+
+  const getFirebaseWebAppConfig = async (token, firebaseProjectId, appId) => {
+    const resp = await fetch(`https://firebase.googleapis.com/v1beta1/projects/${firebaseProjectId}/webApps/${appId}/config`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (!resp.ok) {
+      const err = await resp.text().catch(() => resp.statusText);
+      throw new Error(`Failed to get web app config (${resp.status}): ${err}`);
+    }
+    return await resp.json();
+  };
+
+  const fetchFirebaseProjects = async () => {
+    if (!gcpAccessToken) {
+      setError('Please sign in to Google (Step 1) to load Firebase projects.');
+      return;
+    }
+    setLoadingFirebaseProjects(true);
+    setFirebaseAutoConfigMessage('Loading Firebase projects...');
+    setError(null);
+    try {
+      const projects = await listFirebaseProjects(gcpAccessToken);
+      setFirebaseProjects(projects);
+      setFirebaseAutoConfigMessage(`Found ${projects.length} Firebase project(s).`);
+    } catch (e) {
+      console.error(e);
+      setError('Failed to load Firebase projects: ' + e.message);
+      setFirebaseAutoConfigMessage('');
+    } finally {
+      setLoadingFirebaseProjects(false);
+    }
+  };
+
+  const handleCreateFirebaseProject = async () => {
+    if (!gcpAccessToken || !newFirebaseProjectId) {
+      setError('Please enter a project ID and ensure you are signed in to Google.');
+      return;
+    }
+    setCreatingFirebaseProject(true);
+    setFirebaseAutoConfigMessage(`Adding Firebase to ${newFirebaseProjectId}...`);
+    setError(null);
+    try {
+      await addFirebaseToProject(gcpAccessToken, newFirebaseProjectId);
+      setFirebaseAutoConfigMessage(`Firebase added to ${newFirebaseProjectId}! Reloading project list...`);
+      await fetchFirebaseProjects();
+      setNewFirebaseProjectName('');
+      setNewFirebaseProjectId('');
+    } catch (e) {
+      console.error(e);
+      setError('Failed to create Firebase project: ' + e.message);
+      setFirebaseAutoConfigMessage('');
+    } finally {
+      setCreatingFirebaseProject(false);
+    }
+  };
+
+  const autoConfigureFirebaseProject = async (projectId, environment) => {
+    if (!gcpAccessToken) throw new Error('No GCP access token available');
+
+    setFirebaseAutoConfigMessage(`${environment}: Checking Firebase setup for ${projectId}...`);
+
+    const projects = await listFirebaseProjects(gcpAccessToken);
+    const existingProject = projects.find(p => p.projectId === projectId || p.projectNumber === projectId);
+
+    if (!existingProject) {
+      setFirebaseAutoConfigMessage(`${environment}: Adding Firebase to ${projectId}...`);
+      await addFirebaseToProject(gcpAccessToken, projectId);
+    }
+
+    setFirebaseAutoConfigMessage(`${environment}: Checking web apps...`);
+    const webApps = await listFirebaseWebApps(gcpAccessToken, projectId);
+
+    let appId;
+    if (webApps.length > 0) {
+      appId = webApps[0].appId;
+      setFirebaseAutoConfigMessage(`${environment}: Using existing web app ${appId}`);
+    } else {
+      setFirebaseAutoConfigMessage(`${environment}: Creating web app...`);
+      const newApp = await createFirebaseWebApp(gcpAccessToken, projectId, `SecureAgent ${environment}`);
+      appId = newApp.appId;
+    }
+
+    setFirebaseAutoConfigMessage(`${environment}: Fetching SDK config...`);
+    const config = await getFirebaseWebAppConfig(gcpAccessToken, projectId, appId);
+
+    return config;
+  };
+
+  const handleAutoConfigureFirebase = async () => {
+    if (!gcpAccessToken) {
+      setError('Please sign in to Google (Step 1) to enable auto-configuration.');
+      return;
+    }
+    if (!selectedFirebaseStagingProject && !selectedFirebaseProductionProject) {
+      setError('Please select at least one Firebase project.');
+      return;
+    }
+
+    setAutoConfiguringFirebase(true);
+    setFirebaseAutoConfigMessage('Starting Firebase auto-configuration...');
+    setError(null);
+
+    try {
+      if (selectedFirebaseStagingProject) {
+        const stagingConfig = await autoConfigureFirebaseProject(selectedFirebaseStagingProject, 'Staging');
+        const stagingJson = JSON.stringify(stagingConfig, null, 2);
+        setFirebaseConfigStaging(stagingJson);
+        setFirebaseStagingData(stagingConfig);
+      }
+
+      if (selectedFirebaseProductionProject) {
+        const productionConfig = await autoConfigureFirebaseProject(selectedFirebaseProductionProject, 'Production');
+        const productionJson = JSON.stringify(productionConfig, null, 2);
+        setFirebaseConfigProduction(productionJson);
+        setFirebaseProductionData(productionConfig);
+      }
+
+      setFirebaseAutoConfigMessage('Firebase auto-configuration complete!');
+      addNotification('Firebase projects auto-configured successfully!', 'success');
+
+      if (!expandedSteps.includes(5)) {
+        setExpandedSteps(prev => [...prev, 5]);
+      }
+    } catch (e) {
+      console.error(e);
+      setError('Firebase auto-configuration failed: ' + e.message);
+      setFirebaseAutoConfigMessage('');
+    } finally {
+      setAutoConfiguringFirebase(false);
+    }
+  };
+
   const setGitHubVariable = async (pat, repoFull, name, value) => {
     // Try to create, fall back to update
     try {
@@ -546,7 +763,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       aud: 'https://oauth2.googleapis.com/token',
       iat: now,
       exp: now + 3600,
-      scope: 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/compute https://www.googleapis.com/auth/devstorage.full_control'
+      scope: 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/compute https://www.googleapis.com/auth/devstorage.full_control https://www.googleapis.com/auth/cloud-billing.readonly'
     };
 
     const header = { alg: 'RS256', typ: 'JWT' };
@@ -723,11 +940,245 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
         setBillingEnabled(enabled);
         return enabled;
       }
+      if (response.status === 401 || response.status === 403) {
+        console.warn(`Billing API returned ${response.status} — insufficient OAuth scope or API not enabled. Treating as unknown.`);
+        setBillingEnabled(null);
+        return null;
+      }
+      const errText = await response.text().catch(() => response.statusText);
+      console.error(`Billing API error ${response.status}: ${errText}`);
     } catch (e) {
       console.error('Error checking billing:', e);
     }
     setBillingEnabled(false);
     return false;
+  };
+
+  const fetchBillingAccounts = async () => {
+    if (!gcpAccessToken) return [];
+    try {
+      const response = await fetch(`https://cloudbilling.googleapis.com/v1/billingAccounts`, {
+        headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        const accounts = data.billingAccounts || [];
+        setBillingAccounts(accounts);
+        if (accounts.length > 0) {
+          setSelectedBillingAccount(accounts[0].name);
+        }
+        return accounts;
+      }
+      if (response.status === 401 || response.status === 403) {
+        console.warn(`Billing API returned ${response.status} — insufficient OAuth scope or API not enabled.`);
+      }
+    } catch (e) {
+      console.error('Error fetching billing accounts:', e);
+    }
+    return [];
+  };
+
+  const linkBillingAccount = async () => {
+    if (!projectId || !gcpAccessToken || !selectedBillingAccount) return;
+    setLinkingBilling(true);
+    setError(null);
+    try {
+      const response = await fetch(`https://cloudbilling.googleapis.com/v1/projects/${projectId}/billingInfo`, {
+        method: 'PUT',
+        headers: {
+          'Authorization': `Bearer ${gcpAccessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ billingAccountName: selectedBillingAccount })
+      });
+      if (response.ok) {
+        setBillingLinkedSuccess(true);
+        setBillingEnabled(true);
+        addNotification('Billing account linked successfully!', 'success');
+      } else if (response.status === 401 || response.status === 403) {
+        const errText = await response.text().catch(() => response.statusText);
+        console.error(`Billing API ${response.status}: ${errText}`);
+        setError('Cannot link billing via API — insufficient permissions. Please link billing manually in the GCP Console.');
+      } else {
+        const err = await response.json();
+        setError(err.error?.message || 'Failed to link billing account');
+      }
+    } catch (e) {
+      console.error('Error linking billing account:', e);
+      setError(e.message || 'Error linking billing account');
+    } finally {
+      setLinkingBilling(false);
+    }
+  };
+
+  const createServiceAccountProgrammatically = async (token, gcpProjectId) => {
+    const accountId = 'secureagent';
+    const email = `${accountId}@${gcpProjectId}.iam.gserviceaccount.com`;
+    
+    try {
+      const checkResp = await fetch(`https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts/${email}`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (checkResp.ok) {
+        return email;
+      }
+    } catch (e) {
+      console.log('SA check failed, attempting creation...', e);
+    }
+
+    const resp = await fetch(`https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        accountId: accountId,
+        serviceAccount: {
+          displayName: 'SecureAgent Service Account'
+        }
+      })
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json();
+      throw new Error(err.error?.message || 'Failed to create service account');
+    }
+
+    return email;
+  };
+
+  const grantGcpRolesProgrammatically = async (token, gcpProjectId, saEmail) => {
+    const roles = [
+      'roles/compute.admin',
+      'roles/iam.serviceAccountUser',
+      'roles/billing.projectManager',
+      'roles/serviceusage.serviceUsageAdmin',
+      'roles/iam.workloadIdentityPoolAdmin',
+      'roles/iam.securityAdmin'
+    ];
+
+    const policyResp = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${gcpProjectId}:getIamPolicy`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+
+    if (!policyResp.ok) {
+      const err = await policyResp.json();
+      throw new Error(err.error?.message || 'Failed to retrieve IAM policy');
+    }
+
+    const policy = await policyResp.json();
+    const bindings = policy.bindings || [];
+
+    roles.forEach(role => {
+      let binding = bindings.find(b => b.role === role);
+      if (!binding) {
+        binding = { role, members: [] };
+        bindings.push(binding);
+      }
+      if (!binding.members.includes(`serviceAccount:${saEmail}`)) {
+        binding.members.push(`serviceAccount:${saEmail}`);
+      }
+    });
+
+    const setPolicyResp = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${gcpProjectId}:setIamPolicy`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ policy: { bindings, etag: policy.etag } })
+    });
+
+    if (!setPolicyResp.ok) {
+      const err = await setPolicyResp.json();
+      throw new Error(err.error?.message || 'Failed to set IAM policy roles');
+    }
+  };
+
+  const deleteExistingServiceAccountKeys = async (token, gcpProjectId, saEmail) => {
+    const listResp = await fetch(`https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts/${saEmail}/keys`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+
+    if (!listResp.ok) return;
+
+    const listData = await listResp.json();
+    const keys = listData.keys || [];
+
+    for (const key of keys) {
+      if (key.keyType === 'USER_MANAGED') {
+        await fetch(`https://iam.googleapis.com/v1/${key.name}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+      }
+    }
+  };
+
+  const generateServiceAccountKeyProgrammatically = async (token, gcpProjectId, saEmail) => {
+    await deleteExistingServiceAccountKeys(token, gcpProjectId, saEmail);
+
+    const resp = await fetch(`https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts/${saEmail}/keys`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json();
+      throw new Error(err.error?.message || 'Failed to generate service account key');
+    }
+
+    const keyData = await resp.json();
+    const decodedKey = window.atob(keyData.privateKeyData);
+    return JSON.parse(decodedKey);
+  };
+
+  const handleAutoGenerateServiceAccount = async (targetProjectId) => {
+    if (!gcpAccessToken) {
+      setError('Please sign in to Google (Step 1) to enable auto-generation.');
+      return;
+    }
+    setAutoGeneratingSa(true);
+    setSaAutoProgress('Creating service account...');
+    setError(null);
+
+    try {
+      const token = gcpAccessToken;
+      const saEmail = await createServiceAccountProgrammatically(token, targetProjectId);
+      
+      setSaAutoProgress('Assigning IAM permissions (this takes a few seconds)...');
+      await grantGcpRolesProgrammatically(token, targetProjectId, saEmail);
+      
+      setSaAutoProgress('Generating security key file...');
+      const keyJson = await generateServiceAccountKeyProgrammatically(token, targetProjectId, saEmail);
+      
+      setServiceAccountJson(keyJson);
+      setProjectId(targetProjectId);
+      setStep2Complete(true);
+      setStep3Complete(true);
+      
+      setExpandedSteps(prev => [...prev.filter(s => s !== 2 && s !== 3), 4]);
+      setSaAutoProgress('');
+      
+      await saveConfig({
+        gcp_project_id: targetProjectId,
+        service_account_configured: true,
+      });
+      
+      addOidcLog('Service Account automatically generated and configured successfully!');
+      addNotification('Service Account automatically generated and configured successfully!', 'success');
+    } catch (e) {
+      console.error(e);
+      setError('Auto-generation failed: ' + e.message);
+      setSaAutoProgress('');
+    } finally {
+      setAutoGeneratingSa(false);
+    }
   };
 
   const hasGcpAccess = () => {
@@ -756,8 +1207,8 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
   const isStepCompleted = (step) => {
     if (step === 1) return !!user;
     if (step === 2) return !!serviceAccountJson;
-    if (step === 3) return !!(firebaseStagingData?.projectId && firebaseProductionData?.projectId);
-    if (step === 4) return !!githubPat;
+    if (step === 3) return step3Complete;
+    if (step === 4) return !!(firebaseStagingData?.projectId && firebaseProductionData?.projectId);
     if (step === 5) return !!githubPat;
     if (step === 6) return !!discordBotToken; // Step 6: Discord Bot
     if (step === 7) return !!vmIp; // Step 7: Create VM
@@ -842,7 +1293,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     if (!googleClient) return null;
     return googleClient.accounts.oauth2.initTokenClient({
       client_id: clientId,
-      scope: 'https://www.googleapis.com/auth/cloud-platform',
+      scope: 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/cloud-billing.readonly',
       callback: async (response) => {
         if (response.error) {
           console.error('Google OAuth error:', response.error);
@@ -872,6 +1323,12 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       },
     });
   };
+
+  useEffect(() => {
+    if (gcpProjects.length > 0 && !autoGenProjectId) {
+      setAutoGenProjectId(gcpProjects[0].projectId);
+    }
+  }, [gcpProjects, autoGenProjectId]);
 
   const createGcpProject = async () => {
     if (!newProjectName.trim()) {
@@ -1249,7 +1706,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
         
         if (!formProgress?.step1Complete && configData.gcp_project_id) setStep1Complete(true);
         if (!formProgress?.step2Complete && configData.gcp_project_id && configData.service_account_configured) setStep2Complete(true);
-        if (!formProgress?.step3Complete && configData.vm_ip) {
+        if (!formProgress?.step3Complete && (configData.step3_complete || (configData.gcp_project_id && configData.billing_enabled))) {
           setStep3Complete(true);
         }
         
@@ -1416,10 +1873,11 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       ...configData,
       gcp_project_id: projectId.trim(),
       github_app_installed: githubAppInstalled,
-      service_account_configured: !!serviceAccountKey || gcpConnected,
+      service_account_configured: !!serviceAccountKey || !!serviceAccountJson || gcpConnected,
       vm_ip: vmIp,
-      firebase_staging_project_id: firebaseStagingData?.projectId,
-      firebase_production_project_id: firebaseProductionData?.projectId,
+      step3_complete: step3Complete,
+      firebase_staging_project_id: firebaseStagingData?.projectId || null,
+      firebase_production_project_id: firebaseProductionData?.projectId || null,
       updated_at: new Date().toISOString(),
     };
 
@@ -1558,7 +2016,11 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
   };
 
   const handleDisconnect = async () => {
-    if (!confirm('Are you sure you want to disconnect your infrastructure? This will remove your GCP project linkage.')) {
+    const confirmMessage = selectedProjectId 
+      ? `Are you sure you want to disconnect your infrastructure? This will PERMANENTLY delete the active project "${projectName}" and clear all local setups.`
+      : 'Are you sure you want to disconnect your infrastructure? This will remove your GCP project linkage.';
+      
+    if (!confirm(confirmMessage)) {
       return;
     }
 
@@ -1566,6 +2028,11 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       if (user) {
         const infraRef = doc(db, INFRA_COLLECTION, user.uid);
         await deleteDoc(infraRef);
+        
+        // If an encrypted project is currently selected, delete it from Firestore!
+        if (selectedProjectId) {
+          await deleteProjectFromFirestore(selectedProjectId, db);
+        }
       }
       localStorage.removeItem(LOCALSTORAGE_KEY);
       localStorage.removeItem(FORM_PROGRESS_KEY);
@@ -1578,12 +2045,23 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       setServiceAccountError(null);
       setVmIp('');
       setDiscordBotToken('');
+      setDiscordBotTokenInput('');
+      setDiscordClientId('');
+      setDiscordInviteUrl('');
+      setDiscordGuildId('');
       setGithubAppInstalled(false);
       setGithubPat('');
+      setGithubRepoName('');
       setFirebaseConfigStaging('');
       setFirebaseConfigProduction('');
       setFirebaseStagingData({});
       setFirebaseProductionData({});
+      
+      setSelectedProjectId('');
+      setProjectName('');
+      setPassphrase('');
+      setUseFirestore(false);
+      setPendingDecryptProject(null);
       
       setStep1Complete(false);
       setStep2Complete(false);
@@ -1592,6 +2070,14 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       
       setExpandedSteps([]);
       setError(null);
+
+      // Reload projects list to reflect the deletion
+      if (user) {
+        const updatedProjects = await loadProjectsFromFirestore(user.uid, db);
+        setProjects(updatedProjects);
+      }
+      
+      addNotification('Infrastructure disconnected and project deleted successfully!', 'success');
     } catch (err) {
       console.error('Error disconnecting:', err);
       setError('Failed to disconnect');
@@ -1919,23 +2405,53 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
         )}
 
         <div className="flex flex-wrap items-center gap-4 mb-4">
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={useFirestore}
-              onChange={(e) => setUseFirestore(e.target.checked)}
-              className="w-4 h-4"
-            />
-            <span className="text-sm text-gray-700">Store encrypted credentials in Firestore</span>
-          </label>
-          {useFirestore && (
-            <input
-              type="password"
-              value={passphrase}
-              onChange={(e) => setPassphrase(e.target.value)}
-              placeholder="Enter passphrase (min 4 chars)"
-              className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-400"
-            />
+          {(isCreatingNew || !selectedProjectId) && (
+            <>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={useFirestore}
+                  onChange={(e) => setUseFirestore(e.target.checked)}
+                  className="w-4 h-4"
+                />
+                <span className="text-sm text-gray-700">Store encrypted credentials in Firestore</span>
+              </label>
+              {useFirestore && (
+                <div className="flex items-center gap-2">
+                  {passphraseSaved ? (
+                    <div className="flex items-center gap-2 bg-green-50 border border-green-200 px-3 py-1.5 rounded-lg text-green-700 text-sm font-medium">
+                      <Check size={16} className="text-green-600" />
+                      <span>Passphrase Locked</span>
+                      <button
+                        type="button"
+                        onClick={() => setPassphraseSaved(false)}
+                        className="ml-2 text-xs text-blue-600 hover:text-blue-800 underline font-medium"
+                      >
+                        Change
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <input
+                        type="password"
+                        value={passphrase}
+                        onChange={(e) => setPassphrase(e.target.value)}
+                        placeholder="Enter passphrase (min 4 chars)"
+                        className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-400"
+                      />
+                      <button
+                        type="button"
+                        disabled={passphrase.length < 4}
+                        onClick={() => setPassphraseSaved(true)}
+                        className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white px-3 py-2 rounded-lg text-sm font-semibold"
+                      >
+                        Enter
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+            </>
           )}
           {pendingDecryptProject && (
             <div className="w-full mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
@@ -1998,6 +2514,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                       setDecryptPassphrase('');
                       setDecryptError('');
                       setPassphrase(decryptPassphrase);
+                      setPassphraseSaved(true);
                       setUseFirestore(true);
                     } catch (err) {
                       console.error('Failed to decrypt project:', err);
@@ -2167,13 +2684,96 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                 </div>
               ) : (
                 <>
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                    <p className="text-blue-800 font-medium mb-2">Create a service account in your GCP project:</p>
-                    <ol className="list-decimal list-inside space-y-1 text-blue-800 text-sm">
-                      <li>Go to <a href="https://console.cloud.google.com/iam-admin/serviceaccounts" target="_blank" rel="noopener noreferrer" className="underline">Google Cloud IAM → Service Accounts</a></li>
+                  {!gcpConnected ? (
+                    <div className="bg-blue-50 border border-blue-200 rounded-xl p-5 mb-5 flex items-center justify-between gap-4">
+                      <div className="flex-1">
+                        <h4 className="font-bold text-blue-800 text-sm mb-1">🔌 One-Click Setup Available</h4>
+                        <p className="text-blue-700 text-xs">
+                          Connect your Google Cloud Account to programmatically create and configure your Service Account in one click.
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleConnectGoogle}
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5"
+                      >
+                        <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M12.24 10.285V13.4h6.887c-.275 1.565-1.88 4.604-6.887 4.604-4.33 0-7.866-3.577-7.866-8s3.536-8 7.866-8c2.46 0 4.105 1.025 5.047 1.926l2.427-2.334C17.955 2.192 15.34 1 12.24 1s-10 4.51-10 10 4.51 10 10 10c10.45 0 10-9.285 10-11H12.24z"/></svg>
+                        Connect Google Account
+                      </button>
+                    </div>
+                  ) : (
+                    gcpProjects.length > 0 && (
+                      <div className="bg-green-50 border border-green-200 rounded-xl p-5 mb-5">
+                        <h4 className="font-bold text-green-800 text-md mb-2 flex items-center gap-1.5">
+                          <span className="flex h-5 w-5 items-center justify-center rounded-full bg-green-600 text-xs text-white">A</span>
+                          Programmatic Auto-Generation (Recommended)
+                        </h4>
+                        <p className="text-green-700 text-xs mb-3">
+                          Since you connected your Google Account, we can programmatically create the service account, assign all 6 required roles, generate the JSON key, and configure Step 2 and 3 automatically in one click!
+                        </p>
+                        
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-2">
+                            <label className="text-xs font-semibold text-gray-700">Select GCP Project:</label>
+                            <select
+                              value={autoGenProjectId}
+                              onChange={(e) => setAutoGenProjectId(e.target.value)}
+                              className="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:border-blue-400 text-gray-800 font-medium"
+                            >
+                              <option value="">-- Choose project --</option>
+                              {gcpProjects.map(p => (
+                                <option key={p.projectId} value={p.projectId}>{p.name} ({p.projectId})</option>
+                              ))}
+                            </select>
+                          </div>
+                          
+                          {autoGenProjectId && (
+                            <button
+                              type="button"
+                              onClick={() => handleAutoGenerateServiceAccount(autoGenProjectId)}
+                              disabled={autoGeneratingSa}
+                              className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg text-xs font-semibold flex items-center gap-1.5"
+                            >
+                              {autoGeneratingSa ? (
+                                <>
+                                  <span className="animate-spin">⟳</span>
+                                  {saAutoProgress || 'Auto-Generating...'}
+                                </>
+                              ) : (
+                                <>
+                                  ⚡ Programmatically Setup Service Account
+                                </>
+                              )}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  )}
+
+                  {gcpConnected && gcpProjects.length > 0 && (
+                    <div className="text-center text-xs text-gray-400 my-5 flex items-center justify-center gap-2">
+                      <span className="h-px bg-gray-200 flex-grow"></span>
+                      <span>OR</span>
+                      <span className="h-px bg-gray-200 flex-grow"></span>
+                    </div>
+                  )}
+
+                  <div className="bg-gray-50 border border-gray-200 rounded-xl p-5 mb-4">
+                    <h4 className="font-bold text-gray-700 text-md mb-2 flex items-center gap-1.5">
+                      {gcpConnected && gcpProjects.length > 0 && (
+                        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gray-500 text-xs text-white">B</span>
+                      )}
+                      Manual Setup Fallback
+                    </h4>
+                    <p className="text-gray-600 text-xs mb-3">
+                      If you prefer to configure permissions yourself, follow these manual steps:
+                    </p>
+                    <ol className="list-decimal list-inside space-y-1 text-gray-600 text-xs">
+                      <li>Go to <a href="https://console.cloud.google.com/iam-admin/serviceaccounts" target="_blank" rel="noopener noreferrer" className="underline font-medium">Google Cloud IAM → Service Accounts</a></li>
                       <li>Select your project from the dropdown at the top</li>
                       <li>Click "+ Create Service Account"</li>
-                      <li>Name: <code className="bg-blue-100 px-1">secureagent</code></li>
+                      <li>Name: <code className="bg-gray-200 px-1">secureagent</code></li>
                       <li>Grant roles: <strong>Compute Admin</strong>, <strong>Service Account User</strong>, <strong>Project Billing Manager</strong>, and <strong>Service Usage Admin</strong></li>
                       <li>After creation, click <strong>Actions → Manage keys → Add key → Create new key</strong></li>
                       <li>Select <strong>JSON</strong> and download</li>
@@ -2205,10 +2805,11 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                   </div>
                   
                   <button
-                    onClick={() => {
+                    onClick={async () => {
                       console.log('Continue clicked, serviceAccountJson:', !!serviceAccountJson, serviceAccountJson?.project_id);
                       if (serviceAccountJson && serviceAccountJson.project_id) {
                         setStep2Complete(true);
+                        await saveConfig({});
                         setExpandedSteps(prev => [...prev, 3]);
                       } else {
                         setServiceAccountError('Please paste a valid service account JSON');
@@ -2246,10 +2847,118 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
 
           {expandedSteps.includes(3) && isStepCompleted(2) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {(step3Complete && !expandedSteps.includes(3)) ? (
-                <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
-                  <Check size={20} />
-                  <span className="font-medium">Project configured: {projectId}</span>
+              {isStepCompleted(3) ? (
+                <div className="space-y-4">
+                  <div className="bg-green-50 border border-green-200 text-green-800 p-4 rounded-lg flex items-center justify-between">
+                    <div>
+                      <p className="font-semibold text-sm flex items-center gap-1">
+                        <Check size={18} className="text-green-600" />
+                        GCP Project Configured
+                      </p>
+                      <p className="text-xs text-green-700 mt-1">
+                        Project ID: <code className="bg-green-100 px-1 font-mono rounded">{projectId}</code>
+                      </p>
+                      {billingChecking && (
+                        <p className="text-xs text-blue-600 mt-2 flex items-center gap-1">
+                          <span className="animate-spin text-sm">⟳</span> Checking billing...
+                        </p>
+                      )}
+                      {billingEnabled === false && (
+                        <p className="text-xs text-red-600 mt-2 font-medium">
+                          ⚠️ Billing is disabled on this project. Click "Link Billing" or link one manually.
+                        </p>
+                      )}
+                      {billingEnabled === true && (
+                        <p className="text-xs text-green-600 mt-2 font-medium flex items-center gap-1">
+                          ✓ Billing is linked and active!
+                        </p>
+                      )}
+                      {billingEnabled === null && (
+                        <p className="text-xs text-yellow-600 mt-2 font-medium">
+                          ⚠️ Could not verify billing status via API. Ensure Cloud Billing API is enabled and you have billing permissions.
+                        </p>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setProjectId('');
+                        setStep3Complete(false);
+                      }}
+                      className="text-xs text-red-600 hover:text-red-800 underline font-semibold"
+                    >
+                      Clear & Reconfigure
+                    </button>
+                  </div>
+                  
+                  {billingEnabled === false && (
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                      <p className="text-yellow-800 font-semibold text-xs mb-1">⚠️ Link Billing Account</p>
+                      <p className="text-yellow-700 text-xs mb-3">
+                        GCP strictly requires an active billing account linked to the project to enable Compute Engine and create your VM. Please select your Google billing account below to link it programmatically.
+                      </p>
+                      
+                      {billingAccounts.length > 0 ? (
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-2">
+                            <label className="text-xs font-semibold text-gray-700">Billing Account:</label>
+                            <select
+                              value={selectedBillingAccount}
+                              onChange={(e) => setSelectedBillingAccount(e.target.value)}
+                              className="flex-grow px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:border-blue-400 text-gray-800 font-medium"
+                            >
+                              {billingAccounts.map(acc => (
+                                <option key={acc.name} value={acc.name}>{acc.displayName}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={linkBillingAccount}
+                            disabled={linkingBilling}
+                            className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-400 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"
+                          >
+                            {linkingBilling ? (
+                              <>
+                                <span className="animate-spin">⟳</span>
+                                Linking Billing...
+                              </>
+                            ) : (
+                              <>
+                                Link Selected Billing Account
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="text-xs text-yellow-700">
+                          No billing accounts found on your Google Cloud profile. Please click <a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener noreferrer" className="underline font-semibold text-yellow-800 hover:text-yellow-950">here to configure billing manually</a>, then click <strong>Re-check Billing</strong>.
+                        </div>
+                      )}
+                      
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setBillingChecking(true);
+                          await checkBillingStatus();
+                          setBillingChecking(false);
+                        }}
+                        className="mt-3 text-xs text-yellow-800 underline hover:text-yellow-950 font-semibold block"
+                      >
+                        Re-check Billing Status
+                      </button>
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setExpandedSteps(prev => [...prev.filter(s => s !== 3), 4]);
+                    }}
+                    className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold"
+                  >
+                    Continue to Next Step
+                  </button>
                 </div>
               ) : (
                 <>
@@ -2269,6 +2978,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                       <p className="text-blue-600 text-sm mt-2">
                         From your service account: <code className="bg-blue-100 px-1">{serviceAccountJson.project_id}</code>
                         <button
+                          type="button"
                           onClick={() => setProjectId(serviceAccountJson.project_id)}
                           className="ml-2 text-blue-600 underline text-xs"
                         >
@@ -2277,16 +2987,92 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                       </p>
                     )}
                   </div>
+
+                  {billingEnabled === false && (
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+                      <p className="text-yellow-800 font-semibold text-xs mb-1">⚠️ Link Billing Account</p>
+                      <p className="text-yellow-700 text-xs mb-3">
+                        GCP strictly requires an active billing account linked to the project to enable Compute Engine and create your VM. Please select your Google billing account below to link it programmatically.
+                      </p>
+                      {billingAccounts.length > 0 ? (
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-2">
+                            <label className="text-xs font-semibold text-gray-700">Billing Account:</label>
+                            <select
+                              value={selectedBillingAccount}
+                              onChange={(e) => setSelectedBillingAccount(e.target.value)}
+                              className="flex-grow px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:border-blue-400 text-gray-800 font-medium"
+                            >
+                              {billingAccounts.map(acc => (
+                                <option key={acc.name} value={acc.name}>{acc.displayName}</option>
+                              ))}
+                            </select>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={linkBillingAccount}
+                            disabled={linkingBilling}
+                            className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-400 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"
+                          >
+                            {linkingBilling ? (
+                              <>
+                                <span className="animate-spin">⟳</span>
+                                Linking Billing...
+                              </>
+                            ) : (
+                              <>Link Selected Billing Account</>
+                            )}
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="text-xs text-yellow-700">
+                          No billing accounts found on your Google Cloud profile. Please click <a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener noreferrer" className="underline font-semibold text-yellow-800 hover:text-yellow-950">here to configure billing manually</a>, then click <strong>Re-check Billing</strong>.
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setBillingChecking(true);
+                          await checkBillingStatus();
+                          setBillingChecking(false);
+                        }}
+                        className="mt-3 text-xs text-yellow-800 underline hover:text-yellow-950 font-semibold block"
+                      >
+                        Re-check Billing Status
+                      </button>
+                    </div>
+                  )}
+
                   <button
-                    onClick={() => {
+                    onClick={async () => {
                       if (projectId.trim()) {
+                        setBillingChecking(true);
+                        setError(null);
+                        let billingStatus = null;
+                        try {
+                          billingStatus = await checkBillingStatus();
+                          if (billingStatus === false) {
+                            await fetchBillingAccounts();
+                          }
+                        } catch (err) {
+                          console.error('Error checking billing during Step 3:', err);
+                        } finally {
+                          setBillingChecking(false);
+                        }
+
+                        if (billingStatus === false) {
+                          setError('Billing is disabled on this project. Please link a billing account before continuing.');
+                          return;
+                        }
+
                         setStep3Complete(true);
-                        expandNextStep(3);
+                        await saveConfig({});
+                        setExpandedSteps(prev => [...prev.filter(s => s !== 3), 4]);
                       } else {
                         setError('Please enter a GCP project ID');
                       }
                     }}
-                    disabled={!projectId.trim()}
+                    disabled={!projectId.trim() || billingChecking || linkingBilling}
                     className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg"
                   >
                     Continue
@@ -2315,50 +3101,155 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                 </div>
               ) : (
                 <>
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                    <p className="text-blue-800 font-medium mb-3">Set up Firebase for staging and production:</p>
-                    <p className="text-blue-700 text-sm mb-4">
-                      Follow these steps for <strong>each</strong> environment (staging and production):
-                    </p>
-                    <ol className="list-decimal list-inside space-y-2 text-blue-700 text-sm mb-4">
-                      <li>Go to <a href="https://console.firebase.google.com/" target="_blank" rel="noopener noreferrer" className="underline font-medium">Firebase Console</a></li>
-                      <li>Click "Add project" → enter name (e.g., "my-app-staging") → disable Google Analytics → Create</li>
-                      <li>Once created, click "Build" → "Hosting" → "Get started" → "Continue" (skip the CLI steps)</li>
-                      <li>Click the gear icon ⚙️ → "Project settings"</li>
-                      <li>Scroll to "Your apps" → click the web icon &lt;/&gt; → Register app → "Add Firebase SDK" → copy just the <code className="bg-blue-100 px-1">firebaseConfig</code> object (not the whole script tag)</li>
-                    </ol>
-                    <p className="text-blue-700 text-sm font-medium">
-                      Repeat for both staging and production, then paste both configs below.
-                    </p>
-                  </div>
-                  
-                  <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Staging Firebase SDK config:</label>
-                    <textarea
-                      value={firebaseConfigStaging}
-                      onChange={(e) => setFirebaseConfigStaging(e.target.value)}
-                      placeholder={"{\"apiKey\": \"AIza...\", \"authDomain\": \"my-app-staging.firebaseapp.com\", \"projectId\": \"my-app-staging\", \"storageBucket\": \"my-app-staging.appspot.com\", \"messagingSenderId\": \"123456789\", \"appId\": \"1:123456789:web:abc123\"}"}
-                      className="w-full h-28 px-3 py-2 border-2 border-gray-200 rounded-lg font-mono text-xs focus:outline-none focus:border-blue-400"
-                    />
-                  </div>
+                  {!gcpAccessToken && (
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+                      <p className="text-yellow-800 font-medium mb-2">Google Cloud Connection Required</p>
+                      <p className="text-yellow-700 text-sm mb-3">
+                        Please sign in to Google (Step 1) to enable automatic Firebase project discovery.
+                      </p>
+                      <button
+                        onClick={handleConnectGoogle}
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm"
+                      >
+                        Connect Google Cloud Account
+                      </button>
+                    </div>
+                  )}
 
-                  <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Production Firebase SDK config:</label>
-                    <textarea
-                      value={firebaseConfigProduction}
-                      onChange={(e) => setFirebaseConfigProduction(e.target.value)}
-                      placeholder={"{\"apiKey\": \"AIza...\", \"authDomain\": \"my-app-production.firebaseapp.com\", \"projectId\": \"my-app-production\", \"storageBucket\": \"my-app-production.appspot.com\", \"messagingSenderId\": \"123456789\", \"appId\": \"1:123456789:web:abc123\"}"}
-                      className="w-full h-28 px-3 py-2 border-2 border-gray-200 rounded-lg font-mono text-xs focus:outline-none focus:border-blue-400"
-                    />
+                  {gcpAccessToken && (
+                    <>
+                      {firebaseProjects.length === 0 && !loadingFirebaseProjects && (
+                        <div className="mb-4">
+                          <button
+                            onClick={fetchFirebaseProjects}
+                            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
+                          >
+                            Load Firebase Projects
+                          </button>
+                        </div>
+                      )}
+
+                      {loadingFirebaseProjects && (
+                        <div className="flex items-center gap-2 text-blue-700 mb-4">
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                          <span className="text-sm">{firebaseAutoConfigMessage || 'Loading Firebase projects...'}</span>
+                        </div>
+                      )}
+
+                      {firebaseProjects.length > 0 && (
+                        <div className="space-y-4 mb-4">
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Staging Firebase Project:</label>
+                            <select
+                              value={selectedFirebaseStagingProject}
+                              onChange={(e) => setSelectedFirebaseStagingProject(e.target.value)}
+                              className="w-full px-3 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
+                            >
+                              <option value="">Select a project</option>
+                              {firebaseProjects.map(proj => (
+                                <option key={proj.projectId} value={proj.projectId}>
+                                  {proj.displayName} ({proj.projectId})
+                                </option>
+                              ))}
+                              <option value="__new__">+ Create New Project</option>
+                            </select>
+                          </div>
+
+                          <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-2">Production Firebase Project:</label>
+                            <select
+                              value={selectedFirebaseProductionProject}
+                              onChange={(e) => setSelectedFirebaseProductionProject(e.target.value)}
+                              className="w-full px-3 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
+                            >
+                              <option value="">Select a project</option>
+                              {firebaseProjects.map(proj => (
+                                <option key={proj.projectId} value={proj.projectId}>
+                                  {proj.displayName} ({proj.projectId})
+                                </option>
+                              ))}
+                              <option value="__new__">+ Create New Project</option>
+                            </select>
+                          </div>
+
+                          {(selectedFirebaseStagingProject === '__new__' || selectedFirebaseProductionProject === '__new__') && (
+                            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                              <p className="text-yellow-800 font-medium text-sm mb-2">Create New Firebase Project</p>
+                              <p className="text-yellow-700 text-xs mb-2">
+                                Enter the GCP Project ID to add Firebase to. The project must already exist in Google Cloud.
+                              </p>
+                              <input
+                                type="text"
+                                value={newFirebaseProjectId}
+                                onChange={(e) => setNewFirebaseProjectId(e.target.value)}
+                                placeholder="existing-gcp-project-id"
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mb-2"
+                              />
+                              <button
+                                onClick={handleCreateFirebaseProject}
+                                disabled={creatingFirebaseProject || !newFirebaseProjectId.trim()}
+                                className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-400 text-white px-3 py-1.5 rounded-lg text-sm"
+                              >
+                                {creatingFirebaseProject ? 'Creating...' : 'Add Firebase to Project'}
+                              </button>
+                            </div>
+                          )}
+
+                          <button
+                            onClick={handleAutoConfigureFirebase}
+                            disabled={autoConfiguringFirebase || (!selectedFirebaseStagingProject && !selectedFirebaseProductionProject)}
+                            className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg"
+                          >
+                            {autoConfiguringFirebase ? 'Auto-Configuring...' : 'Auto-Configure Firebase'}
+                          </button>
+                        </div>
+                      )}
+
+                      {firebaseAutoConfigMessage && !autoConfiguringFirebase && !loadingFirebaseProjects && (
+                        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-blue-700 text-sm">
+                          {firebaseAutoConfigMessage}
+                        </div>
+                      )}
+
+                      {autoConfiguringFirebase && (
+                        <div className="flex items-center gap-2 text-blue-700 mb-4">
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                          <span className="text-sm">{firebaseAutoConfigMessage}</span>
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  <div className="border-t border-gray-200 pt-4 mt-4">
+                    <p className="text-sm font-medium text-gray-700 mb-2">Or paste Firebase configs manually:</p>
+                    <div className="mb-4">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Staging Firebase SDK config:</label>
+                      <textarea
+                        value={firebaseConfigStaging}
+                        onChange={(e) => setFirebaseConfigStaging(e.target.value)}
+                        placeholder='{"apiKey": "AIza...", "authDomain": "...", "projectId": "..."}'
+                        className="w-full h-28 px-3 py-2 border-2 border-gray-200 rounded-lg font-mono text-xs focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+
+                    <div className="mb-4">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Production Firebase SDK config:</label>
+                      <textarea
+                        value={firebaseConfigProduction}
+                        onChange={(e) => setFirebaseConfigProduction(e.target.value)}
+                        placeholder='{"apiKey": "AIza...", "authDomain": "...", "projectId": "..."}'
+                        className="w-full h-28 px-3 py-2 border-2 border-gray-200 rounded-lg font-mono text-xs focus:outline-none focus:border-blue-400"
+                      />
+                    </div>
+
+                    <button
+                      onClick={handleSetupFirebase}
+                      disabled={!firebaseConfigStaging.trim() || !firebaseConfigProduction.trim()}
+                      className="bg-gray-600 hover:bg-gray-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg"
+                    >
+                      Configure Firebase Manually
+                    </button>
                   </div>
-                  
-                  <button
-                    onClick={handleSetupFirebase}
-                    disabled={!firebaseConfigStaging.trim() || !firebaseConfigProduction.trim()}
-                    className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg"
-                  >
-                    Configure Firebase
-                  </button>
                 </>
               )}
             </div>
@@ -2537,16 +3428,21 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
 
                      <div className="mb-4">
                        <label className="block text-sm font-medium text-gray-700 mb-2">Discord Bot Token:</label>
-                       <input
-                         type="password"
-                         value={discordBotTokenInput}
-                         onChange={(e) => {
-                           setDiscordBotTokenInput(e.target.value);
-                           setDiscordInviteUrl('');
-                         }}
-                         placeholder="MTE4MzEyODU2MTc0ODQxMDA5OH.GxXxXx.xxxxxxxx"
-                         className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
-                       />
+                        <input
+                          type="password"
+                          value={discordBotTokenInput}
+                          onChange={(e) => {
+                            const token = e.target.value;
+                            setDiscordBotTokenInput(token);
+                            setDiscordInviteUrl('');
+                            const extractedId = extractClientIdFromToken(token);
+                            if (extractedId) {
+                              setDiscordClientId(extractedId);
+                            }
+                          }}
+                          placeholder="MTE4MzEyODU2MTc0ODQxMDA5OH.GxXxXx.xxxxxxxx"
+                          className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
+                        />
                        <p className="text-gray-500 text-xs mt-1">
                          Your bot token from Discord Developer Portal → Bot → Reset Token
                        </p>

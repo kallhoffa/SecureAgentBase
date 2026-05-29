@@ -51,7 +51,7 @@ const Step5 = ({
               type="password"
               value={githubPat}
               onChange={(e) => setGithubPat(e.target.value)}
-              placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+              placeholder="ghp_... or github_pat_..."
               className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
             />
             <p className="text-gray-500 text-xs mt-1">
@@ -67,20 +67,24 @@ const Step5 = ({
           <button
             onClick={async () => {
               setError(null);
-              if (githubPat.trim() && githubPat.startsWith('ghp_')) {
+              if (githubPat.trim() && (githubPat.startsWith('ghp_') || githubPat.startsWith('github_pat_'))) {
                 try {
                   const userData = await githubApiFetch(githubPat, '/user');
                   const owner = userData.login;
                   const repoName = `${owner}/SecureAgentBase`;
                   setGithubRepoName(repoName);
 
-                  await setupOidcInfrastructure();
-
-                  await uploadGitHubVars();
-
-                  if (!expandedSteps.includes(6)) {
-                    setExpandedSteps(prev => [...prev, 6]);
+                  const oidcData = await setupOidcInfrastructure(repoName);
+                  if (!oidcData) {
+                    return; // Error is already logged and setError has been called with the exact detail inside setupOidcInfrastructure
                   }
+
+                  const uploadSuccess = await uploadGitHubVars(oidcData);
+                  if (!uploadSuccess) {
+                    return; // Error is already logged and setError has been called with the exact detail inside uploadGitHubVars
+                  }
+
+                  setExpandedSteps(prev => [...prev.filter(s => s !== 5), 6]);
                 } catch (err) {
                   setError('GitHub setup failed: ' + err.message);
                 }
