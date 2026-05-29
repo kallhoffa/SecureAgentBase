@@ -1187,9 +1187,13 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
 
   const expandNextStep = (currentStepNum) => {
     const nextStep = currentStepNum + 1;
-    if (nextStep <= 9 && !expandedSteps.includes(nextStep)) {
-      setExpandedSteps(prev => [...prev, nextStep]);
-    }
+    setExpandedSteps(prev => {
+      const filtered = prev.filter(s => s !== currentStepNum);
+      if (nextStep <= 9 && !filtered.includes(nextStep)) {
+        return [...filtered, nextStep];
+      }
+      return filtered;
+    });
   };
 
   const toggleStep = (step) => {
@@ -3399,32 +3403,18 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                    <>
                     <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
                       <p className="text-blue-800 font-medium mb-2">Create a Discord bot:</p>
-                      <ol className="list-decimal list-inside space-y-2 text-blue-700 text-sm">
-                        <li>Go to <a href="https://discord.com/developers/applications" target="_blank" rel="noopener noreferrer" className="underline font-medium">Discord Developer Portal</a></li>
-                        <li>Click "New Application" → give it a name (e.g., "Kimaki")</li>
-                        <li>Go to "Bot" in the left sidebar → click "Add Bot"</li>
-                        <li>Go to "OAuth2" → "General" → set <strong>"Default Install Link" to "None"</strong></li>
-                        <li>Go to "Bot" → "General Information" → <strong>disable "Public Bot"</strong></li>
-                        <li>In "Bot", scroll to "Privileged Gateway Intents" → enable <strong>Message Content Intent</strong> (required for Kimaki to read messages)</li>
-                        <li>Go to "Bot" → click "Reset Token" → copy the token</li>
-                        <li>Enter the token below, then click "Generate Invite Link" to invite the bot to your server</li>
-                        <li>Enable Developer Mode in Discord (<strong>User Settings → Advanced → Developer Mode</strong>), then right-click your server name → <strong>Copy Server ID</strong></li>
-                      </ol>
+                       <ol className="list-decimal list-inside space-y-2 text-blue-700 text-sm">
+                         <li>Go to <a href="https://discord.com/developers/applications" target="_blank" rel="noopener noreferrer" className="underline font-medium">Discord Developer Portal</a></li>
+                         <li>Click "New Application" → give it a name (e.g., "Kimaki")</li>
+                         <li>Go to "Bot" in the left sidebar → click "Add Bot"</li>
+                         <li>Go to "OAuth2" → "General" → set <strong>"Default Install Link" to "None"</strong></li>
+                         <li>Go to "Bot" → "General Information" → <strong>disable "Public Bot"</strong></li>
+                         <li>In "Bot", scroll to "Privileged Gateway Intents" → enable <strong>Message Content Intent</strong> (required for Kimaki to read messages)</li>
+                         <li>Go to "Bot" → click "Reset Token" → copy the token</li>
+                         <li>Enter the token below — your Client ID will be extracted automatically</li>
+                         <li>Enable Developer Mode in Discord (<strong>User Settings → Advanced → Developer Mode</strong>), then right-click your server name → <strong>Copy Server ID</strong></li>
+                       </ol>
                     </div>
-
-                    <div className="mb-4">
-                       <label className="block text-sm font-medium text-gray-700 mb-2">Discord Application Client ID:</label>
-                       <input
-                         type="text"
-                         value={discordClientId}
-                         onChange={(e) => setDiscordClientId(e.target.value)}
-                         placeholder="1183128561748410098"
-                         className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
-                       />
-                       <p className="text-gray-500 text-xs mt-1">
-                         Found in Discord Developer Portal → General Information → Application ID (copy and paste this value)
-                       </p>
-                     </div>
 
                      <div className="mb-4">
                        <label className="block text-sm font-medium text-gray-700 mb-2">Discord Bot Token:</label>
