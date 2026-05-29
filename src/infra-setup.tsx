@@ -3736,16 +3736,17 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                                       accessConfigs: [{ type: 'ONE_TO_ONE_NAT' }],
                                     }],
                                      metadata: {
-                                       items: [
-                                         { key: 'startup-script', value: startupScript },
-                                         { key: 'github_token', value: githubPat },
-                                         { key: 'discord_bot_token', value: discordBotToken || '' },
-                                         { key: 'discord_guild_id', value: discordGuildId || '' },
-                                         { key: 'github_owner', value: '' },
-                                         { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
-                                         { key: 'firebase_production', value: firebaseProductionData?.projectId || '' }
-                                       ]
-                                     }
+                                        items: [
+                                          { key: 'startup-script', value: startupScript },
+                                          { key: 'github_pat', value: githubPat },
+                                          { key: 'github_repo', value: githubRepoName },
+                                          { key: 'discord_bot_token', value: discordBotToken || '' },
+                                          { key: 'discord_guild_id', value: discordGuildId || '' },
+                                          { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
+                                          { key: 'firebase_production', value: firebaseProductionData?.projectId || '' },
+                                          { key: 'encryption_passphrase', value: passphrase || '' }
+                                        ]
+                                      }
                                   })
                                 }
                               );
@@ -3978,16 +3979,17 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                                       accessConfigs: [{ type: 'ONE_TO_ONE_NAT' }],
                                     }],
                                      metadata: {
-                                       items: [
-                                         { key: 'startup-script', value: startupScript },
-                                         { key: 'github_token', value: githubPat },
-                                         { key: 'discord_bot_token', value: discordBotToken || '' },
-                                         { key: 'discord_guild_id', value: discordGuildId || '' },
-                                         { key: 'github_owner', value: '' },
-                                         { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
-                                         { key: 'firebase_production', value: firebaseProductionData?.projectId || '' }
-                                       ]
-                                     }
+                                        items: [
+                                          { key: 'startup-script', value: startupScript },
+                                          { key: 'github_pat', value: githubPat },
+                                          { key: 'github_repo', value: githubRepoName },
+                                          { key: 'discord_bot_token', value: discordBotToken || '' },
+                                          { key: 'discord_guild_id', value: discordGuildId || '' },
+                                          { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
+                                          { key: 'firebase_production', value: firebaseProductionData?.projectId || '' },
+                                          { key: 'encryption_passphrase', value: passphrase || '' }
+                                        ]
+                                      }
                                   })
                                 }
                               );
