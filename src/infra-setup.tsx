@@ -631,7 +631,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
   };
 
   const setupOidcInfrastructure = async () => {
-    if (!githubPat || !githubRepoName) return;
+    if (!githubPat || !githubRepoName) return null;
     setOidcSetupStatus('creating');
     setOidcSetupStep('Starting OIDC setup...');
     
@@ -640,7 +640,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       if (!token) {
         setError('Need GCP access token. Please reconnect your Google account or re-upload service account key.');
         setOidcSetupStatus('error');
-        return;
+        return null;
       }
 
       const gcpProject = projectId;
@@ -660,10 +660,12 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       // Create staging deploy SA (if we have staging firebase project)
       const stagingProjectId = firebaseStagingData?.projectId;
       const prodProjectId = firebaseProductionData?.projectId;
+      let stagingSaEmail = '';
+      let prodSaEmail = '';
 
       if (stagingProjectId) {
         setOidcSetupStep('Creating staging deploy service account...');
-        const stagingSaEmail = await createDeployServiceAccount(token, gcpProject, 'firebase-deploy-staging', 'Firebase Staging Deployer');
+        stagingSaEmail = await createDeployServiceAccount(token, gcpProject, 'firebase-deploy-staging', 'Firebase Staging Deployer');
         setGcpSaStagingEmail(stagingSaEmail);
         
         setOidcSetupStep('Granting Firebase roles for staging...');
@@ -675,7 +677,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
 
       if (prodProjectId) {
         setOidcSetupStep('Creating production deploy service account...');
-        const prodSaEmail = await createDeployServiceAccount(token, gcpProject, 'firebase-deploy-prod', 'Firebase Production Deployer');
+        prodSaEmail = await createDeployServiceAccount(token, gcpProject, 'firebase-deploy-prod', 'Firebase Production Deployer');
         setGcpSaProductionEmail(prodSaEmail);
         
         setOidcSetupStep('Granting Firebase roles for production...');
@@ -687,15 +689,22 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
 
       setOidcSetupStatus('done');
       setOidcSetupStep('OIDC infrastructure ready');
+
+      return {
+        wifProvider: providerName,
+        saStaging: stagingSaEmail,
+        saProduction: prodSaEmail
+      };
     } catch (err) {
       console.error('OIDC setup failed:', err);
       setOidcSetupStatus('error');
       setOidcSetupStep(`Failed: ${err.message}`);
       setError('OIDC setup failed: ' + err.message);
+      return null;
     }
   };
 
-  const uploadGitHubVars = async () => {
+  const uploadGitHubVars = async (oidcData) => {
     if (!githubPat || !githubRepoName) return;
     setGithubVarUploading(true);
     
@@ -723,15 +732,15 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
         await setGitHubVariable(githubPat, githubRepoName, 'FIREBASE_MEASUREMENT_ID_PRODUCTION', firebaseProd.measurementId || '');
       }
 
-      // Upload OIDC variables
-      if (gcpWifProviderName) {
-        await setGitHubVariable(githubPat, githubRepoName, 'GCP_WIF_PROVIDER', gcpWifProviderName);
+      // Upload OIDC variables directly from the returned data (bypass React state lag)
+      if (oidcData?.wifProvider) {
+        await setGitHubVariable(githubPat, githubRepoName, 'GCP_WIF_PROVIDER', oidcData.wifProvider);
       }
-      if (gcpSaStagingEmail) {
-        await setGitHubVariable(githubPat, githubRepoName, 'GCP_SA_STAGING', gcpSaStagingEmail);
+      if (oidcData?.saStaging) {
+        await setGitHubVariable(githubPat, githubRepoName, 'GCP_SA_STAGING', oidcData.saStaging);
       }
-      if (gcpSaProductionEmail) {
-        await setGitHubVariable(githubPat, githubRepoName, 'GCP_SA_PRODUCTION', gcpSaProductionEmail);
+      if (oidcData?.saProduction) {
+        await setGitHubVariable(githubPat, githubRepoName, 'GCP_SA_PRODUCTION', oidcData.saProduction);
       }
 
       // Upload app name (user can override this in GitHub settings)
@@ -3326,10 +3335,13 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                           setGithubRepoName(repoName);
 
                           // Set up OIDC infrastructure (WIF pool, provider, SAs)
-                          await setupOidcInfrastructure();
+                          const oidcData = await setupOidcInfrastructure();
+                          if (!oidcData) {
+                            throw new Error('OIDC setup failed — no data returned');
+                          }
 
                           // Upload all GitHub variables and secrets
-                          await uploadGitHubVars();
+                          await uploadGitHubVars(oidcData);
 
                           if (!expandedSteps.includes(6)) {
                             setExpandedSteps(prev => [...prev, 6]);
