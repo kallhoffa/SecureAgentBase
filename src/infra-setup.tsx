@@ -266,26 +266,27 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
 
   const createWorkloadIdentityPool = async (token, gcpProjectId, poolId) => {
     addOidcLog('Creating workload identity pool...');
-    const pool = await gcpApiFetch(
-      `https://iam.googleapis.com/v1/projects/${gcpProjectId}/locations/global/workloadIdentityPools?workloadIdentityPoolId=${poolId}`,
-      token,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          displayName: 'Firebase Deploy Pool',
-          description: 'For GitHub Actions Firebase deployment via OIDC'
-        })
-      }
-    );
-    // If pool already exists, fetch it
-    if (pool.error?.message?.includes('already exists')) {
+    try {
+      const pool = await gcpApiFetch(
+        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/locations/global/workloadIdentityPools?workloadIdentityPoolId=${poolId}`,
+        token,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            displayName: 'Firebase Deploy Pool',
+            description: 'For GitHub Actions Firebase deployment via OIDC'
+          })
+        }
+      );
+      return pool.name;
+    } catch (e) {
+      // If pool already exists (409), fetch it
       const existing = await gcpApiFetch(
         `https://iam.googleapis.com/v1/projects/${gcpProjectId}/locations/global/workloadIdentityPools/${poolId}`,
         token
       );
       return existing.name;
     }
-    return pool.name;
   };
 
   const createWorkloadIdentityProvider = async (token, gcpProjectId, poolId, providerId, repoFullName) => {
@@ -2164,9 +2165,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     }
     
     try {
-      if (!expandedSteps.includes(5)) {
-        setExpandedSteps(prev => [...prev, 5]);
-      }
+      setExpandedSteps(prev => [...prev.filter(s => s !== 4), 5]);
     } catch (err) {
       console.error('Error setting up Firebase:', err);
       setError('Failed to configure Firebase: ' + err.message);
