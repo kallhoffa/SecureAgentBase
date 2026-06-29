@@ -76,3 +76,9 @@ node_modules/
 
 # dataconnect generated files
 .dataconnect
+
+# Local scratchpad / debug notes
+SCRATCHPAD.md
+
+# Windows reserved-name artifact
+nul
