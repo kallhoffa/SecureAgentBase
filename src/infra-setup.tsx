@@ -264,175 +264,6 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     return response.json();
   };
 
-  const createWorkloadIdentityPool = async (token, gcpProjectId, poolId) => {
-    addOidcLog('Creating workload identity pool...');
-    try {
-      const pool = await gcpApiFetch(
-        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/locations/global/workloadIdentityPools?workloadIdentityPoolId=${poolId}`,
-        token,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            displayName: 'Firebase Deploy Pool',
-            description: 'For GitHub Actions Firebase deployment via OIDC'
-          })
-        }
-      );
-      return pool.name;
-    } catch (e) {
-      // If pool already exists (409), fetch it
-      const existing = await gcpApiFetch(
-        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/locations/global/workloadIdentityPools/${poolId}`,
-        token
-      );
-      return existing.name;
-    }
-  };
-
-  const createWorkloadIdentityProvider = async (token, gcpProjectId, poolId, providerId, repoFullName) => {
-    addOidcLog('Creating workload identity provider for GitHub...');
-    try {
-      const provider = await gcpApiFetch(
-        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/locations/global/workloadIdentityPools/${poolId}/providers?workloadIdentityPoolProviderId=${providerId}`,
-        token,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            displayName: 'GitHub Actions',
-            description: 'OIDC provider for GitHub Actions',
-            disabled: false,
-            attributeMapping: {
-              'google.subject': 'assertion.sub',
-              'attribute.actor': 'assertion.actor',
-              'attribute.repository': 'assertion.repository',
-              'attribute.ref': 'assertion.ref'
-            },
-            attributeCondition: `assertion.repository == '${repoFullName}'`,
-            oidc: {
-              issuerUri: 'https://token.actions.githubusercontent.com'
-            }
-          })
-        }
-      );
-      return provider.name;
-    } catch (e) {
-      // If already exists, fetch it
-      const existing = await gcpApiFetch(
-        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/locations/global/workloadIdentityPools/${poolId}/providers/${providerId}`,
-        token
-      );
-      return existing.name;
-    }
-  };
-
-  const createDeployServiceAccount = async (token, gcpProjectId, accountId, displayName) => {
-    addOidcLog(`Creating service account: ${displayName}...`);
-    try {
-      const sa = await gcpApiFetch(
-        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts?accountId=${accountId}`,
-        token,
-        {
-          method: 'POST',
-          body: JSON.stringify({ displayName })
-        }
-      );
-      return sa.email;
-    } catch (e) {
-      const existing = await gcpApiFetch(
-        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts/${accountId}@${gcpProjectId}.iam.gserviceaccount.com`,
-        token
-      );
-      return existing.email;
-    }
-  };
-
-  const grantFirebaseRoles = async (token, firebaseProjectId, saEmail) => {
-    addOidcLog(`Granting Firebase deploy roles to ${saEmail} on ${firebaseProjectId}...`);
-    try {
-      const policy = await gcpApiFetch(
-        `https://cloudresourcemanager.googleapis.com/v1/projects/${firebaseProjectId}:getIamPolicy`,
-        token,
-        { method: 'POST' }
-      );
-
-      const bindings = policy.bindings || [];
-      const existingStaging = bindings.find(b => b.role === 'roles/firebasehosting.admin');
-      const existingFirestore = bindings.find(b => b.role === 'roles/firestore.admin');
-
-      if (!existingStaging || !existingStaging.members.includes(`serviceAccount:${saEmail}`)) {
-        if (!existingStaging) {
-          bindings.push({ role: 'roles/firebasehosting.admin', members: [`serviceAccount:${saEmail}`] });
-        } else {
-          existingStaging.members.push(`serviceAccount:${saEmail}`);
-        }
-      }
-      if (!existingFirestore || !existingFirestore.members.includes(`serviceAccount:${saEmail}`)) {
-        if (!existingFirestore) {
-          bindings.push({ role: 'roles/firestore.admin', members: [`serviceAccount:${saEmail}`] });
-        } else {
-          existingFirestore.members.push(`serviceAccount:${saEmail}`);
-        }
-      }
-
-      await gcpApiFetch(
-        `https://cloudresourcemanager.googleapis.com/v1/projects/${firebaseProjectId}:setIamPolicy`,
-        token,
-        {
-          method: 'POST',
-          body: JSON.stringify({ policy: { bindings, etag: policy.etag } })
-        }
-      );
-    } catch (e) {
-      addOidcLog(`Warning: Could not grant Firebase roles on ${firebaseProjectId}: ${e.message}`);
-      throw e;
-    }
-  };
-
-  const grantPoolAccessToSA = async (token, gcpProjectId, saEmail, poolName) => {
-    addOidcLog(`Granting pool access to impersonate ${saEmail}...`);
-    const member = `principalSet://iam.googleapis.com/${poolName}/attribute.repository/${githubRepoName}`;
-    try {
-      const policy = await gcpApiFetch(
-        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts/${saEmail}:getIamPolicy`,
-        token,
-        { method: 'POST' }
-      );
-      const bindings = policy.bindings || [];
-      const existing = bindings.find(b => b.role === 'roles/iam.workloadIdentityUser');
-      if (!existing || !existing.members.includes(member)) {
-        if (!existing) {
-          bindings.push({ role: 'roles/iam.workloadIdentityUser', members: [member] });
-        } else {
-          existing.members.push(member);
-        }
-      }
-      await gcpApiFetch(
-        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts/${saEmail}:setIamPolicy`,
-        token,
-        {
-          method: 'POST',
-          body: JSON.stringify({ policy: { bindings, etag: policy.etag } })
-        }
-      );
-    } catch (e) {
-      // First-time policy fetch may return 404 if no policy exists
-      const defaultPolicy = {
-        bindings: [{
-          role: 'roles/iam.workloadIdentityUser',
-          members: [member]
-        }]
-      };
-      await gcpApiFetch(
-        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts/${saEmail}:setIamPolicy`,
-        token,
-        {
-          method: 'POST',
-          body: JSON.stringify({ policy: defaultPolicy })
-        }
-      );
-    }
-  };
-
   const listFirebaseProjects = async (token) => {
     const resp = await fetch('https://firebase.googleapis.com/v1beta1/projects', {
       headers: { 'Authorization': `Bearer ${token}` }
@@ -650,12 +481,12 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
 
       // Create workload identity pool
       setOidcSetupStep('Creating workload identity pool...');
-      const poolName = await createWorkloadIdentityPool(token, gcpProject, poolId);
+      const poolName = await createWorkloadIdentityPool(token, gcpProject, poolId, addOidcLog);
       setGcpWifPoolName(poolName);
 
       // Create workload identity provider
       setOidcSetupStep('Creating GitHub OIDC provider...');
-      const providerName = await createWorkloadIdentityProvider(token, gcpProject, poolId, providerId, githubRepoName);
+      const providerName = await createWorkloadIdentityProvider(token, gcpProject, poolId, providerId, githubRepoName, addOidcLog);
       setGcpWifProviderName(providerName);
 
       // Create staging deploy SA (if we have staging firebase project)
@@ -666,26 +497,26 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
 
       if (stagingProjectId) {
         setOidcSetupStep('Creating staging deploy service account...');
-        stagingSaEmail = await createDeployServiceAccount(token, gcpProject, 'firebase-deploy-staging', 'Firebase Staging Deployer');
+        stagingSaEmail = await createDeployServiceAccount(token, gcpProject, 'firebase-deploy-staging', 'Firebase Staging Deployer', addOidcLog);
         setGcpSaStagingEmail(stagingSaEmail);
         
         setOidcSetupStep('Granting Firebase roles for staging...');
-        await grantFirebaseRoles(token, stagingProjectId, stagingSaEmail);
+        await grantFirebaseRoles(token, stagingProjectId, stagingSaEmail, addOidcLog);
         
         setOidcSetupStep('Granting pool access to staging SA...');
-        await grantPoolAccessToSA(token, gcpProject, stagingSaEmail, poolName);
+        await grantPoolAccessToSA(token, gcpProject, stagingSaEmail, poolName, githubRepoName, addOidcLog);
       }
 
       if (prodProjectId) {
         setOidcSetupStep('Creating production deploy service account...');
-        prodSaEmail = await createDeployServiceAccount(token, gcpProject, 'firebase-deploy-prod', 'Firebase Production Deployer');
+        prodSaEmail = await createDeployServiceAccount(token, gcpProject, 'firebase-deploy-prod', 'Firebase Production Deployer', addOidcLog);
         setGcpSaProductionEmail(prodSaEmail);
         
         setOidcSetupStep('Granting Firebase roles for production...');
-        await grantFirebaseRoles(token, prodProjectId, prodSaEmail);
+        await grantFirebaseRoles(token, prodProjectId, prodSaEmail, addOidcLog);
         
         setOidcSetupStep('Granting pool access to production SA...');
-        await grantPoolAccessToSA(token, gcpProject, prodSaEmail, poolName);
+        await grantPoolAccessToSA(token, gcpProject, prodSaEmail, poolName, githubRepoName, addOidcLog);
       }
 
       setOidcSetupStatus('done');
