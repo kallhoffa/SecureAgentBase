@@ -139,6 +139,7 @@ const [loading, setLoading] = useState(true);
   const [gcpProjects, setGcpProjects] = useState([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [gcpAccessToken, setGcpAccessToken] = useState(null);
+  const [gcpTokenExpiry, setGcpTokenExpiry] = useState(0);
   const [apiNotEnabled, setApiNotEnabled] = useState(false);
   const [serviceAccountJson, setServiceAccountJson] = useState(null);
   const [serviceAccountError, setServiceAccountError] = useState(null);
@@ -341,7 +342,12 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       setFirebaseAutoConfigMessage(`Found ${projects.length} Firebase project(s).`);
     } catch (e) {
       console.error(e);
-      setError('Failed to load Firebase projects: ' + e.message);
+      if (e.message?.includes('401')) {
+        setGcpAccessToken(null);
+        setError('Your Google Cloud session has expired. Click "Connect Google Cloud Account" below to refresh, then try again.');
+      } else {
+        setError('Failed to load Firebase projects: ' + e.message);
+      }
       setFirebaseAutoConfigMessage('');
     } finally {
       setLoadingFirebaseProjects(false);
@@ -1145,6 +1151,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
           setError('Failed to connect to Google');
         } else {
           setGcpAccessToken(response.access_token);
+          setGcpTokenExpiry(Date.now() + (((response as any).expires_in || 3600) - 60) * 1000);
           setGcpConnected(true);
           
           const projects = await fetchGcpProjects(response.access_token);
@@ -1533,15 +1540,21 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
 
       if (configData) {
         setProjectId(configData.gcp_project_id || '');
-        setGcpAccessToken(configData.gcp_access_token || null);
+        // GCP access token is NOT restored — it is short-lived (~1h) and would be
+        // expired on resume. The UI shows "Connect Google Cloud Account" when the
+        // token is missing so the user can refresh on demand.
         setGithubAppInstalled(configData.github_app_installed || false);
         setVmIp(configData.vm_ip || '');
         setDiscordBotToken(configData.discord_bot_token || configData.discordBotToken || '');
         setDiscordGuildId(configData.discord_guild_id || configData.discordGuildId || '');
-        setFirebaseConfigStaging(configData.firebase_staging ? JSON.stringify(configData.firebase_staging, null, 2) : '');
-        setFirebaseConfigProduction(configData.firebase_production ? JSON.stringify(configData.firebase_production, null, 2) : '');
-        setFirebaseStagingData(configData.firebase_staging || {});
-        setFirebaseProductionData(configData.firebase_production || {});
+        if (configData.firebase_staging) {
+          setFirebaseConfigStaging(JSON.stringify(configData.firebase_staging, null, 2));
+          setFirebaseStagingData(configData.firebase_staging);
+        }
+        if (configData.firebase_production) {
+          setFirebaseConfigProduction(JSON.stringify(configData.firebase_production, null, 2));
+          setFirebaseProductionData(configData.firebase_production);
+        }
         setGithubPat(configData.github_pat || '');
         
         // Note: service_account_key is NOT restored (private_key sensitive)
@@ -1996,6 +2009,10 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     }
     
     try {
+      await saveConfig({
+        firebase_staging: stagingConfig,
+        firebase_production: productionConfig,
+      });
       setExpandedSteps(prev => [...prev.filter(s => s !== 4), 5]);
     } catch (err) {
       console.error('Error setting up Firebase:', err);
@@ -2068,7 +2085,10 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
   };
 
   const getAccessToken = async () => {
-    if (gcpAccessToken) return gcpAccessToken;
+    if (gcpAccessToken && (!gcpTokenExpiry || Date.now() < gcpTokenExpiry)) return gcpAccessToken;
+    if (gcpAccessToken && gcpTokenExpiry && Date.now() >= gcpTokenExpiry) {
+      setGcpAccessToken(null);
+    }
     if (serviceAccountJson) {
       const saToken = await getServiceAccountToken();
       if (saToken) return saToken;
