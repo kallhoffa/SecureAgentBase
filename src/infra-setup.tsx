@@ -427,26 +427,28 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     setFirebaseAutoConfigMessage('Starting Firebase auto-configuration...');
     setError(null);
 
+    let stagingConfig = null;
+    let productionConfig = null;
     try {
       if (selectedFirebaseStagingProject) {
-        const stagingConfig = await autoConfigureFirebaseProject(selectedFirebaseStagingProject, 'Staging');
-        const stagingJson = JSON.stringify(stagingConfig, null, 2);
-        setFirebaseConfigStaging(stagingJson);
+        stagingConfig = await autoConfigureFirebaseProject(selectedFirebaseStagingProject, 'Staging');
+        setFirebaseConfigStaging(JSON.stringify(stagingConfig, null, 2));
         setFirebaseStagingData(stagingConfig);
       }
 
       if (selectedFirebaseProductionProject) {
-        const productionConfig = await autoConfigureFirebaseProject(selectedFirebaseProductionProject, 'Production');
-        const productionJson = JSON.stringify(productionConfig, null, 2);
-        setFirebaseConfigProduction(productionJson);
+        productionConfig = await autoConfigureFirebaseProject(selectedFirebaseProductionProject, 'Production');
+        setFirebaseConfigProduction(JSON.stringify(productionConfig, null, 2));
         setFirebaseProductionData(productionConfig);
       }
 
       setFirebaseAutoConfigMessage('Firebase auto-configuration complete!');
       addNotification('Firebase projects auto-configured successfully!', 'success');
-
-      if (!expandedSteps.includes(5)) {
-        setExpandedSteps(prev => [...prev, 5]);
+      setExpandedSteps(prev => [...prev.filter(s => s !== 4), 5]);
+      try {
+        await saveConfig({ firebase_staging: stagingConfig, firebase_production: productionConfig });
+      } catch (err) {
+        console.error('Error saving Firebase config:', err);
       }
     } catch (e) {
       console.error(e);
@@ -525,8 +527,14 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     } catch (err) {
       console.error('OIDC setup failed:', err);
       setOidcSetupStatus('error');
-      setOidcSetupStep(`Failed: ${err.message}`);
-      setError('OIDC setup failed: ' + err.message);
+      if (err.message?.includes('401')) {
+        setGcpAccessToken(null);
+        setOidcSetupStep('Failed: Google Cloud session expired');
+        setError('Your Google Cloud session has expired. Click "Connect Google Cloud Account" in Step 4 to refresh, then try again.');
+      } else {
+        setOidcSetupStep(`Failed: ${err.message}`);
+        setError('OIDC setup failed: ' + err.message);
+      }
       return null;
     }
   };
@@ -1529,9 +1537,10 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
 
       if (configData) {
         setProjectId(configData.gcp_project_id || '');
-        // GCP access token is NOT restored — it is short-lived (~1h) and would be
-        // expired on resume. The UI shows "Connect Google Cloud Account" when the
-        // token is missing so the user can refresh on demand.
+        setGcpAccessToken(configData.gcp_access_token || null);
+        // Restored token may be expired (short-lived ~1h). 401 handlers in
+        // fetchFirebaseProjects and setupOidcInfrastructure clear it and prompt
+        // the user to reconnect when that happens.
         setGithubAppInstalled(configData.github_app_installed || false);
         setVmIp(configData.vm_ip || '');
         setDiscordBotToken(configData.discord_bot_token || configData.discordBotToken || '');
