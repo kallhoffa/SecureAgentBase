@@ -1540,10 +1540,10 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
 
       if (configData) {
         setProjectId(configData.gcp_project_id || '');
-        setGcpAccessToken(configData.gcp_access_token || null);
-        // Restored token may be expired (short-lived ~1h). 401 handlers in
-        // fetchFirebaseProjects and setupOidcInfrastructure clear it and prompt
-        // the user to reconnect when that happens.
+        // GCP access token is NOT restored — it's short-lived (~1h) and
+        // gcpTokenExpiry can't be restored either, so getAccessToken() can't
+        // tell if it's valid. The user clicks "Connect Google Cloud Account"
+        // to get a fresh token when needed.
         setGithubAppInstalled(configData.github_app_installed || false);
         setVmIp(configData.vm_ip || '');
         setDiscordBotToken(configData.discord_bot_token || configData.discordBotToken || '');
@@ -3238,7 +3238,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                           // Set up OIDC infrastructure (WIF pool, provider, SAs)
                           const oidcData = await setupOidcInfrastructure();
                           if (!oidcData) {
-                            throw new Error('OIDC setup failed — no data returned');
+                            throw new Error('Google Cloud session expired. Click "Connect Google Cloud Account" in Step 4 to refresh, then try again.');
                           }
 
                           // GitHub variables are uploaded by the VM startup script
