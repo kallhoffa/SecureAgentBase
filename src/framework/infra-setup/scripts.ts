@@ -207,8 +207,10 @@ if command -v npm &> /dev/null; then
   npm install -g kimaki@latest || true
 fi
 
-# Clone the SecureAgentBase template repository
-cd /root
+# Clone the SecureAgentBase template repository into Kimaki's projects dir
+# so kimaki can detect/register it as a project
+mkdir -p /root/.kimaki/projects
+cd /root/.kimaki/projects
 echo "DEBUG: Cloning template repository..."
 
 # Force HTTP/1.1 to avoid GitHub HTTP/2 curl 92 errors on large repos
@@ -263,14 +265,14 @@ if [ -n "$GITHUB_PAT" ]; then
   
   # Create new repo
   if gh repo view "\${REPO_OWNER}/\${REPO_NAME}" 2>/dev/null; then
-    echo "Repo already exists, updating remote..."
+    echo "Repo already exists, force-pushing fresh template..."
     git remote set-url origin "https://\${REPO_OWNER}:$GITHUB_PAT@github.com/\${REPO_OWNER}/\${REPO_NAME}.git" 2>/dev/null || true
+    # Force push: local is a fresh template re-clone that replaces remote history
+    git push -u origin main --force 2>/dev/null || echo "Push may have failed, continuing..."
   else
     gh repo create "$REPO_NAME" --public --source=. --push || { echo "Repo create failed!"; exit 1; }
     git remote add origin "https://\${REPO_OWNER}:$GITHUB_PAT@github.com/\${REPO_OWNER}/\${REPO_NAME}.git" 2>/dev/null || true
   fi
-
-  git push -u origin main 2>/dev/null || echo "Push may have failed, continuing..."
   
   echo "DEBUG: Setting GitHub secrets..."
   gh secret set FIREBASE_STAGING_PROJECT_ID --body "$FIREBASE_STAGING" -R "\${REPO_OWNER}/\${REPO_NAME}" 2>/dev/null || echo "WARNING: Failed to set FIREBASE_STAGING_PROJECT_ID"
@@ -281,6 +283,7 @@ fi
 # Install Kimaki globally and create its configuration
 KIMAKI_CONFIG_DIR=/root/.kimaki
 mkdir -p $KIMAKI_CONFIG_DIR
+echo "$REPO_NAME" > $KIMAKI_CONFIG_DIR/.project_name
 cat > $KIMAKI_CONFIG_DIR/config.yml << 'KIMAKICONF'
 # Kimaki config - auto-generated
 openai_api_key: ""
@@ -297,7 +300,7 @@ After=network.target
 [Service]
 Type=simple
 User=root
-WorkingDirectory=/root/$REPO_NAME
+WorkingDirectory=/root/.kimaki/projects/$REPO_NAME
 ExecStart=/usr/bin/node $KIMAKI_PATH
 Restart=on-failure
 RestartSec=10
@@ -317,6 +320,70 @@ SERVICEEOF
 systemctl daemon-reload
 systemctl enable kimaki.service
 systemctl start kimaki.service
+
+# Create a separate script for project registration (more reliable than inline)
+cat > /usr/local/bin/kimaki-register.sh << 'REGISTER_SCRIPT'
+#!/bin/bash
+set +e
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/root/.bun/bin"
+export HOME=/root
+
+# Wait for kimaki to be ready
+for i in $(seq 1 60); do
+  if systemctl is-active --quiet kimaki.service; then
+    echo "$(date): Kimaki is active, proceeding with registration..." >> /var/log/kimaki-register.log
+    break
+  fi
+  echo "$(date): Waiting for kimaki.service... attempt $i" >> /var/log/kimaki-register.log
+  sleep 5
+done
+
+# Determine KIMAKI_CMD
+if command -v kimaki &> /dev/null; then
+  KIMAKI_CMD="kimaki"
+else
+  KIMAKI_CMD="npx -y kimaki@latest"
+fi
+
+echo "$(date): Using KIMAKI_CMD: $KIMAKI_CMD" >> /var/log/kimaki-register.log
+
+# Try to register the project (retries needed because OpenCode server needs time to start)
+PROJECT_NAME=$(cat /root/.kimaki/.project_name 2>/dev/null || echo "SecureAgentBase")
+for i in $(seq 1 30); do
+  echo "$(date): Attempting to register project (attempt $i)..." >> /var/log/kimaki-register.log
+  if $KIMAKI_CMD project add /root/.kimaki/projects/$PROJECT_NAME >> /var/log/kimaki-register.log 2>&1; then
+    echo "$(date): Project registered successfully!" >> /var/log/kimaki-register.log
+    exit 0
+  fi
+  echo "$(date): Attempt $i failed, retrying in 10s..." >> /var/log/kimaki-register.log
+  sleep 10
+done
+
+echo "$(date): Registration failed after 30 attempts" >> /var/log/kimaki-register.log
+exit 1
+REGISTER_SCRIPT
+
+chmod +x /usr/local/bin/kimaki-register.sh
+
+# Create project registration service
+cat > /etc/systemd/system/kimaki-register.service << 'REGISTER_EOF'
+[Unit]
+Description=Register SecureAgentBase with Kimaki
+After=kimaki.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/bin/kimaki-register.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+REGISTER_EOF
+
+systemctl daemon-reload
+systemctl enable kimaki-register.service
+systemctl start kimaki-register.service
 
 echo "=== Kimaki installation complete! ==="
 echo "Service status:"

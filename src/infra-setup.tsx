@@ -194,6 +194,9 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
   const [step3Logs, setStep3Logs] = useState([]);
   const [vmLogs, setVmLogs] = useState('');
   const [loadingVmLogs, setLoadingVmLogs] = useState(false);
+  const [showInitModal, setShowInitModal] = useState(false);
+  const [vmInitComplete, setVmInitComplete] = useState(false);
+  const [vmInitLogTail, setVmInitLogTail] = useState('');
 
   const [step4Status, setStep4Status] = useState<'idle' | 'enabling' | 'complete' | 'error'>('idle');
   const [step4Message, setStep4Message] = useState('');
@@ -1653,11 +1656,19 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
           const data = await response.json();
           const logs = data.contents || '';
           
+          // Keep a short tail for the init modal
+          setVmInitLogTail(logs.split('\n').slice(-12).join('\n'));
+
           // Parse Kimaki OAuth URL from serial port output
           const oauthUrlMatch = logs.match(/KIMAKI_OAUTH_URL=(https:\/\/discord\.com\/oauth2\/authorize[^"\s]*)/);
           if (oauthUrlMatch && oauthUrlMatch[1] && !kimakiInstallUrl) {
             console.log('Found Kimaki OAuth URL in serial port:', oauthUrlMatch[1]);
             setKimakiInstallUrl(oauthUrlMatch[1]);
+          }
+          
+          // Detect completion marker emitted by the startup script
+          if (logs.includes('=== Kimaki installation complete! ===')) {
+            setVmInitComplete(true);
           }
           
           // Check for setup pending
@@ -2073,6 +2084,9 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       const result = await response.json();
       setVmIp(result.ip);
       await saveConfig({ vm_ip: result.ip });
+      setVmInitComplete(false);
+      setKimakiInstallUrl('');
+      setShowInitModal(true);
     } catch (err) {
       console.error('Error creating VM:', err);
       setError(err.message);
@@ -3272,10 +3286,9 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                       <p className="text-blue-800 font-medium mb-2">Create a Discord bot:</p>
                        <ol className="list-decimal list-inside space-y-2 text-blue-700 text-sm">
                          <li>Go to <a href="https://discord.com/developers/applications" target="_blank" rel="noopener noreferrer" className="underline font-medium">Discord Developer Portal</a></li>
-                         <li>Click "New Application" → give it a name (e.g., "Kimaki")</li>
-                         <li>Go to "Bot" in the left sidebar → click "Add Bot"</li>
-                         <li>Go to "OAuth2" → "General" → set <strong>"Default Install Link" to "None"</strong></li>
-                         <li>Go to "Bot" → "General Information" → <strong>disable "Public Bot"</strong></li>
+                         <li>Click "New Application" → give it a name (e.g., "Kimaki") — a bot is created automatically</li>
+                         <li>Go to <strong>"Installation"</strong> → set <strong>"Install Link" to "None"</strong> (we generate our own invite link below)</li>
+                         <li>Go to "Bot" → disable <strong>"Public Bot"</strong></li>
                          <li>In "Bot", scroll to "Privileged Gateway Intents" → enable <strong>Message Content Intent</strong> (required for Kimaki to read messages)</li>
                          <li>Go to "Bot" → click "Reset Token" → copy the token</li>
                          <li>Enter the token below — your Client ID will be extracted automatically</li>
@@ -4047,6 +4060,71 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
           </div>
         </div>
       </div>
+
+      {showInitModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6">
+            {vmInitComplete ? (
+              <div className="text-center space-y-4">
+                <div className="w-16 h-16 mx-auto bg-green-100 rounded-full flex items-center justify-center">
+                  <Check size={32} className="text-green-600" />
+                </div>
+                <h2 className="text-xl font-bold text-gray-900">VM Initialization Complete!</h2>
+                <p className="text-gray-600 text-sm">
+                  Your Kimaki agent is online and ready. The bot has connected to Discord and registered the SecureAgentBase project.
+                </p>
+                {kimakiInstallUrl && (
+                  <a
+                    href={kimakiInstallUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium"
+                  >
+                    <Bot size={18} />
+                    Authorize Kimaki in Discord
+                  </a>
+                )}
+                <button
+                  onClick={() => setShowInitModal(false)}
+                  className="block mx-auto text-gray-500 hover:text-gray-700 text-sm underline"
+                >
+                  Close
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="flex items-center gap-3">
+                  <div className="animate-spin text-2xl">⟳</div>
+                  <h2 className="text-lg font-bold text-gray-900">VM is initializing...</h2>
+                </div>
+                <p className="text-gray-600 text-sm">
+                  The VM is cloning SecureAgentBase, installing Kimaki, and connecting to Discord. This usually takes 2-3 minutes.
+                </p>
+                <div className="bg-gray-900 text-green-400 p-3 rounded-lg text-xs font-mono max-h-40 overflow-y-auto whitespace-pre-wrap">
+                  {vmInitLogTail || 'Waiting for serial port logs...'}
+                </div>
+                {kimakiInstallUrl && (
+                  <a
+                    href={kimakiInstallUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium w-fit"
+                  >
+                    <Bot size={18} />
+                    Authorize Kimaki in Discord
+                  </a>
+                )}
+                <button
+                  onClick={() => setShowInitModal(false)}
+                  className="block text-gray-500 hover:text-gray-700 text-sm underline"
+                >
+                  Continue in background
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
