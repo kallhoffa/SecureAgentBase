@@ -197,21 +197,21 @@ export const grantFirebaseRoles = async (token: string, firebaseProjectId: strin
     );
 
     const bindings = policy.bindings || [];
-    const existingHosting = bindings.find(b => b.role === 'roles/firebasehosting.admin');
-    const existingFirestore = bindings.find(b => b.role === 'roles/datastore.owner');
+    const existingFirebaseAdmin = bindings.find(b => b.role === 'roles/firebase.admin');
+    const existingDatastoreOwner = bindings.find(b => b.role === 'roles/datastore.owner');
 
-    if (!existingHosting || !existingHosting.members.includes(`serviceAccount:${saEmail}`)) {
-      if (!existingHosting) {
-        bindings.push({ role: 'roles/firebasehosting.admin', members: [`serviceAccount:${saEmail}`] });
+    if (!existingFirebaseAdmin || !existingFirebaseAdmin.members.includes(`serviceAccount:${saEmail}`)) {
+      if (!existingFirebaseAdmin) {
+        bindings.push({ role: 'roles/firebase.admin', members: [`serviceAccount:${saEmail}`] });
       } else {
-        existingHosting.members.push(`serviceAccount:${saEmail}`);
+        existingFirebaseAdmin.members.push(`serviceAccount:${saEmail}`);
       }
     }
-    if (!existingFirestore || !existingFirestore.members.includes(`serviceAccount:${saEmail}`)) {
-      if (!existingFirestore) {
+    if (!existingDatastoreOwner || !existingDatastoreOwner.members.includes(`serviceAccount:${saEmail}`)) {
+      if (!existingDatastoreOwner) {
         bindings.push({ role: 'roles/datastore.owner', members: [`serviceAccount:${saEmail}`] });
       } else {
-        existingFirestore.members.push(`serviceAccount:${saEmail}`);
+        existingDatastoreOwner.members.push(`serviceAccount:${saEmail}`);
       }
     }
 
