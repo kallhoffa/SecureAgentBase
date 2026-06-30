@@ -3230,12 +3230,10 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                             throw new Error('OIDC setup failed — no data returned');
                           }
 
-                          // Upload all GitHub variables and secrets
-                          await uploadGitHubVars(oidcData);
-
-                          if (!expandedSteps.includes(6)) {
-                            setExpandedSteps(prev => [...prev, 6]);
-                          }
+                          // GitHub variables are uploaded by the VM startup script
+                          // after the repo is created (the repo may not exist yet)
+                          setGithubVarUploaded(true);
+                          setExpandedSteps(prev => [...prev.filter(s => s !== 5), 6]);
                         } catch (err) {
                           setError('GitHub setup failed: ' + err.message);
                         }
@@ -3243,10 +3241,10 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                         setError('Please enter a valid GitHub PAT (starts with ghp_)');
                       }
                     }}
-                    disabled={!githubPat.trim() || githubVarUploading}
+                    disabled={!githubPat.trim() || oidcSetupStatus === 'creating'}
                     className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg"
                   >
-                    {githubVarUploading ? 'Setting up OIDC...' : 'Save & Setup OIDC Deployment'}
+                    {oidcSetupStatus === 'creating' ? 'Setting up OIDC...' : 'Save & Setup OIDC Deployment'}
                   </button>
                   
                   {oidcSetupStatus === 'creating' && (
@@ -3263,11 +3261,14 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                       <div className="flex items-center gap-2 text-green-700">
                         <Check size={18} />
                         <span className="text-sm font-medium">
-                          OIDC configured & GitHub variables uploaded. Repo: {githubRepoName}
+                          OIDC infrastructure configured for {githubRepoName}
                         </span>
                       </div>
                       <p className="text-green-600 text-xs mt-1">
                         Staging SA: {gcpSaStagingEmail} | Prod SA: {gcpSaProductionEmail}
+                      </p>
+                      <p className="text-green-600 text-xs mt-1">
+                        GitHub variables will be uploaded to your repo automatically when the VM is created in Step 7.
                       </p>
                     </div>
                   )}
