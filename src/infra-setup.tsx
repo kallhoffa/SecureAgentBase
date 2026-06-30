@@ -3208,6 +3208,21 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                     </p>
                   </div>
                   
+                  {!gcpAccessToken && (
+                    <div className="mb-4 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                      <p className="text-yellow-800 font-medium mb-1">Google Cloud Connection Required</p>
+                      <p className="text-yellow-700 text-sm mb-3">
+                        OIDC setup requires a Google Cloud access token. Connect your account to continue.
+                      </p>
+                      <button
+                        onClick={handleConnectGoogle}
+                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm"
+                      >
+                        Connect Google Cloud Account
+                      </button>
+                    </div>
+                  )}
+
                   {error && (
                     <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
                       {error}
@@ -3234,6 +3249,12 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                             // 404 = repo doesn't exist, use the original name
                           }
                           setGithubRepoName(actualRepoName);
+
+                          // Check for GCP token before attempting OIDC setup
+                          const token = await getAccessToken();
+                          if (!token) {
+                            throw new Error('Google Cloud connection required. Click "Connect Google Cloud Account" above to get a token, then try again.');
+                          }
 
                           // Set up OIDC infrastructure (WIF pool, provider, SAs)
                           // Pass actualRepoName directly to avoid React state race
