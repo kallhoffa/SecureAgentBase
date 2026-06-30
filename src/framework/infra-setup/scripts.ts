@@ -270,12 +270,11 @@ git commit -m "Initial commit of SecureAgentBase template"
 if [ -n "$GITHUB_PAT" ]; then
   echo $GITHUB_PAT | gh auth login --with-token
   
-  # Create new repo
+  # Create new repo or force-push if it already exists
   if gh repo view "\${REPO_OWNER}/\${REPO_NAME}" 2>/dev/null; then
     echo "Repo already exists, force-pushing fresh template..."
-    git remote set-url origin "https://\${REPO_OWNER}:$GITHUB_PAT@github.com/\${REPO_OWNER}/\${REPO_NAME}.git" 2>/dev/null || true
-    # Force push: local is a fresh template re-clone that replaces remote history
-    git push -u origin main --force 2>/dev/null || echo "Push may have failed, continuing..."
+    git remote set-url origin "https://\${REPO_OWNER}:$GITHUB_PAT@github.com/\${REPO_OWNER}/\${REPO_NAME}.git" || true
+    git push -u origin main --force || echo "WARNING: Force push failed, continuing..."
   else
     gh repo create "$REPO_NAME" --public --source=. --push || { echo "Repo create failed!"; exit 1; }
     git remote add origin "https://\${REPO_OWNER}:$GITHUB_PAT@github.com/\${REPO_OWNER}/\${REPO_NAME}.git" 2>/dev/null || true

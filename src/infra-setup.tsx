@@ -2067,7 +2067,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       { key: 'gcp_sa_production', value: gcpSaProductionEmail || '' },
       { key: 'firebase_staging_config', value: firebaseStagingData ? JSON.stringify(firebaseStagingData) : '' },
       { key: 'firebase_production_config', value: firebaseProductionData ? JSON.stringify(firebaseProductionData) : '' },
-      { key: 'vite_app_name', value: (githubRepoName?.split('/')[1] || 'MyApp') },
+      { key: 'vite_app_name', value: projectName || 'MyApp' },
       { key: 'vite_app_mode', value: 'true' },
     ];
     return { items };
@@ -3221,8 +3221,19 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                           // Determine repo owner from PAT
                           const userData = await githubApiFetch(githubPat, '/user');
                           const owner = userData.login;
-                          const repoName = `${owner}/SecureAgentBase`;
-                          setGithubRepoName(repoName);
+                          const desiredRepoName = projectName || 'SecureAgentBase';
+
+                          // Check if repo already exists; append UUID suffix if taken
+                          let actualRepoName = `${owner}/${desiredRepoName}`;
+                          try {
+                            await githubApiFetch(githubPat, `/repos/${owner}/${desiredRepoName}`);
+                            // Repo exists — generate a short UUID suffix
+                            const uuid = Math.random().toString(36).substring(2, 8);
+                            actualRepoName = `${owner}/${desiredRepoName}-${uuid}`;
+                          } catch (checkErr) {
+                            // 404 = repo doesn't exist, use the original name
+                          }
+                          setGithubRepoName(actualRepoName);
 
                           // Set up OIDC infrastructure (WIF pool, provider, SAs)
                           const oidcData = await setupOidcInfrastructure();
