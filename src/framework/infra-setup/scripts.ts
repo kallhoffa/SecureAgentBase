@@ -178,9 +178,16 @@ PASSPHRASE=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instan
 GITHUB_PAT=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/github_pat" -H "Metadata-Flavor: Google")
 DISCORD_BOT_TOKEN=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/discord_bot_token" -H "Metadata-Flavor: Google")
 DISCORD_GUILD_ID=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/discord_guild_id" -H "Metadata-Flavor: Google")
+GCP_WIF_PROVIDER=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/gcp_wif_provider" -H "Metadata-Flavor: Google")
+GCP_SA_STAGING=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/gcp_sa_staging" -H "Metadata-Flavor: Google")
+GCP_SA_PRODUCTION=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/gcp_sa_production" -H "Metadata-Flavor: Google")
+FIREBASE_STAGING_CONFIG=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_staging_config" -H "Metadata-Flavor: Google")
+FIREBASE_PRODUCTION_CONFIG=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_production_config" -H "Metadata-Flavor: Google")
+VITE_APP_NAME=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/vite_app_name" -H "Metadata-Flavor: Google")
+VITE_APP_MODE=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/vite_app_mode" -H "Metadata-Flavor: Google")
 
 # Clean up any potential HTML responses from failed requests or unconfigured metadata
-for var in FIREBASE_STAGING FIREBASE_PRODUCTION PASSPHRASE GITHUB_PAT DISCORD_BOT_TOKEN DISCORD_GUILD_ID; do
+for var in FIREBASE_STAGING FIREBASE_PRODUCTION PASSPHRASE GITHUB_PAT DISCORD_BOT_TOKEN DISCORD_GUILD_ID GCP_WIF_PROVIDER GCP_SA_STAGING GCP_SA_PRODUCTION FIREBASE_STAGING_CONFIG FIREBASE_PRODUCTION_CONFIG VITE_APP_NAME VITE_APP_MODE; do
   val=\${!var}
   if [[ "\$val" =~ "<html" || "\$val" =~ "<!" || "\$val" =~ "<HTML" ]]; then
     eval "\$var=\"\""
@@ -274,10 +281,51 @@ if [ -n "$GITHUB_PAT" ]; then
     git remote add origin "https://\${REPO_OWNER}:$GITHUB_PAT@github.com/\${REPO_OWNER}/\${REPO_NAME}.git" 2>/dev/null || true
   fi
   
-  echo "DEBUG: Setting GitHub secrets..."
+  echo "DEBUG: Setting GitHub secrets and variables..."
+
+  # Set Firebase project ID secrets (used by workflows)
   gh secret set FIREBASE_STAGING_PROJECT_ID --body "$FIREBASE_STAGING" -R "\${REPO_OWNER}/\${REPO_NAME}" 2>/dev/null || echo "WARNING: Failed to set FIREBASE_STAGING_PROJECT_ID"
   gh secret set FIREBASE_PRODUCTION_PROJECT_ID --body "$FIREBASE_PRODUCTION" -R "\${REPO_OWNER}/\${REPO_NAME}" 2>/dev/null || echo "WARNING: Failed to set FIREBASE_PRODUCTION_PROJECT_ID"
-  echo "DEBUG: GitHub secrets set"
+
+  # Set OIDC variables (required by google-github-actions/auth)
+  if [ -n "$GCP_WIF_PROVIDER" ]; then
+    gh variable set GCP_WIF_PROVIDER --body "$GCP_WIF_PROVIDER" -R "\${REPO_OWNER}/\${REPO_NAME}" 2>/dev/null || gh variable set GCP_WIF_PROVIDER --body "$GCP_WIF_PROVIDER" -R "\${REPO_OWNER}/\${REPO_NAME}" 2>/dev/null || true
+  fi
+  if [ -n "$GCP_SA_STAGING" ]; then
+    gh variable set GCP_SA_STAGING --body "$GCP_SA_STAGING" -R "\${REPO_OWNER}/\${REPO_NAME}" 2>/dev/null || true
+  fi
+  if [ -n "$GCP_SA_PRODUCTION" ]; then
+    gh variable set GCP_SA_PRODUCTION --body "$GCP_SA_PRODUCTION" -R "\${REPO_OWNER}/\${REPO_NAME}" 2>/dev/null || true
+  fi
+
+  # Set VITE app variables
+  if [ -n "$VITE_APP_NAME" ]; then
+    gh variable set VITE_APP_NAME --body "$VITE_APP_NAME" -R "\${REPO_OWNER}/\${REPO_NAME}" 2>/dev/null || true
+  fi
+  if [ -n "$VITE_APP_MODE" ]; then
+    gh variable set VITE_APP_MODE --body "$VITE_APP_MODE" -R "\${REPO_OWNER}/\${REPO_NAME}" 2>/dev/null || true
+  fi
+
+  # Set Firebase config variables from JSON configs (parse with jq)
+  if [ -n "$FIREBASE_STAGING_CONFIG" ] && echo "$FIREBASE_STAGING_CONFIG" | jq -e . >/dev/null 2>&1; then
+    for field in apiKey authDomain projectId storageBucket messagingSenderId appId measurementId; do
+      val=$(echo "$FIREBASE_STAGING_CONFIG" | jq -r ".\${field} // empty" 2>/dev/null)
+      if [ -n "$val" ]; then
+        gh variable set "FIREBASE_\${field^^}_STAGING" --body "$val" -R "\${REPO_OWNER}/\${REPO_NAME}" 2>/dev/null || true
+      fi
+    done
+  fi
+
+  if [ -n "$FIREBASE_PRODUCTION_CONFIG" ] && echo "$FIREBASE_PRODUCTION_CONFIG" | jq -e . >/dev/null 2>&1; then
+    for field in apiKey authDomain projectId storageBucket messagingSenderId appId measurementId; do
+      val=$(echo "$FIREBASE_PRODUCTION_CONFIG" | jq -r ".\${field} // empty" 2>/dev/null)
+      if [ -n "$val" ]; then
+        gh variable set "FIREBASE_\${field^^}_PRODUCTION" --body "$val" -R "\${REPO_OWNER}/\${REPO_NAME}" 2>/dev/null || true
+      fi
+    done
+  fi
+
+  echo "DEBUG: GitHub secrets and variables set"
 fi
 
 # Install Kimaki globally and create its configuration

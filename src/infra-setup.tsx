@@ -2052,6 +2052,27 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     window.location.href = githubAuthUrl;
   };
 
+  const buildVmMetadata = (startupScript: string) => {
+    const items = [
+      { key: 'startup-script', value: startupScript },
+      { key: 'github_pat', value: githubPat },
+      { key: 'github_repo', value: githubRepoName },
+      { key: 'discord_bot_token', value: discordBotToken || '' },
+      { key: 'discord_guild_id', value: discordGuildId || '' },
+      { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
+      { key: 'firebase_production', value: firebaseProductionData?.projectId || '' },
+      { key: 'encryption_passphrase', value: passphrase || '' },
+      { key: 'gcp_wif_provider', value: gcpWifProviderName || '' },
+      { key: 'gcp_sa_staging', value: gcpSaStagingEmail || '' },
+      { key: 'gcp_sa_production', value: gcpSaProductionEmail || '' },
+      { key: 'firebase_staging_config', value: firebaseStagingData ? JSON.stringify(firebaseStagingData) : '' },
+      { key: 'firebase_production_config', value: firebaseProductionData ? JSON.stringify(firebaseProductionData) : '' },
+      { key: 'vite_app_name', value: (githubRepoName?.split('/')[1] || 'MyApp') },
+      { key: 'vite_app_mode', value: 'true' },
+    ];
+    return { items };
+  };
+
   const handleCreateVM = async () => {
     if (!serviceAccountKey || !projectId) {
       setError('Please configure GCP project and service account first');
@@ -3615,18 +3636,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                                       network: 'global/networks/default',
                                       accessConfigs: [{ type: 'ONE_TO_ONE_NAT' }],
                                     }],
-                                     metadata: {
-                                        items: [
-                                          { key: 'startup-script', value: startupScript },
-                                          { key: 'github_pat', value: githubPat },
-                                          { key: 'github_repo', value: githubRepoName },
-                                          { key: 'discord_bot_token', value: discordBotToken || '' },
-                                          { key: 'discord_guild_id', value: discordGuildId || '' },
-                                          { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
-                                          { key: 'firebase_production', value: firebaseProductionData?.projectId || '' },
-                                          { key: 'encryption_passphrase', value: passphrase || '' }
-                                        ]
-                                      }
+                                      metadata: buildVmMetadata(startupScript)
                                   })
                                 }
                               );
@@ -3858,18 +3868,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                                       network: 'global/networks/default',
                                       accessConfigs: [{ type: 'ONE_TO_ONE_NAT' }],
                                     }],
-                                     metadata: {
-                                        items: [
-                                          { key: 'startup-script', value: startupScript },
-                                          { key: 'github_pat', value: githubPat },
-                                          { key: 'github_repo', value: githubRepoName },
-                                          { key: 'discord_bot_token', value: discordBotToken || '' },
-                                          { key: 'discord_guild_id', value: discordGuildId || '' },
-                                          { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
-                                          { key: 'firebase_production', value: firebaseProductionData?.projectId || '' },
-                                          { key: 'encryption_passphrase', value: passphrase || '' }
-                                        ]
-                                      }
+                                      metadata: buildVmMetadata(startupScript)
                                   })
                                 }
                               );
