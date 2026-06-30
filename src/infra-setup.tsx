@@ -1558,6 +1558,12 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
         }
         setGithubPat(configData.github_pat || '');
         
+        // Restore OIDC values so Step 7 can build VM metadata on reload
+        if (configData.gcp_wif_provider) setGcpWifProviderName(configData.gcp_wif_provider);
+        if (configData.gcp_sa_staging) setGcpSaStagingEmail(configData.gcp_sa_staging);
+        if (configData.gcp_sa_production) setGcpSaProductionEmail(configData.gcp_sa_production);
+        if (configData.github_repo) setGithubRepoName(configData.github_repo);
+        
         // Note: service_account_key is NOT restored (private_key sensitive)
         // User must re-upload service account JSON each session
 
@@ -3265,6 +3271,13 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
 
                           // GitHub variables are uploaded by the VM startup script
                           // after the repo is created (the repo may not exist yet)
+                          // Persist OIDC values to Firestore so Step 7 works on reload
+                          await saveConfig({
+                            gcp_wif_provider: oidcData.wifProvider,
+                            gcp_sa_staging: oidcData.saStaging,
+                            gcp_sa_production: oidcData.saProduction,
+                            github_repo: actualRepoName,
+                          });
                           setGithubVarUploaded(true);
                           setExpandedSteps(prev => [...prev.filter(s => s !== 5), 6]);
                         } catch (err) {
