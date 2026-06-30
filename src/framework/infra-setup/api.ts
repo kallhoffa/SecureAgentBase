@@ -9,7 +9,9 @@ export const gcpApiFetch = async (url: string, token: string, opts?: Record<stri
     const err = await response.text().catch(() => response.statusText);
     throw new Error(`GCP API error (${response.status}): ${err}`);
   }
-  return response.json();
+  if (response.status === 204) return {};
+  const text = await response.text();
+  return text ? JSON.parse(text) : {};
 };
 
 export const githubApiFetch = async (pat: string, path: string, opts?: Record<string, any>) => {
@@ -23,7 +25,9 @@ export const githubApiFetch = async (pat: string, path: string, opts?: Record<st
     const err = await response.text().catch(() => response.statusText);
     throw new Error(`GitHub API error (${response.status}): ${err}`);
   }
-  return response.json();
+  if (response.status === 204) return {};
+  const text = await response.text();
+  return text ? JSON.parse(text) : {};
 };
 
 export const setGitHubVariable = async (pat: string, repoFull: string, name: string, value: string) => {

@@ -248,7 +248,9 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       const err = await response.text().catch(() => response.statusText);
       throw new Error(`GCP API error (${response.status}): ${err}`);
     }
-    return response.json();
+    if (response.status === 204) return {};
+    const text = await response.text();
+    return text ? JSON.parse(text) : {};
   };
 
   const githubApiFetch = async (pat, path, opts?) => {
@@ -262,7 +264,9 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       const err = await response.text().catch(() => response.statusText);
       throw new Error(`GitHub API error (${response.status}): ${err}`);
     }
-    return response.json();
+    if (response.status === 204) return {};
+    const text = await response.text();
+    return text ? JSON.parse(text) : {};
   };
 
   const listFirebaseProjects = async (token) => {
@@ -2008,15 +2012,14 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       return;
     }
     
+    setExpandedSteps(prev => [...prev.filter(s => s !== 4), 5]);
     try {
       await saveConfig({
         firebase_staging: stagingConfig,
         firebase_production: productionConfig,
       });
-      setExpandedSteps(prev => [...prev.filter(s => s !== 4), 5]);
     } catch (err) {
-      console.error('Error setting up Firebase:', err);
-      setError('Failed to configure Firebase: ' + err.message);
+      console.error('Error saving Firebase config:', err);
     }
   };
 
@@ -2955,7 +2958,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
             </div>
           )}
 
-          {expandedSteps.includes(4) && isStepCompleted(3) && (
+          {isStepCompleted(3) && (expandedSteps.includes(4) || isStepCompleted(4)) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
               {(isStepCompleted(4) && !expandedSteps.includes(4)) ? (
                 <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
