@@ -16,7 +16,7 @@ test.describe('Smoke Tests', () => {
 
   test('login page is accessible', async ({ page }) => {
     await page.goto(`${TEST_URL}/login`);
-    await expect(page.locator('text=Sign In')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Sign In' })).toBeVisible();
   });
 
   test('signup page is accessible', async ({ page }) => {
