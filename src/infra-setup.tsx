@@ -457,21 +457,6 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     }
   };
 
-  const setGitHubVariable = async (pat, repoFull, name, value) => {
-    // Try to create, fall back to update
-    try {
-      await githubApiFetch(pat, `/repos/${repoFull}/actions/variables`, {
-        method: 'POST',
-        body: JSON.stringify({ name, value })
-      });
-    } catch {
-      await githubApiFetch(pat, `/repos/${repoFull}/actions/variables/${name}`, {
-        method: 'PATCH',
-        body: JSON.stringify({ name, value })
-      });
-    }
-  };
-
   const setupOidcInfrastructure = async () => {
     if (!githubPat || !githubRepoName) return null;
     setOidcSetupStatus('creating');
@@ -1587,6 +1572,14 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
 
     loadInfraConfig();
   }, [db, user]);
+
+  useEffect(() => {
+    if (checkingCompletion) return;
+    setExpandedSteps(prev => {
+      const next = prev.filter(s => !isStepCompleted(s));
+      return next.length === prev.length ? prev : next;
+    });
+  }, [checkingCompletion]);
 
   useEffect(() => {
     const loadProjects = async () => {
