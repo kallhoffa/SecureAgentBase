@@ -462,8 +462,8 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     }
   };
 
-  const setupOidcInfrastructure = async () => {
-    if (!githubPat || !githubRepoName) return null;
+  const setupOidcInfrastructure = async (repoFullName: string) => {
+    if (!githubPat || !repoFullName) return null;
     setOidcSetupStatus('creating');
     setOidcSetupStep('Starting OIDC setup...');
     
@@ -486,7 +486,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
 
       // Create workload identity provider
       setOidcSetupStep('Creating GitHub OIDC provider...');
-      const providerName = await createWorkloadIdentityProvider(token, gcpProject, poolId, providerId, githubRepoName, addOidcLog);
+      const providerName = await createWorkloadIdentityProvider(token, gcpProject, poolId, providerId, repoFullName, addOidcLog);
       setGcpWifProviderName(providerName);
 
       // Create staging deploy SA (if we have staging firebase project)
@@ -504,7 +504,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
         await grantFirebaseRoles(token, stagingProjectId, stagingSaEmail, addOidcLog);
         
         setOidcSetupStep('Granting pool access to staging SA...');
-        await grantPoolAccessToSA(token, gcpProject, stagingSaEmail, poolName, githubRepoName, addOidcLog);
+        await grantPoolAccessToSA(token, gcpProject, stagingSaEmail, poolName, repoFullName, addOidcLog);
       }
 
       if (prodProjectId) {
@@ -516,7 +516,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
         await grantFirebaseRoles(token, prodProjectId, prodSaEmail, addOidcLog);
         
         setOidcSetupStep('Granting pool access to production SA...');
-        await grantPoolAccessToSA(token, gcpProject, prodSaEmail, poolName, githubRepoName, addOidcLog);
+        await grantPoolAccessToSA(token, gcpProject, prodSaEmail, poolName, repoFullName, addOidcLog);
       }
 
       setOidcSetupStatus('done');
@@ -3236,7 +3236,8 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                           setGithubRepoName(actualRepoName);
 
                           // Set up OIDC infrastructure (WIF pool, provider, SAs)
-                          const oidcData = await setupOidcInfrastructure();
+                          // Pass actualRepoName directly to avoid React state race
+                          const oidcData = await setupOidcInfrastructure(actualRepoName);
                           if (!oidcData) {
                             throw new Error('Google Cloud session expired. Click "Connect Google Cloud Account" in Step 4 to refresh, then try again.');
                           }

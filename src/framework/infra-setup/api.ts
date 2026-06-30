@@ -153,6 +153,19 @@ export const createWorkloadIdentityProvider = async (token: string, gcpProjectId
     );
     return provider.name;
   } catch (e) {
+    // Provider already exists — PATCH its attributeCondition to match the
+    // current repo name (may differ if a UUID suffix was appended)
+    log('Provider already exists, updating attribute condition...');
+    await gcpApiFetch(
+      `https://iam.googleapis.com/v1/projects/${gcpProjectId}/locations/global/workloadIdentityPools/${poolId}/providers/${providerId}?updateMask=attributeCondition`,
+      token,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({
+          attributeCondition: `assertion.repository == '${repoFullName}'`
+        })
+      }
+    );
     const existing = await gcpApiFetch(
       `https://iam.googleapis.com/v1/projects/${gcpProjectId}/locations/global/workloadIdentityPools/${poolId}/providers/${providerId}`,
       token
