@@ -306,11 +306,13 @@ if [ -n "$GITHUB_PAT" ]; then
   fi
 
   # Set Firebase config variables from JSON configs (parse with jq)
+  # Convert camelCase field names to SCREAMING_SNAKE_CASE for GitHub variable names
   if [ -n "$FIREBASE_STAGING_CONFIG" ] && echo "$FIREBASE_STAGING_CONFIG" | jq -e . >/dev/null 2>&1; then
     for field in apiKey authDomain projectId storageBucket messagingSenderId appId measurementId; do
       val=$(echo "$FIREBASE_STAGING_CONFIG" | jq -r ".\${field} // empty" 2>/dev/null)
       if [ -n "$val" ]; then
-        gh variable set "FIREBASE_\${field^^}_STAGING" --body "$val" -R "\${REPO_OWNER}/\${REPO_NAME}" 2>/dev/null || true
+        upper_field=$(echo "\${field}" | sed 's/\\([a-z]\\)\\([A-Z]\\)/\\1_\\2/g' | tr '[:lower:]' '[:upper:]')
+        gh variable set "FIREBASE_\${upper_field}_STAGING" --body "$val" -R "\${REPO_OWNER}/\${REPO_NAME}" 2>/dev/null || true
       fi
     done
   fi
@@ -319,7 +321,8 @@ if [ -n "$GITHUB_PAT" ]; then
     for field in apiKey authDomain projectId storageBucket messagingSenderId appId measurementId; do
       val=$(echo "$FIREBASE_PRODUCTION_CONFIG" | jq -r ".\${field} // empty" 2>/dev/null)
       if [ -n "$val" ]; then
-        gh variable set "FIREBASE_\${field^^}_PRODUCTION" --body "$val" -R "\${REPO_OWNER}/\${REPO_NAME}" 2>/dev/null || true
+        upper_field=$(echo "\${field}" | sed 's/\\([a-z]\\)\\([A-Z]\\)/\\1_\\2/g' | tr '[:lower:]' '[:upper:]')
+        gh variable set "FIREBASE_\${upper_field}_PRODUCTION" --body "$val" -R "\${REPO_OWNER}/\${REPO_NAME}" 2>/dev/null || true
       fi
     done
   fi
