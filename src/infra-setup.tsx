@@ -2125,8 +2125,8 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
   };
 
   const getAccessToken = async () => {
-    if (gcpAccessToken && (!gcpTokenExpiry || Date.now() < gcpTokenExpiry)) return gcpAccessToken;
-    if (gcpAccessToken && gcpTokenExpiry && Date.now() >= gcpTokenExpiry) {
+    if (gcpAccessToken && gcpTokenExpiry && Date.now() < gcpTokenExpiry) return gcpAccessToken;
+    if (gcpAccessToken && (!gcpTokenExpiry || Date.now() >= gcpTokenExpiry)) {
       setGcpAccessToken(null);
     }
     if (serviceAccountJson) {
@@ -3340,30 +3340,36 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                        </p>
                      </div>
 
-                     {discordInviteUrl && (
-                      <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
-                        <p className="text-green-800 text-sm mb-2 font-medium">✓ Invite URL generated!</p>
-                        <a
-                          href={discordInviteUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-600 underline text-sm break-all"
-                        >
-                          {discordInviteUrl}
-                        </a>
-                        <p className="text-green-700 text-xs mt-2">
-                          Open this link to invite your bot to your Discord server.
-                        </p>
-                      </div>
-                    )}
-
-                   {discordBotToken && !discordGuildId && (
-                     <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                       <p className="text-yellow-700 text-sm">
-                         Bot token saved but no Discord server detected. Make sure the bot is in your server using the invite link above.
+                    {discordInviteUrl && (
+                     <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+                       <p className="text-green-800 text-sm mb-2 font-medium">Invite link ready!</p>
+                       <a
+                         href={discordInviteUrl}
+                         target="_blank"
+                         rel="noopener noreferrer"
+                         className="text-blue-600 underline text-sm break-all"
+                       >
+                         {discordInviteUrl}
+                       </a>
+                       <p className="text-green-700 text-xs mt-2">
+                         Open this link to invite your bot to your Discord server.
                        </p>
                      </div>
                    )}
+
+                    <div className="mb-4">
+                      <label className="block text-sm font-medium text-gray-700 mb-2">Discord Server ID (optional):</label>
+                      <input
+                        type="text"
+                        value={discordGuildId}
+                        onChange={(e) => setDiscordGuildId(e.target.value)}
+                        placeholder="1476738289556783156"
+                        className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
+                      />
+                      <p className="text-gray-500 text-xs mt-1">
+                        Right-click your server name in Discord → Copy Server ID. If left blank, the VM will auto-detect your server from the bot token.
+                      </p>
+                    </div>
 
                     {error && (
                      <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
