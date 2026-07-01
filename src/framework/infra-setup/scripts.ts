@@ -184,10 +184,9 @@ GCP_SA_PRODUCTION=$(curl -sf "http://metadata.google.internal/computeMetadata/v1
 FIREBASE_STAGING_CONFIG=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_staging_config" -H "Metadata-Flavor: Google")
 FIREBASE_PRODUCTION_CONFIG=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_production_config" -H "Metadata-Flavor: Google")
 VITE_APP_NAME=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/vite_app_name" -H "Metadata-Flavor: Google")
-VITE_APP_MODE=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/vite_app_mode" -H "Metadata-Flavor: Google")
 
 # Clean up any potential HTML responses from failed requests or unconfigured metadata
-for var in FIREBASE_STAGING FIREBASE_PRODUCTION PASSPHRASE GITHUB_PAT DISCORD_BOT_TOKEN DISCORD_GUILD_ID GCP_WIF_PROVIDER GCP_SA_STAGING GCP_SA_PRODUCTION FIREBASE_STAGING_CONFIG FIREBASE_PRODUCTION_CONFIG VITE_APP_NAME VITE_APP_MODE; do
+for var in FIREBASE_STAGING FIREBASE_PRODUCTION PASSPHRASE GITHUB_PAT DISCORD_BOT_TOKEN DISCORD_GUILD_ID GCP_WIF_PROVIDER GCP_SA_STAGING GCP_SA_PRODUCTION FIREBASE_STAGING_CONFIG FIREBASE_PRODUCTION_CONFIG VITE_APP_NAME; do
   val=\${!var}
   if [[ "\$val" =~ "<html" || "\$val" =~ "<!" || "\$val" =~ "<HTML" ]]; then
     eval "\$var=\"\""
@@ -299,10 +298,7 @@ if [ -n "$GITHUB_PAT" ]; then
 
   # Set VITE app variables
   if [ -n "$VITE_APP_NAME" ]; then
-    gh variable set VITE_APP_NAME --body "$VITE_APP_NAME" -R "\${REPO_OWNER}/\${REPO_NAME}" 2>/dev/null || true
-  fi
-  if [ -n "$VITE_APP_MODE" ]; then
-    gh variable set VITE_APP_MODE --body "$VITE_APP_MODE" -R "\${REPO_OWNER}/\${REPO_NAME}" 2>/dev/null || true
+gh variable set VITE_APP_NAME --body "$VITE_APP_NAME" -R "\${REPO_OWNER}/\${REPO_NAME}" 2>/dev/null || true
   fi
 
   # Set Firebase config variables from JSON configs (parse with jq)

@@ -2074,7 +2074,6 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       { key: 'firebase_staging_config', value: firebaseStagingData ? JSON.stringify(firebaseStagingData) : '' },
       { key: 'firebase_production_config', value: firebaseProductionData ? JSON.stringify(firebaseProductionData) : '' },
       { key: 'vite_app_name', value: projectName || 'MyApp' },
-      { key: 'vite_app_mode', value: 'true' },
     ];
     return { items };
   };
