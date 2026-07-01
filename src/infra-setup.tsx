@@ -240,38 +240,6 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     setOidcSetupMessage(message);
   };
 
-  const gcpApiFetch = async (url, token, opts?) => {
-    const options = opts || {};
-    const response = await fetch(url, {
-      method: (options as any).method || 'GET',
-      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...((options as any).headers || {}) },
-      body: (options as any).body || undefined
-    });
-    if (!response.ok) {
-      const err = await response.text().catch(() => response.statusText);
-      throw new Error(`GCP API error (${response.status}): ${err}`);
-    }
-    if (response.status === 204) return {};
-    const text = await response.text();
-    return text ? JSON.parse(text) : {};
-  };
-
-  const githubApiFetch = async (pat, path, opts?) => {
-    const options = opts || {};
-    const response = await fetch(`https://api.github.com${path}`, {
-      method: (options as any).method || 'GET',
-      headers: { 'Authorization': `Bearer ${pat}`, 'Accept': 'application/vnd.github.v3+json', 'Content-Type': 'application/json', ...((options as any).headers || {}) },
-      body: (options as any).body || undefined
-    });
-    if (!response.ok) {
-      const err = await response.text().catch(() => response.statusText);
-      throw new Error(`GitHub API error (${response.status}): ${err}`);
-    }
-    if (response.status === 204) return {};
-    const text = await response.text();
-    return text ? JSON.parse(text) : {};
-  };
-
   const listFirebaseProjects = async (token) => {
     const resp = await fetch('https://firebase.googleapis.com/v1beta1/projects', {
       headers: { 'Authorization': `Bearer ${token}` }
