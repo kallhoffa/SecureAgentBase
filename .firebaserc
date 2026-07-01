@@ -1,0 +1,6 @@
+{
+  "projects": {
+    "default": "agentbase-8c022",
+    "staging": "agentbase-staging"
+  }
+}
