@@ -5,13 +5,13 @@ const TEST_URL = process.env.TEST_URL || 'http://localhost:5173';
 test.describe('Smoke Tests', () => {
   test('home page loads', async ({ page }) => {
     await page.goto(TEST_URL);
-    await expect(page.locator('text=SecureAgentBase')).toBeVisible();
+    await expect(page.locator('nav h1')).toContainText('SecureAgentBase');
   });
 
   test('navigation bar is visible', async ({ page }) => {
     await page.goto(TEST_URL);
     await expect(page.locator('nav')).toBeVisible();
-    await expect(page.locator('text=About')).toBeVisible();
+    await expect(page.locator('nav').getByText('About')).toBeVisible();
   });
 
   test('login page is accessible', async ({ page }) => {
@@ -21,11 +21,11 @@ test.describe('Smoke Tests', () => {
 
   test('signup page is accessible', async ({ page }) => {
     await page.goto(`${TEST_URL}/signup`);
-    await expect(page.locator('text=Create Account')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Create Account' })).toBeVisible();
   });
 
   test('about page is accessible', async ({ page }) => {
     await page.goto(`${TEST_URL}/about`);
-    await expect(page.locator('text=About SecureAgentBase')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'About SecureAgentBase' })).toBeVisible();
   });
 });
