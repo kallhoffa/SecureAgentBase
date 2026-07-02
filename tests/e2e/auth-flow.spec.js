@@ -9,7 +9,7 @@ test.describe('Auth Flow', () => {
       await expect(page.getByRole('heading', { name: 'Sign In' })).toBeVisible();
       await expect(page.getByLabel('Email')).toBeVisible();
       await expect(page.getByLabel('Password')).toBeVisible();
-      await expect(page.getByRole('button', { name: 'Sign In' })).toBeVisible();
+      await expect(page.getByRole('button', { name: /^Sign In$/ })).toBeVisible();
       await expect(page.getByText('Sign in with Google')).toBeVisible();
     });
 
@@ -17,7 +17,7 @@ test.describe('Auth Flow', () => {
       await page.goto(`${TEST_URL}/login`);
       await page.getByLabel('Email').fill('nonexistent@test.com');
       await page.getByLabel('Password').fill('wrongpassword');
-      await page.getByRole('button', { name: 'Sign In' }).click();
+      await page.getByRole('button', { name: /^Sign In$/ }).click();
 
       // Firebase auth error should appear
       await expect(page.locator('.bg-red-100')).toBeVisible({ timeout: 10000 });
@@ -38,7 +38,7 @@ test.describe('Auth Flow', () => {
       await expect(page.getByLabel('Email')).toBeVisible();
       await expect(page.getByLabel(/^Password$/)).toBeVisible();
       await expect(page.getByLabel('Confirm Password')).toBeVisible();
-      await expect(page.getByRole('button', { name: 'Sign Up' })).toBeVisible();
+      await expect(page.getByRole('button', { name: /^Sign Up$/ })).toBeVisible();
     });
 
     test('shows password mismatch error before API call', async ({ page }) => {
@@ -46,7 +46,7 @@ test.describe('Auth Flow', () => {
       await page.getByLabel('Email').fill('test@example.com');
       await page.getByLabel(/^Password$/).fill('password123');
       await page.getByLabel('Confirm Password').fill('differentpassword');
-      await page.getByRole('button', { name: 'Sign Up' }).click();
+      await page.getByRole('button', { name: /^Sign Up$/ }).click();
 
       // Client-side validation — no API call made
       await expect(page.getByText('Passwords do not match')).toBeVisible();
@@ -57,7 +57,7 @@ test.describe('Auth Flow', () => {
       await page.getByLabel('Email').fill('test@example.com');
       await page.getByLabel(/^Password$/).fill('ab');
       await page.getByLabel('Confirm Password').fill('ab');
-      await page.getByRole('button', { name: 'Sign Up' }).click();
+      await page.getByRole('button', { name: /^Sign Up$/ }).click();
 
       await expect(page.getByText('Password must be at least 6 characters')).toBeVisible();
     });
