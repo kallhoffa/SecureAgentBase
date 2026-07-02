@@ -188,29 +188,33 @@ Both env vars are set in CI via GitHub Actions workflow variables.
 
 ---
 
-## Session Status (May 14, 2026)
+## Session Status (Jul 2, 2026)
 
 ### What was done
-- Added OIDC-based Firebase deploy auth (Workload Identity Federation) to infra-setup wizard
-- Refactored `infra-setup.tsx`: extracted `StepHeader` component, Step1-7 components, `crypto.ts`, `scripts.ts`, `api.ts` modules
-- Created `src/template/` with generic starter app: Dashboard (landing) + Tasks (Firestore CRUD demo)
-- Wired `VITE_APP_MODE` and `VITE_APP_NAME` env vars through workflows and infra-setup wizard
-- Committed and pushed to `origin/main` as `4475835`
+- **Added `@vitest/coverage-v8`** with coverage thresholds (lines 50%, funcs 30%, branches 30%, stmts 50%)
+- **Added `--coverage` to `test:ci`** script; both CI workflows now run `npm run test:ci` before build
+- **132 unit tests** across 12 test files: `crypto.test.ts`, `api.test.ts`, `scripts.test.ts`, `firebase.test.ts`, `Dashboard.test.jsx`, `Tasks.test.jsx`, `Login.test.tsx`, `StepHeader.test.jsx`, `WizardSteps.test.jsx` (Step1-7 each tested for expanded/collapsed/locked/completion/error states)
+- **15 e2e tests** across 3 spec files: `auth-flow.spec.js` (form validation, error states), `navigation.spec.js` (nav bar, links), `smoke.spec.js` (page renders, 404 no-crash)
+- **Fixed Step1-Step7 icons bug**: added missing `lucide-react` imports (`Check`, `AlertTriangle`, `Server`) — components referenced icons without importing them
+- **Fixed vitest.config.js**: uses `esbuild: { jsx: 'automatic' }` instead of relying on `@vitejs/plugin-react` (needed when react plugin can't resolve due to npm bugs)
+- **Created `playwright.ci.config.js`** with staging URL defaults + 2 retries
+- **Brittle selector fixes**: `smoke.spec.js` uses `getByRole` instead of fragile `text=` matchers; test selectors use regex instead of exact-string matches where text is split across elements
+- **Updated npm lockfile** to include `@vitest/coverage-v8@^4.1.9` and `vitest@^4.1.9`
+- Committed as `5cf6fa6` on `main` (ahead of origin)
 
 ### What needs to be done
-1. Manually set `VITE_APP_MODE=true` and `VITE_APP_NAME=SecureAgentBase` as GitHub variables in `kallhoffa/SecureAgentBase` repo
-2. Run the infra-setup wizard in-browser to create OIDC infrastructure + GitHub variables, then push to `main` to verify staging deploy
-3. Optionally: remove local API function duplicates in `infra-setup.tsx` (lines ~204–413) that shadow imported versions from `api.ts`
-4. Optionally: remove inline step JSX from `infra-setup.tsx` and use extracted `<Step1>`–`<Step7>` components
+1. Push `main` to `origin` to trigger staging CI + deploy
+2. Monitor staging deploy at `https://agentbase-staging.web.app` after push
+3. Create a GitHub release (`v0.17.0`) on `kallhoffa/SecureAgentBase` to trigger prod deploy (after OIDC re-point + serviceusage role grant)
 
 ### Relevant files
-- `src/App.tsx` — routes switch based on `VITE_APP_MODE`
-- `src/navigation-bar.tsx` — uses `VITE_APP_NAME` for title
-- `src/template/{pages/Dashboard.jsx,pages/Tasks.jsx,index.jsx}` — template mode pages
-- `src/infra-setup.tsx` — 7-step wizard, uploads `VITE_APP_NAME` as GitHub variable
-- `src/framework/infra-setup/` — extracted modules (api, crypto, scripts, steps)
-- `.github/workflows/firebase-deploy-staging.yml` — staging CI/CD (OIDC auth)
-- `.github/workflows/firebase-deploy.yml` — production CI/CD (OIDC auth)
+- `src/_tests_/` — 12 unit test files, 132 tests
+- `tests/e2e/` — 3 e2e spec files (auth-flow, navigation, smoke)
+- `.github/workflows/firebase-deploy-staging.yml` / `firebase-deploy.yml` — CI now runs tests + coverage
+- `vitest.config.js` — coverage thresholds, esbuild jsx: 'automatic', jsdom env
+- `playwright.config.js` / `playwright.ci.config.js` — e2e config (CI variant with staging URL)
+- `src/framework/infra-setup/steps/Step1.jsx`–`Step7.jsx` — added lucide-react imports
+- `package.json` — added `@vitest/coverage-v8`, updated `vitest`, `test:ci` includes `--coverage`
 
 ---
 
@@ -298,3 +302,15 @@ As of May 20, 2026, the codebase has been extensively debugged, hardened, and st
 * **💾 Saved Config Cards:** If you reload the page and configurations are already stored in Firestore/localStorage, Step 2 and Step 4 will show beautiful **"Configuration Active" success cards** detailing your active Project IDs with "Clear & Reconfigure" options, eliminating confusing blank fields.
 
 Every fix has been fully built, linted, verified, and successfully deployed live to **https://agentbase.web.app**!
+
+### 4. Unit/E2e Test Suite & CI Enforcement
+* **Missing `lucide-react` imports in Step1-Step7:** Extracting Step components from `infra-setup.tsx` left `Check`, `AlertTriangle`, `Server` icons referenced without imports. They worked due to a partial global scope but failed in Vitest's isolated module environment.
+  * *Fix:* Added direct `import { Check }` / `import { Check, AlertTriangle }` / `import { Check, Server }` to each step component.
+* **Brittle smoke test selectors:** Smoky tests used `text=Sign In` selectors that matched multiple elements or broke across re-renders.
+  * *Fix:* Switched to `getByRole('heading', { name: 'Sign In' })` throughout.
+* **Wizard step test selectors too fragile:** Tests used `getByText('exact@string')` which failed when text was split across child elements.
+  * *Fix:* Changed to regex matchers: `getByText(/test@example\.com/)`.
+* **`@vitejs/plugin-react` unresolvable in Vitest:** npm 10.8 flat mode doesn't install transitive dependencies correctly in this environment, so the vitest config's `import react from '@vitejs/plugin-react'` fails.
+  * *Fix:* Replaced with `esbuild: { jsx: 'automatic' }` in vitest.config.js (no react plugin needed for JSX transform in tests).
+* **npm 10.8 flat mode hoisting bug:** `npm install` with the default `hoisted` strategy installs only ~175 packages instead of 530. The `linked` strategy works but is experimental.
+  * *Fix:* Generated lockfile using `linked` strategy, verified with `npm ci --dry-run` on restored lockfile to ensure CI compatibility. CI runs `npm ci` with a working npm version and will install all packages correctly.

@@ -16,7 +16,7 @@ export default defineConfig({
     },
   ],
   webServer: process.env.CI ? undefined : {
-    command: 'npm run dev:emulator',
+    command: 'VITE_APP_MODE=true npm run dev',
     url: 'http://localhost:3000',
     reuseExistingServer: !process.env.CI,
     timeout: 120000,

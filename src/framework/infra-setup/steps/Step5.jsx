@@ -1,3 +1,5 @@
+import { Check, AlertTriangle } from 'lucide-react';
+
 const Step5 = ({
   expanded, prevComplete, itselfComplete,
   githubPat, setGithubPat, setError,

@@ -1,3 +1,5 @@
+import { Check } from 'lucide-react';
+
 const Step3 = ({
   expanded, prevComplete, stepComplete,
   projectId, serviceAccountJson,

@@ -1,3 +1,5 @@
+import { Check } from 'lucide-react';
+
 const Step6 = ({
   expanded, prevComplete, itselfComplete,
   discordClientId, setDiscordClientId,

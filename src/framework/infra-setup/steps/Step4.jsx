@@ -1,3 +1,5 @@
+import { Check } from 'lucide-react';
+
 const Step4 = ({
   expanded, prevComplete, itselfComplete,
   firebaseConfigStaging, firebaseConfigProduction,

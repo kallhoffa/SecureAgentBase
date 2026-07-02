@@ -1,3 +1,5 @@
+import { Check, Server } from 'lucide-react';
+
 const Step7 = ({
   expanded, prevComplete,
   isVmComplete, showRecreateOptions,

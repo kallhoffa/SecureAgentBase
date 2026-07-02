@@ -1,3 +1,5 @@
+import { Check } from 'lucide-react';
+
 const Step1 = ({ expanded, user }) => {
   if (!expanded) return null;
 

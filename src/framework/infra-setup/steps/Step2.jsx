@@ -1,3 +1,5 @@
+import { Check } from 'lucide-react';
+
 const Step2 = ({
   expanded, prevComplete, itselfComplete,
   serviceAccountJson, serviceAccountError,
