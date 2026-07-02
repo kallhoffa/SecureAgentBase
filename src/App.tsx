@@ -1,7 +1,7 @@
 import { BrowserRouter, Routes, Route, Outlet } from 'react-router-dom';
 import { Firestore } from 'firebase/firestore';
 import { Auth } from 'firebase/auth';
-import { LandingPage } from './posts';
+import LandingPage from './posts';
 import { useAuth } from './firestore-utils/auth-context';
 import Post from './post';
 import ComposePost from './compose-post';

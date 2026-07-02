@@ -1,10 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Link, useSearchParams, useNavigate } from 'react-router-dom';
-import { MessageCircle, Plus, Rocket, Bot, Github, Cloud } from 'lucide-react';
-import { getPosts, searchPosts } from './firestore-utils/post-storage';
-import { useAuth } from './firestore-utils/auth-context';
-import { Firestore } from 'firebase/firestore';
-import type { Post } from './types';
+import { useNavigate } from 'react-router-dom';
+import { Rocket, Bot, Github, Cloud } from 'lucide-react';
 
 const LandingPage: React.FC = () => {
   const navigate = useNavigate();
@@ -72,7 +67,7 @@ const LandingPage: React.FC = () => {
               <div className="w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center font-semibold flex-shrink-0">2</div>
               <div>
                 <h3 className="font-semibold">Describe Your App</h3>
-                <p className="text-gray-600">Send a message to your Discord bot: "Build a todo app with user auth"</p>
+                <p className="text-gray-600">Send a message to your Discord bot: &quot;Build a todo app with user auth&quot;</p>
               </div>
             </div>
             <div className="flex items-start gap-4">
@@ -96,126 +91,4 @@ const LandingPage: React.FC = () => {
   );
 };
 
-interface PostsProps {
-  db: Firestore;
-}
-
-const Posts: React.FC<PostsProps> = ({ db }) => {
-  const [searchParams] = useSearchParams();
-  const searchQuery = searchParams.get('q');
-  
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const { user } = useAuth();
-
-  useEffect(() => {
-    const loadPosts = async (): Promise<void> => {
-      try {
-        setLoading(true);
-        setError(null);
-        
-        let fetchedPosts: Post[];
-        if (searchQuery) {
-          fetchedPosts = await searchPosts(db, searchQuery);
-        } else {
-          fetchedPosts = await getPosts(db);
-        }
-        
-        setPosts(fetchedPosts);
-      } catch (err) {
-        console.error('Error loading posts:', err);
-        setError('Failed to load posts');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadPosts();
-  }, [db, searchQuery]);
-
-  const formatDate = (timestamp: Date | undefined): string => {
-    if (!timestamp) return '';
-    const date = timestamp instanceof Date ? timestamp : new Date(timestamp);
-    return date.toLocaleDateString();
-  };
-
-  return (
-    <div className="min-h-screen bg-gray-50">
-      <div className="max-w-4xl mx-auto px-4 py-8">
-        <div className="flex justify-between items-center mb-6">
-          <h1 className="text-3xl font-bold text-gray-900">
-            {searchQuery ? `Results for "${searchQuery}"` : 'Recent Posts'}
-          </h1>
-          {user && (
-            <Link
-              to="/compose-post"
-              className="bg-blue-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-blue-700 flex items-center gap-2"
-            >
-              <Plus size={20} />
-              New Post
-            </Link>
-          )}
-        </div>
-
-        {loading ? (
-          <div className="text-center py-12">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-            <p className="mt-4 text-gray-600">Loading posts...</p>
-          </div>
-        ) : error ? (
-          <div className="text-center py-12 text-red-600">
-            {error}
-          </div>
-        ) : posts.length === 0 ? (
-          <div className="text-center py-12 bg-white rounded-lg shadow">
-            <h2 className="text-xl font-semibold text-gray-900 mb-2">
-              No posts found
-            </h2>
-            <p className="text-gray-600 mb-4">
-              {searchQuery ? 'Try a different search term' : 'Be the first to create a post!'}
-            </p>
-            {user && (
-              <Link
-                to="/compose-post"
-                className="bg-blue-600 text-white px-6 py-3 rounded-full font-medium hover:bg-blue-700 inline-block"
-              >
-                Create Post
-              </Link>
-            )}
-          </div>
-        ) : (
-          <div className="space-y-4">
-            {posts.map(post => (
-              <Link
-                key={post.id}
-                to={`/post?id=${post.id}`}
-                className="block bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow p-6"
-              >
-                <h2 className="text-xl font-semibold text-gray-900 mb-2">
-                  {post.title}
-                </h2>
-                <p className="text-gray-600 mb-4 line-clamp-2">
-                  {post.content}
-                </p>
-                <div className="flex items-center text-sm text-gray-500">
-                  <span className="font-medium mr-2">{post.authorName}</span>
-                  <span className="mx-2">•</span>
-                  <span>{formatDate(post.createdAt)}</span>
-                  <span className="mx-2">•</span>
-                  <span className="flex items-center gap-1">
-                    <MessageCircle size={16} />
-                    {post.replyCount || 0} replies
-                  </span>
-                </div>
-              </Link>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-};
-
-export default Posts;
-export { LandingPage };
+export default LandingPage;

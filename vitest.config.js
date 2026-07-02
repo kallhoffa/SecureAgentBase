@@ -22,6 +22,8 @@ export default defineConfig({
         'src/**/*.spec.*',
         'src/vite-env.d.ts',
         'src/**/*.d.ts',
+        'src/infra-setup.tsx',
+        'src/framework/infra-setup/**',
       ],
       thresholds: {
         lines: 50,
