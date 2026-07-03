@@ -12,14 +12,23 @@ service cloud.firestore {
       allow create: if isAuthenticated()
         && request.resource.data.title is string
         && request.resource.data.title.size() > 0
-        && request.resource.data.title.size() <= 500;
-      allow update, delete: if isAuthenticated();
+        && request.resource.data.title.size() <= 200
+        && request.resource.data.content is string
+        && request.resource.data.content.size() > 0
+        && request.resource.data.content.size() <= 3000;
+      allow update, delete: if isAuthenticated()
+        && resource.data.authorId == request.auth.uid;
     }
     
     match /replies/{replyId} {
       allow read: if true;
-      allow create: if isAuthenticated();
-      allow update, delete: if isAuthenticated();
+      allow create: if isAuthenticated()
+        && request.resource.data.content is string
+        && request.resource.data.content.size() > 0
+        && request.resource.data.content.size() <= 2000
+        && request.resource.data.postId is string;
+      allow update, delete: if isAuthenticated()
+        && resource.data.authorId == request.auth.uid;
     }
     
     match /users/{userId} {

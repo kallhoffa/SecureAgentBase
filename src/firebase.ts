@@ -1,8 +1,16 @@
 import { initializeApp, FirebaseApp } from 'firebase/app';
 import { getFirestore, Firestore } from 'firebase/firestore';
+import { initializeAppCheck, ReCaptchaV3Provider, AppCheck } from 'firebase/app-check';
 
-const env = import.meta.env.VITE_APP_ENV || 'development';
-const suffix = env === 'production' ? 'PRODUCTION' : 'STAGING';
+const rawEnv = (import.meta.env.VITE_APP_ENV || '').trim().toLowerCase();
+const VALID_ENVS = ['production', 'staging', 'development'];
+if (rawEnv && !VALID_ENVS.includes(rawEnv)) {
+  console.warn(`Invalid VITE_APP_ENV "${rawEnv}" — expected "production" or "staging". Falling back to staging.`);
+}
+const isProduction = rawEnv === 'production';
+const suffix = isProduction ? 'PRODUCTION' : 'STAGING';
+
+const appCheckSiteKey = import.meta.env[`VITE_FIREBASE_APP_CHECK_SITE_KEY_${suffix}`] as string | undefined;
 
 export const firebaseConfig = {
   apiKey: import.meta.env[`VITE_FIREBASE_API_KEY_${suffix}`] as string,
@@ -16,10 +24,17 @@ export const firebaseConfig = {
 
 let app: FirebaseApp | null = null;
 let db: Firestore | null = null;
+let appCheck: AppCheck | null = null;
 
 export const getFirebaseApp = (): FirebaseApp => {
   if (!app) {
     app = initializeApp(firebaseConfig);
+    if (appCheckSiteKey) {
+      appCheck = initializeAppCheck(app, {
+        provider: new ReCaptchaV3Provider(appCheckSiteKey),
+        isTokenAutoRefreshEnabled: true,
+      });
+    }
   }
   return app;
 };

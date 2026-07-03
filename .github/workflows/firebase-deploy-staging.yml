@@ -5,6 +5,10 @@ on:
     branches:
       - main
 
+concurrency:
+  group: staging-deploy
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -50,6 +54,8 @@ jobs:
           VITE_FIREBASE_MESSAGING_SENDER_ID_STAGING: ${{ vars.FIREBASE_MESSAGING_SENDER_ID_STAGING }}
           VITE_FIREBASE_APP_ID_STAGING: ${{ vars.FIREBASE_APP_ID_STAGING }}
           VITE_FIREBASE_MEASUREMENT_ID_STAGING: ${{ vars.FIREBASE_MEASUREMENT_ID_STAGING }}
+          VITE_FIREBASE_APP_CHECK_SITE_KEY_STAGING: ${{ vars.FIREBASE_APP_CHECK_SITE_KEY_STAGING }}
+          VITE_GCP_CLIENT_ID: ${{ vars.GCP_CLIENT_ID_STAGING }}
           VITE_APP_VERSION: ${{ github.sha }}
           VITE_APP_MODE: ${{ vars.VITE_APP_MODE }}
           VITE_APP_NAME: ${{ vars.VITE_APP_NAME }}
@@ -60,11 +66,23 @@ jobs:
       - name: Deploy to Firebase Staging
         run: npx firebase-tools deploy --only hosting,firestore --project ${{ vars.FIREBASE_PROJECT_ID_STAGING }}
 
-      - name: Run Smoke Tests on Staging
+      - name: Wait for Staging Deploy
         run: |
-          echo "Waiting for staging to deploy..."
-          sleep 30
-          npx playwright test e2e/smoke.spec.js --retries=2
+          URL="https://${{ vars.FIREBASE_PROJECT_ID_STAGING }}.web.app"
+          echo "Waiting for $URL to be reachable..."
+          for i in $(seq 1 30); do
+            if curl -sf -o /dev/null "$URL" 2>/dev/null; then
+              echo "Site is up!"
+              exit 0
+            fi
+            echo "Waiting... attempt $i"
+            sleep 5
+          done
+          echo "Site did not become reachable within 150 seconds"
+          exit 1
+
+      - name: Run Smoke Tests on Staging
+        run: npx playwright test e2e/smoke.spec.js --retries=2
         env:
           TEST_URL: https://${{ vars.FIREBASE_PROJECT_ID_STAGING }}.web.app
 

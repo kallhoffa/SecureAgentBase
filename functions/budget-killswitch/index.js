@@ -2,7 +2,6 @@ import { CloudEventsFunction } from '@google-cloud/functions-framework';
 import { PubSub } from '@google-cloud/pubsub';
 import { Compute } from '@google-cloud/compute';
 import { Run } from '@google-cloud/run';
-import { WebhookClient } from 'discord.js';
 
 const BILLING_THRESHOLD_DOLLARS = parseFloat(process.env.BILLING_THRESHOLD) || 1.0;
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL;
@@ -57,7 +56,7 @@ async function stopVMs() {
     for (const vm of vms) {
       if (vm.name.includes('kimaki') || vm.name.includes('brain')) {
         console.log(`Stopping VM: ${vm.name}`);
-        await compute zone(vm.zone).instances().stop({ instance: vm.name });
+        await compute.zone(vm.zone).instances().stop({ instance: vm.name });
       }
     }
     console.log('VMs stopped');

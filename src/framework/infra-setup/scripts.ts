@@ -77,10 +77,10 @@ gcloud iam service-accounts create secureagent-manager \\
   --display-name="SecureAgent Manager" \\
   --project=$PROJECT_ID
 
-# Grant required roles
+# Grant required roles (least privilege)
 gcloud projects add-iam-policy-binding $PROJECT_ID \\
   --member="serviceAccount:secureagent-manager@$PROJECT_ID.iam.gserviceaccount.com" \\
-  --role="roles/compute.admin"
+  --role="roles/compute.instanceAdmin.v1"
 
 gcloud projects add-iam-policy-binding $PROJECT_ID \\
   --member="serviceAccount:secureagent-manager@$PROJECT_ID.iam.gserviceaccount.com" \\
@@ -88,7 +88,7 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \\
 
 gcloud projects add-iam-policy-binding $PROJECT_ID \\
   --member="serviceAccount:secureagent-manager@$PROJECT_ID.iam.gserviceaccount.com" \\
-  --role="roles/billing.projectManager"
+  --role="roles/billing.user"
 
 gcloud projects add-iam-policy-binding $PROJECT_ID \\
   --member="serviceAccount:secureagent-manager@$PROJECT_ID.iam.gserviceaccount.com" \\
@@ -174,7 +174,6 @@ else
 fi
 FIREBASE_STAGING=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_staging" -H "Metadata-Flavor: Google")
 FIREBASE_PRODUCTION=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_production" -H "Metadata-Flavor: Google")
-PASSPHRASE=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/encryption_passphrase" -H "Metadata-Flavor: Google")
 GITHUB_PAT=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/github_pat" -H "Metadata-Flavor: Google")
 DISCORD_BOT_TOKEN=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/discord_bot_token" -H "Metadata-Flavor: Google")
 DISCORD_GUILD_ID=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/discord_guild_id" -H "Metadata-Flavor: Google")
@@ -186,7 +185,7 @@ FIREBASE_PRODUCTION_CONFIG=$(curl -sf "http://metadata.google.internal/computeMe
 VITE_APP_NAME=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/vite_app_name" -H "Metadata-Flavor: Google")
 
 # Clean up any potential HTML responses from failed requests or unconfigured metadata
-for var in FIREBASE_STAGING FIREBASE_PRODUCTION PASSPHRASE GITHUB_PAT DISCORD_BOT_TOKEN DISCORD_GUILD_ID GCP_WIF_PROVIDER GCP_SA_STAGING GCP_SA_PRODUCTION FIREBASE_STAGING_CONFIG FIREBASE_PRODUCTION_CONFIG VITE_APP_NAME; do
+for var in FIREBASE_STAGING FIREBASE_PRODUCTION GITHUB_PAT DISCORD_BOT_TOKEN DISCORD_GUILD_ID GCP_WIF_PROVIDER GCP_SA_STAGING GCP_SA_PRODUCTION FIREBASE_STAGING_CONFIG FIREBASE_PRODUCTION_CONFIG VITE_APP_NAME; do
   val=\${!var}
   if [[ "\$val" =~ "<html" || "\$val" =~ "<!" || "\$val" =~ "<HTML" ]]; then
     eval "\$var=\"\""
@@ -196,7 +195,6 @@ done
 echo "DEBUG: REPO_OWNER=$REPO_OWNER"
 echo "DEBUG: FIREBASE_STAGING=$FIREBASE_STAGING"
 echo "DEBUG: FIREBASE_PRODUCTION=$FIREBASE_PRODUCTION"
-echo "DEBUG: PASSPHRASE length=${'${#PASSPHRASE}'}"
 
 sudo apt-get update -y || true
 sudo apt-get install -y curl git jq apt-transport-https ca-certificates gnupg2 ufw unzip || true
@@ -354,7 +352,6 @@ Environment="GITHUB_PAT=$GITHUB_PAT"
 Environment="KIMAKI_BOT_TOKEN=$DISCORD_BOT_TOKEN"
 Environment="DISCORD_BOT_TOKEN=$DISCORD_BOT_TOKEN"
 Environment="DISCORD_GUILD_ID=$DISCORD_GUILD_ID"
-Environment="PASSPHRASE=$PASSPHRASE"
 Environment="FIREBASE_STAGING=$FIREBASE_STAGING"
 Environment="FIREBASE_PRODUCTION=$FIREBASE_PRODUCTION"
 Environment="NODE_ENV=production"

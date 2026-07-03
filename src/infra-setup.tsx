@@ -164,6 +164,8 @@ const [loading, setLoading] = useState(true);
   const [firebaseConfigProduction, setFirebaseConfigProduction] = useState('');
   const [firebaseStagingData, setFirebaseStagingData] = useState<{ projectId?: string }>({});
   const [firebaseProductionData, setFirebaseProductionData] = useState<{ projectId?: string }>({});
+  const [gcpClientIdStaging, setGcpClientIdStaging] = useState('');
+  const [gcpClientIdProduction, setGcpClientIdProduction] = useState('');
   const [githubPat, setGithubPat] = useState('');
   const [discordBotTokenInput, setDiscordBotTokenInput] = useState('');
 const [discordGuildId, setDiscordGuildId] = useState('');
@@ -303,6 +305,45 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     return await resp.json();
   };
 
+  const updateAuthDomains = async (token, projectId, newDomains) => {
+    const resp = await fetch(`https://identitytoolkit.googleapis.com/v2/projects/${projectId}/config`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (!resp.ok) return;
+    const config = await resp.json();
+    const existingDomains = config.authorizedDomains || [];
+    const merged = [...new Set([...existingDomains, ...newDomains])];
+    if (merged.length === existingDomains.length) return;
+    await fetch(`https://identitytoolkit.googleapis.com/v2/projects/${projectId}/config`, {
+      method: 'PATCH',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ authorizedDomains: merged })
+    });
+  };
+
+  const createOAuthClient = async (token, projectId, displayName, originUrl) => {
+    const resp = await fetch('https://www.googleapis.com/oauth2/v1/clients', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: displayName,
+        type: 'web',
+        javascript_origins: [originUrl, 'http://localhost:3000'],
+        redirect_uris: [originUrl]
+      })
+    });
+    if (resp.ok) {
+      const data = await resp.json();
+      return data.id || null;
+    }
+    if (resp.status === 409) {
+      const data = await resp.json().catch(() => ({}));
+      return data.id || null;
+    }
+    console.warn(`Failed to create OAuth client (${resp.status}), falling back to auto-discovered client`);
+    return null;
+  };
+
   const fetchFirebaseProjects = async () => {
     if (!gcpAccessToken) {
       setError('Please sign in to Google (Step 1) to load Firebase projects.');
@@ -381,7 +422,18 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     setFirebaseAutoConfigMessage(`${environment}: Fetching SDK config...`);
     const config = await getFirebaseWebAppConfig(gcpAccessToken, projectId, appId);
 
-    return config;
+    const originUrl = `https://${config.projectId}.web.app`;
+    setFirebaseAutoConfigMessage(`${environment}: Creating OAuth client for ${originUrl}...`);
+    const clientId = await createOAuthClient(gcpAccessToken, projectId, `SecureAgent Wizard (${environment})`, originUrl);
+
+    setFirebaseAutoConfigMessage(`${environment}: Adding authorized domains...`);
+    await updateAuthDomains(gcpAccessToken, projectId, [
+      'localhost',
+      config.projectId + '.web.app',
+      config.projectId + '.firebaseapp.com',
+    ]);
+
+    return { config, clientId };
   };
 
   const handleAutoConfigureFirebase = async () => {
@@ -400,17 +452,25 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
 
     let stagingConfig = null;
     let productionConfig = null;
+    let stagingClientId = null;
+    let productionClientId = null;
     try {
       if (selectedFirebaseStagingProject) {
-        stagingConfig = await autoConfigureFirebaseProject(selectedFirebaseStagingProject, 'Staging');
+        const stagingResult = await autoConfigureFirebaseProject(selectedFirebaseStagingProject, 'Staging');
+        stagingConfig = stagingResult.config;
+        stagingClientId = stagingResult.clientId;
         setFirebaseConfigStaging(JSON.stringify(stagingConfig, null, 2));
         setFirebaseStagingData(stagingConfig);
+        if (stagingClientId) setGcpClientIdStaging(stagingClientId);
       }
 
       if (selectedFirebaseProductionProject) {
-        productionConfig = await autoConfigureFirebaseProject(selectedFirebaseProductionProject, 'Production');
+        const prodResult = await autoConfigureFirebaseProject(selectedFirebaseProductionProject, 'Production');
+        productionConfig = prodResult.config;
+        productionClientId = prodResult.clientId;
         setFirebaseConfigProduction(JSON.stringify(productionConfig, null, 2));
         setFirebaseProductionData(productionConfig);
+        if (productionClientId) setGcpClientIdProduction(productionClientId);
       }
 
       setFirebaseAutoConfigMessage('Firebase auto-configuration complete!');
@@ -547,6 +607,14 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       }
       if (oidcData?.saProduction) {
         await setGitHubVariable(githubPat, githubRepoName, 'GCP_SA_PRODUCTION', oidcData.saProduction);
+      }
+
+      // Upload OAuth client IDs for wizard GCP access
+      if (gcpClientIdStaging) {
+        await setGitHubVariable(githubPat, githubRepoName, 'GCP_CLIENT_ID_STAGING', gcpClientIdStaging);
+      }
+      if (gcpClientIdProduction) {
+        await setGitHubVariable(githubPat, githubRepoName, 'GCP_CLIENT_ID_PRODUCTION', gcpClientIdProduction);
       }
 
       // Upload app name (user can override this in GitHub settings)
@@ -760,8 +828,8 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
         setBillingEnabled(null);
         return null;
       }
-      const errText = await response.text().catch(() => response.statusText);
-      console.error(`Billing API error ${response.status}: ${errText}`);
+      await response.text().catch(() => {});
+      console.error(`Billing API error ${response.status} — see response body for details`);
     } catch (e) {
       console.error('Error checking billing:', e);
     }
@@ -811,8 +879,8 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
         setBillingEnabled(true);
         addNotification('Billing account linked successfully!', 'success');
       } else if (response.status === 401 || response.status === 403) {
-        const errText = await response.text().catch(() => response.statusText);
-        console.error(`Billing API ${response.status}: ${errText}`);
+        await response.text().catch(() => {});
+        console.error(`Billing API ${response.status} — see response body for details`);
         setError('Cannot link billing via API — insufficient permissions. Please link billing manually in the GCP Console.');
       } else {
         const err = await response.json();
@@ -2035,7 +2103,6 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       { key: 'discord_guild_id', value: discordGuildId || '' },
       { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
       { key: 'firebase_production', value: firebaseProductionData?.projectId || '' },
-      { key: 'encryption_passphrase', value: passphrase || '' },
       { key: 'gcp_wif_provider', value: gcpWifProviderName || '' },
       { key: 'gcp_sa_staging', value: gcpSaStagingEmail || '' },
       { key: 'gcp_sa_production', value: gcpSaProductionEmail || '' },

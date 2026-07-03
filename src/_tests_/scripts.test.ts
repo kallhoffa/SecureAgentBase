@@ -17,11 +17,11 @@ describe('CloudShellScript', () => {
     expect(script).toContain('YOUR_PROJECT_ID');
   });
 
-  it('includes all 5 required IAM roles', () => {
+  it('includes all 5 required IAM roles (least privilege)', () => {
     const script = CloudShellScript({ projectId: 'p' });
-    expect(script).toContain('roles/compute.admin');
+    expect(script).toContain('roles/compute.instanceAdmin.v1');
     expect(script).toContain('roles/iam.serviceAccountUser');
-    expect(script).toContain('roles/billing.projectManager');
+    expect(script).toContain('roles/billing.user');
     expect(script).toContain('roles/serviceusage.serviceUsageAdmin');
     expect(script).toContain('roles/secretmanager.secretAccessor');
   });
@@ -119,7 +119,6 @@ describe('getStartupScript', () => {
         'github_repo',
         'firebase_staging',
         'firebase_production',
-        'encryption_passphrase',
         'discord_bot_token',
         'discord_guild_id',
         'gcp_wif_provider',
