@@ -26,9 +26,9 @@ test.describe('Template Preview', () => {
     await expect(page.getByText('Security').first()).toBeVisible();
   });
 
-  test('Tasks quick link navigates away from preview', async ({ page }) => {
+  test('Tasks quick link button navigates away from preview', async ({ page }) => {
     await page.goto(`${TEST_URL}/preview`);
-    await page.getByText('Tasks').first().click();
+    await page.locator('button').filter({ hasText: 'Tasks' }).click();
     // Tasks is behind RequireAuth, so it redirects to /login
     // Verify we left the preview page
     await expect(page).not.toHaveURL(/\/preview/);
