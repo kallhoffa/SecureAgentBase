@@ -12,6 +12,7 @@ vi.mock('firebase/firestore', () => ({
   query: vi.fn((ref) => ref),
   where: vi.fn(() => ({ _mock: 'where' })),
   orderBy: vi.fn(() => ({ _mock: 'orderBy' })),
+  limit: vi.fn(() => ({ _mock: 'limit' })),
   getDocs: vi.fn(() => Promise.resolve({
     docs: [],
     empty: true,

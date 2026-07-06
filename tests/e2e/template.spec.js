@@ -20,10 +20,10 @@ test.describe('Template Preview', () => {
 
   test('quick link buttons are rendered', async ({ page }) => {
     await page.goto(`${TEST_URL}/preview`);
-    await expect(page.getByText('Tasks')).toBeVisible();
-    await expect(page.getByText('About')).toBeVisible();
-    await expect(page.getByText('Profile')).toBeVisible();
-    await expect(page.getByText('Security')).toBeVisible();
+    await expect(page.getByText('Tasks').first()).toBeVisible();
+    await expect(page.getByText('About').first()).toBeVisible();
+    await expect(page.getByText('Profile').first()).toBeVisible();
+    await expect(page.getByText('Security').first()).toBeVisible();
   });
 
   test('Tasks quick link navigates to /tasks', async ({ page }) => {
@@ -40,8 +40,8 @@ test.describe('Template Preview', () => {
 
   test('shows sign in and create account buttons when logged out', async ({ page }) => {
     await page.goto(`${TEST_URL}/preview`);
-    await expect(page.getByRole('button', { name: 'Sign In' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Create Account' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Sign In' }).first()).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Create Account' }).first()).toBeVisible();
   });
 
   test('Sign In button navigates to /login', async ({ page }) => {
@@ -52,19 +52,19 @@ test.describe('Template Preview', () => {
 
   test('Create Account button navigates to /signup', async ({ page }) => {
     await page.goto(`${TEST_URL}/preview`);
-    await page.getByRole('button', { name: 'Create Account' }).click();
+    await page.getByRole('button', { name: 'Create Account' }).first().click();
     await expect(page).toHaveURL(/\/signup/);
   });
 });
 
 test.describe('Template Tasks Page', () => {
-  test('tasks page renders heading', async ({ page }) => {
+  test('tasks page redirects to login when not authenticated', async ({ page }) => {
     await page.goto(`${TEST_URL}/tasks`);
-    await expect(page.getByRole('heading', { name: 'Tasks' })).toBeVisible();
+    await expect(page).toHaveURL(/\/login/);
   });
 
-  test('tasks page shows sign-in prompt when logged out', async ({ page }) => {
+  test('tasks page shows sign-in heading when not authenticated', async ({ page }) => {
     await page.goto(`${TEST_URL}/tasks`);
-    await expect(page.getByText('Sign in to manage your tasks')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Sign In' })).toBeVisible();
   });
 });
