@@ -143,6 +143,7 @@ const [loading, setLoading] = useState(true);
   const [apiNotEnabled, setApiNotEnabled] = useState(false);
   const [serviceAccountJson, setServiceAccountJson] = useState(null);
   const [serviceAccountError, setServiceAccountError] = useState(null);
+  const [godSaEmail, setGodSaEmail] = useState(null);
 
   const [step1Complete, setStep1Complete] = useState(false);
   const [step2Complete, setStep2Complete] = useState(false);
@@ -199,6 +200,8 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
   const [showInitModal, setShowInitModal] = useState(false);
   const [vmInitComplete, setVmInitComplete] = useState(false);
   const [vmInitLogTail, setVmInitLogTail] = useState('');
+  const [botOnline, setBotOnline] = useState(false);
+  const [stagingDeployed, setStagingDeployed] = useState(false);
 
   const [step4Status, setStep4Status] = useState<'idle' | 'enabling' | 'complete' | 'error'>('idle');
   const [step4Message, setStep4Message] = useState('');
@@ -632,6 +635,33 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
 
   const getServiceAccountToken = async () => {
     if (!serviceAccountJson) return null;
+
+    const saEmail = godSaEmail || serviceAccountJson.client_email;
+
+    if (gcpAccessToken && saEmail) {
+      try {
+        const resp = await fetch(
+          `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${encodeURIComponent(saEmail)}:generateAccessToken`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${gcpAccessToken}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              scope: ['https://www.googleapis.com/auth/cloud-platform', 'https://www.googleapis.com/auth/compute', 'https://www.googleapis.com/auth/devstorage.full_control', 'https://www.googleapis.com/auth/cloud-billing.readonly'],
+              lifetime: '3600s'
+            })
+          }
+        );
+        if (resp.ok) {
+          const data = await resp.json();
+          return data.accessToken;
+        }
+      } catch (e) {
+        console.warn('generateAccessToken failed, falling back to JWT signing:', e);
+      }
+    }
     
     if (!serviceAccountJson.private_key) {
       console.error('Service account private key is missing. Please re-upload your service account JSON file.');
@@ -935,6 +965,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     const roles = [
       'roles/compute.admin',
       'roles/iam.serviceAccountUser',
+      'roles/iam.serviceAccountTokenCreator',
       'roles/billing.projectManager',
       'roles/serviceusage.serviceUsageAdmin',
       'roles/iam.workloadIdentityPoolAdmin',
@@ -957,15 +988,13 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     roles.forEach(role => {
       let binding = bindings.find(b => b.role === role);
       if (!binding) {
-        binding = { role, members: [] };
-        bindings.push(binding);
-      }
-      if (!binding.members.includes(`serviceAccount:${saEmail}`)) {
+        bindings.push({ role, members: [`serviceAccount:${saEmail}`] });
+      } else if (!binding.members.includes(`serviceAccount:${saEmail}`)) {
         binding.members.push(`serviceAccount:${saEmail}`);
       }
     });
 
-    const setPolicyResp = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${gcpProjectId}:setIamPolicy`, {
+    const setResp = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${gcpProjectId}:setIamPolicy`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${token}`,
@@ -974,9 +1003,53 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       body: JSON.stringify({ policy: { bindings, etag: policy.etag } })
     });
 
-    if (!setPolicyResp.ok) {
-      const err = await setPolicyResp.json();
-      throw new Error(err.error?.message || 'Failed to set IAM policy roles');
+    if (!setResp.ok) {
+      const err = await setResp.json();
+      throw new Error(err.error?.message || 'Failed to set IAM policy');
+    }
+
+    return policy;
+  };
+
+  const grantAgentSaTokenCreator = async (token, gcpProjectId, godSaEmail) => {
+    const agentSaEmail = `secureagent-manager@${gcpProjectId}.iam.gserviceaccount.com`;
+    const member = `serviceAccount:${agentSaEmail}`;
+
+    try {
+      const policyResp = await fetch(
+        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts/${encodeURIComponent(godSaEmail)}:getIamPolicy`,
+        {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}` }
+        }
+      );
+
+      if (!policyResp.ok) return;
+
+      const policy = await policyResp.json();
+      const bindings = policy.bindings || [];
+      const existing = bindings.find(b => b.role === 'roles/iam.serviceAccountTokenCreator');
+      if (!existing || !existing.members.includes(member)) {
+        if (!existing) {
+          bindings.push({ role: 'roles/iam.serviceAccountTokenCreator', members: [member] });
+        } else {
+          existing.members.push(member);
+        }
+      }
+
+      await fetch(
+        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts/${encodeURIComponent(godSaEmail)}:setIamPolicy`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ policy: { bindings, etag: policy.etag } })
+        }
+      );
+    } catch (e) {
+      console.error('Failed to grant agent SA tokenCreator on God SA:', e);
     }
   };
 
@@ -1036,10 +1109,14 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       
       setSaAutoProgress('Assigning IAM permissions (this takes a few seconds)...');
       await grantGcpRolesProgrammatically(token, targetProjectId, saEmail);
+
+      setSaAutoProgress('Granting agent SA impersonation access...');
+      await grantAgentSaTokenCreator(token, targetProjectId, saEmail);
       
       setSaAutoProgress('Generating security key file...');
       const keyJson = await generateServiceAccountKeyProgrammatically(token, targetProjectId, saEmail);
-      
+
+      setGodSaEmail(saEmail);
       setServiceAccountJson(keyJson);
       setProjectId(targetProjectId);
       setStep2Complete(true);
@@ -1510,6 +1587,93 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     }
   }, [user]);
 
+  // E2E test injection: load credentials from URL params (base64-encoded)
+  // or sessionStorage (set by Playwright addInitScript to avoid address bar leakage)
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const fromStorage = (key) => {
+      try { return sessionStorage.getItem(key); } catch { return null; }
+    };
+    const read = (key) => params.get(key) || fromStorage(key);
+    const e2eSA = read('__e2e_sa');
+    const e2eToken = read('__e2e_token');
+    const e2eProjectId = read('__e2e_project_id');
+    const e2eFirebaseStaging = read('__e2e_firebase_staging');
+    const e2eFirebaseProd = read('__e2e_firebase_production');
+    const e2eGithubPat = read('__e2e_github_pat');
+    const e2eDiscordToken = read('__e2e_discord_token');
+    const e2eDiscordGuild = read('__e2e_discord_guild');
+
+    if (e2eSA) {
+      try {
+        const saJson = JSON.parse(atob(e2eSA));
+        if (saJson.private_key) {
+          setServiceAccountJson(saJson);
+          setGodSaEmail(saJson.client_email || (saJson.project_id ? `secureagent@${saJson.project_id}.iam.gserviceaccount.com` : null));
+          if (saJson.project_id) setProjectId(saJson.project_id);
+          setStep2Complete(true);
+          setStep3Complete(true);
+        }
+      } catch (e) {
+        console.warn('E2E: Failed to parse __e2e_sa param:', e);
+      }
+    }
+    if (e2eProjectId) {
+      setProjectId(e2eProjectId);
+      setStep3Complete(true);
+    }
+    if (e2eToken) {
+      try {
+        setGcpAccessToken(atob(e2eToken));
+      } catch (e) {
+        console.warn('E2E: Failed to decode __e2e_token param:', e);
+      }
+    }
+    if (e2eFirebaseStaging) {
+      try {
+        const config = JSON.parse(atob(e2eFirebaseStaging));
+        setFirebaseConfigStaging(JSON.stringify(config, null, 2));
+        setFirebaseStagingData(config);
+      } catch (e) {
+        console.warn('E2E: Failed to parse __e2e_firebase_staging:', e);
+      }
+    }
+    if (e2eFirebaseProd) {
+      try {
+        const config = JSON.parse(atob(e2eFirebaseProd));
+        setFirebaseConfigProduction(JSON.stringify(config, null, 2));
+        setFirebaseProductionData(config);
+      } catch (e) {
+        console.warn('E2E: Failed to parse __e2e_firebase_production:', e);
+      }
+    }
+    if (e2eGithubPat) {
+      try {
+        setGithubPat(atob(e2eGithubPat));
+      } catch (e) {
+        console.warn('E2E: Failed to decode __e2e_github_pat:', e);
+      }
+    }
+    if (e2eDiscordToken) {
+      try {
+        setDiscordBotToken(atob(e2eDiscordToken));
+      } catch (e) {
+        console.warn('E2E: Failed to decode __e2e_discord_token:', e);
+      }
+    }
+    if (e2eDiscordGuild) {
+      try {
+        setDiscordGuildId(atob(e2eDiscordGuild));
+      } catch (e) {
+        console.warn('E2E: Failed to decode __e2e_discord_guild:', e);
+      }
+    }
+
+    if (e2eSA || e2eToken || e2eFirebaseStaging || e2eFirebaseProd || e2eGithubPat || e2eDiscordToken || e2eDiscordGuild) {
+      console.log('E2E mode active: credentials injected from URL params');
+    }
+  }, []);
+
   useEffect(() => {
     const formProgress = loadFormProgress();
     console.log('Loading form progress:', formProgress);
@@ -1547,11 +1711,12 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       step2Complete,
       serviceAccountJson,
       projectId,
+      godSaEmail,
       gcpAccessToken: gcpAccessToken ? 'saved' : null,
     };
     console.log('Saving form progress:', formData);
     saveFormProgress(formData);
-  }, [formProgressLoaded, firebaseConfigStaging, firebaseConfigProduction, githubPat, discordBotToken, discordGuildId, expandedSteps, step2Complete, serviceAccountJson, projectId, gcpAccessToken]);
+  }, [formProgressLoaded, firebaseConfigStaging, firebaseConfigProduction, githubPat, discordBotToken, discordGuildId, expandedSteps, step2Complete, serviceAccountJson, projectId, godSaEmail, gcpAccessToken]);
 
   useEffect(() => {
     const loadInfraConfig = async () => {
@@ -1602,6 +1767,8 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
         
         // Note: service_account_key is NOT restored (private_key sensitive)
         // User must re-upload service account JSON each session
+
+        if (configData.god_sa_email) setGodSaEmail(configData.god_sa_email);
 
         const formProgress = loadFormProgress();
         
@@ -1713,6 +1880,11 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
             setVmInitComplete(true);
           }
           
+          // Detect Discord bot online marker from kimaki-register.service
+          if (logs.includes('KIMAKI_BOT_ONLINE')) {
+            setBotOnline(true);
+          }
+          
           // Check for setup pending
           const setupPending = logs.includes('KIMAKI_SETUP_PENDING');
           if (setupPending) {
@@ -1729,6 +1901,35 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     
     return () => clearInterval(interval);
   }, [vmIp, projectId, vmZone, serviceAccountJson]);
+
+  // Clean up God SA long-lived key once VM initialization is complete
+  useEffect(() => {
+    if (!vmInitComplete || !gcpAccessToken || !projectId || !godSaEmail) return;
+    deleteExistingServiceAccountKeys(gcpAccessToken, projectId, godSaEmail).catch(e =>
+      console.error('Failed to clean up God SA key:', e)
+    );
+  }, [vmInitComplete, gcpAccessToken, projectId, godSaEmail]);
+
+  // Poll staging URL after VM init completes
+  useEffect(() => {
+    if (!vmInitComplete) return;
+    const stagingProjectId = firebaseStagingData?.projectId;
+    if (!stagingProjectId) return;
+
+    const checkStagingDeploy = async () => {
+      try {
+        const res = await fetch(`https://${stagingProjectId}.web.app`, { method: 'HEAD', mode: 'no-cors' });
+        // no-cors HEAD returns opaque (status 0) on success — that's fine
+        setStagingDeployed(true);
+      } catch {
+        // Site not reachable yet
+      }
+    };
+
+    checkStagingDeploy();
+    const interval = setInterval(checkStagingDeploy, 30000);
+    return () => clearInterval(interval);
+  }, [vmInitComplete, firebaseStagingData?.projectId]);
 
   // Auto-generate Discord invite URL when token is loaded from storage
   useEffect(() => {
@@ -1791,6 +1992,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       gcp_project_id: projectId.trim(),
       github_app_installed: githubAppInstalled,
       service_account_configured: !!serviceAccountKey || !!serviceAccountJson || gcpConnected,
+      god_sa_email: godSaEmail,
       vm_ip: vmIp,
       step3_complete: step3Complete,
       firebase_staging_project_id: firebaseStagingData?.projectId || null,
@@ -1802,6 +2004,13 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       const infraRef = doc(db, INFRA_COLLECTION, user.uid);
       await setDoc(infraRef, finalData, { merge: true });
       localStorage.removeItem(LOCALSTORAGE_KEY);
+
+      try {
+        const adminRef = doc(db, 'admins', user.uid);
+        await setDoc(adminRef, { role: 'admin', created_at: new Date().toISOString() }, { merge: true });
+      } catch (adminErr) {
+        console.error('Failed to grant admin:', adminErr);
+      }
     } else {
       saveToLocalStorage(finalData);
     }
@@ -2241,6 +2450,13 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
         <div>
           <h1 className="text-2xl font-bold">Infrastructure Setup</h1>
           <p className="text-gray-600">Configure GCP, GitHub, and Discord for autonomous deployments</p>
+          <button
+            onClick={() => window.open('/preview', '_blank')}
+            className="inline-flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-700 mt-1"
+          >
+            <span>👁️</span>
+            Preview deployed template in new tab →
+          </button>
         </div>
         <div className="flex items-center gap-2">
           {pendingConfig && user && (
@@ -4125,15 +4341,13 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
               <span>💬</span>
               Discord Developer Portal
             </a>
-            <a
-              href="https://github.com/kallhoffa/SecureAgentBase"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-2 p-3 bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 text-sm text-gray-700"
+            <button
+              onClick={() => window.open('/preview', '_blank')}
+              className="flex items-center gap-2 p-3 bg-blue-50 hover:bg-blue-100 rounded-lg border border-blue-200 text-sm text-blue-700 font-medium w-full text-left"
             >
-              <span>📦</span>
-              SecureAgentBase (GitHub)
-            </a>
+              <span>👁️</span>
+              View Deployed Template Preview
+            </button>
             <a
               href="https://github.com/kallhoffa/kimaki"
               target="_blank"
@@ -4159,6 +4373,23 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                 <p className="text-gray-600 text-sm">
                   Your Kimaki agent is online and ready. The bot has connected to Discord and registered the SecureAgentBase project.
                 </p>
+                {/* Success indicators */}
+                <div className="space-y-2 text-left">
+                  <div className="flex items-center gap-2 text-sm">
+                    {botOnline ? (
+                      <><Check size={16} className="text-green-500 shrink-0" /><span className="text-green-700">Discord bot online</span></>
+                    ) : (
+                      <><div className="animate-spin w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full shrink-0" /><span className="text-gray-500">Waiting for Discord bot...</span></>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 text-sm">
+                    {stagingDeployed ? (
+                      <><Check size={16} className="text-green-500 shrink-0" /><span className="text-green-700">Staging site deployed</span></>
+                    ) : (
+                      <><div className="animate-spin w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full shrink-0" /><span className="text-gray-500">Waiting for staging deploy...</span></>
+                    )}
+                  </div>
+                </div>
                 {kimakiInstallUrl && (
                   <a
                     href={kimakiInstallUrl}

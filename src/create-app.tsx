@@ -148,7 +148,7 @@ npm start
           },
           body: JSON.stringify({
             name: instanceName,
-            machineType: `zones/${zone}/machineTypes/e2-micro`,
+            machineType: `zones/${zone}/machineTypes/e2-medium`,
             disks: [{
               boot: true,
               autoDelete: true,
@@ -428,7 +428,7 @@ npm start
               Cloud Provisioning
             </h2>
             <p className="text-gray-600 mb-6">
-              We&apos;ll provision a free e2-micro VM on GCP to run the Discord listener.
+              We&apos;ll provision an e2-medium VM on GCP to run the AI agents.
             </p>
             
             {gcpConnected ? (

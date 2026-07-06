@@ -102,6 +102,35 @@ export const getServiceAccountToken = async (serviceAccountJson: any) => {
   }
 };
 
+export const generateShortLivedToken = async (userToken: string, saEmail: string): Promise<string | null> => {
+  try {
+    const resp = await fetch(
+      `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${encodeURIComponent(saEmail)}:generateAccessToken`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${userToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          scope: [
+            'https://www.googleapis.com/auth/cloud-platform',
+            'https://www.googleapis.com/auth/compute',
+            'https://www.googleapis.com/auth/devstorage.full_control',
+            'https://www.googleapis.com/auth/cloud-billing.readonly'
+          ],
+          lifetime: '3600s'
+        })
+      }
+    );
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    return data.accessToken;
+  } catch {
+    return null;
+  }
+};
+
 export const createWorkloadIdentityPool = async (token: string, gcpProjectId: string, poolId: string, log: (msg: string) => void) => {
   log('Creating workload identity pool...');
   try {

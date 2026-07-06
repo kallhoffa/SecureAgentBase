@@ -1,10 +1,15 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../firestore-utils/auth-context';
-import {
-  collection, addDoc, getDocs, updateDoc, deleteDoc,
-  doc, query, where, orderBy, serverTimestamp
-} from 'firebase/firestore';
+import { safeCreate, safeUpdate, safeDelete, safeQuery } from '../../guardrails/safe-firestore';
+import { validate } from '../../guardrails/validate';
+import { useRateLimit } from '../../guardrails/useRateLimit';
 import { Plus, Trash2, Loader2, CheckCircle, Circle } from 'lucide-react';
+
+const TASK_SCHEMA = {
+  title: { type: 'string', required: true, minLength: 1, maxLength: 200, label: 'Task title' },
+};
+
+const ALLOW_FIELDS = ['title', 'completed'];
 
 const Tasks = ({ db }) => {
   const { user } = useAuth();
@@ -13,6 +18,7 @@ const Tasks = ({ db }) => {
   const [error, setError] = useState(null);
   const [newTitle, setNewTitle] = useState('');
   const [adding, setAdding] = useState(false);
+  const rateLimit = useRateLimit('add-task', 20);
 
   const loadTasks = useCallback(async () => {
     if (!user) {
@@ -23,22 +29,13 @@ const Tasks = ({ db }) => {
     try {
       setLoading(true);
       setError(null);
-      const tasksRef = collection(db, 'tasks');
-      const q = query(
-        tasksRef,
-        where('userId', '==', user.uid),
-        orderBy('createdAt', 'desc')
-      );
-      const snapshot = await getDocs(q);
-      const loaded = snapshot.docs.map((docSnap) => {
-        const data = docSnap.data();
-        return {
-          id: docSnap.id,
-          title: data.title,
-          completed: data.completed || false,
-          createdAt: data.createdAt?.toDate() || new Date(),
-        };
-      });
+      const results = await safeQuery(db, 'tasks', user.uid, { maxResults: 100 });
+      const loaded = results.map((d) => ({
+        id: d.id,
+        title: d.title || '',
+        completed: d.completed || false,
+        createdAt: d.createdAt?.toDate ? d.createdAt.toDate() : new Date(),
+      }));
       setTasks(loaded);
     } catch (err) {
       console.error('Error loading tasks:', err);
@@ -54,15 +51,19 @@ const Tasks = ({ db }) => {
 
   const addTask = async () => {
     if (!user || !newTitle.trim()) return;
+    if (!rateLimit.check()) {
+      setError(`Rate limit reached. Try again in ${Math.ceil(rateLimit.resetIn / 1000)}s.`);
+      return;
+    }
+    const errors = validate({ title: newTitle.trim() }, TASK_SCHEMA);
+    if (errors) {
+      setError(Object.values(errors)[0]);
+      return;
+    }
     try {
       setAdding(true);
-      const tasksRef = collection(db, 'tasks');
-      await addDoc(tasksRef, {
-        title: newTitle.trim(),
-        completed: false,
-        userId: user.uid,
-        createdAt: serverTimestamp(),
-      });
+      setError(null);
+      await safeCreate(db, 'tasks', { title: newTitle.trim(), completed: false }, user.uid, { allowFields: ALLOW_FIELDS });
       setNewTitle('');
       await loadTasks();
     } catch (err) {
@@ -75,8 +76,8 @@ const Tasks = ({ db }) => {
 
   const toggleTask = async (task) => {
     try {
-      const taskRef = doc(db, 'tasks', task.id);
-      await updateDoc(taskRef, { completed: !task.completed });
+      setError(null);
+      await safeUpdate(db, 'tasks', task.id, { completed: !task.completed }, user.uid, { allowFields: ALLOW_FIELDS, requireOwnership: true });
       await loadTasks();
     } catch (err) {
       console.error('Error toggling task:', err);
@@ -86,8 +87,8 @@ const Tasks = ({ db }) => {
 
   const deleteTask = async (taskId) => {
     try {
-      const taskRef = doc(db, 'tasks', taskId);
-      await deleteDoc(taskRef);
+      setError(null);
+      await safeDelete(db, 'tasks', taskId, user.uid, { requireOwnership: true });
       await loadTasks();
     } catch (err) {
       console.error('Error deleting task:', err);

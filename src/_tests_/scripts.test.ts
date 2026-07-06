@@ -17,13 +17,14 @@ describe('CloudShellScript', () => {
     expect(script).toContain('YOUR_PROJECT_ID');
   });
 
-  it('includes all 5 required IAM roles (least privilege)', () => {
+  it('includes all 6 required IAM roles (least privilege)', () => {
     const script = CloudShellScript({ projectId: 'p' });
     expect(script).toContain('roles/compute.instanceAdmin.v1');
     expect(script).toContain('roles/iam.serviceAccountUser');
     expect(script).toContain('roles/billing.user');
     expect(script).toContain('roles/serviceusage.serviceUsageAdmin');
     expect(script).toContain('roles/secretmanager.secretAccessor');
+    expect(script).toContain('roles/iam.serviceAccountTokenCreator');
   });
 
   it('creates the secureagent-manager service account', () => {
@@ -211,6 +212,12 @@ describe('getStartupScript', () => {
     it('makes the register service run after kimaki.service', () => {
       const script = getStartupScript(false);
       expect(script).toContain('After=kimaki.service');
+    });
+
+    it('outputs KIMAKI_BOT_ONLINE marker on successful registration', () => {
+      const script = getStartupScript(false);
+      expect(script).toContain('KIMAKI_BOT_ONLINE');
+      expect(script).toContain('/dev/ttyS0');
     });
   });
 });

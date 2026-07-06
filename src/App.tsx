@@ -16,6 +16,7 @@ import InfraSetup from './infra-setup';
 import CreateApp from './create-app';
 import GitHubCallback from './github-callback';
 import { Dashboard, Tasks } from './template';
+import AdminPanel from './admin/AdminPanel';
 import { NotificationProvider } from './firestore-utils/notification-context';
 import { RequireAuth, RedirectIfAuthed } from './components/ProtectedRoute';
 
@@ -80,7 +81,11 @@ const App: React.FC<AppProps> = ({ db }) => {
               <Route path="/create-app" element={<RequireAuth><CreateApp db={db} /></RequireAuth>} />
             )}
             <Route path="/tasks" element={<RequireAuth><Tasks db={db} /></RequireAuth>} />
+            <Route path="/preview" element={<Dashboard />} />
           </Route>
+          <Route path="/admin" element={<AdminPanel db={db} />} />
+          <Route path="/admin/feature-flags" element={<AdminPanel db={db} />} />
+          <Route path="/admin/limits" element={<AdminPanel db={db} />} />
           {isAppMode && (
             <Route path="/github-callback" element={<GitHubCallback db={db} />} />
           )}

@@ -254,7 +254,7 @@ describe('Step7 - VM Creation', () => {
     expanded: true, prevComplete: true,
     isVmComplete: false, showRecreateOptions: false,
     vmIp: '', vmZone: 'us-east1-b', setVmZone: vi.fn(),
-    vmMachineType: 'e2-micro', setVmMachineType: vi.fn(),
+    vmMachineType: 'e2-medium', setVmMachineType: vi.fn(),
     useOptimizedBundle: false, setUseOptimizedBundle: vi.fn(),
     creatingVm: false, deletingVm: false,
     step4Status: 'idle', step4Message: '', step4Logs: [],

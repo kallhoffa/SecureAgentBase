@@ -2,6 +2,7 @@ import { LogOut, User, CheckSquare } from 'lucide-react';
 import { useNavigate, NavigateFunction, Link } from 'react-router-dom';
 import { useAuth } from './firestore-utils/auth-context';
 import { useNotification } from './firestore-utils/notification-context';
+import { useIsAdmin } from './admin/useIsAdmin';
 import { Firestore } from 'firebase/firestore';
 
 const isAppMode = import.meta.env.VITE_APP_MODE === 'true';
@@ -12,11 +13,12 @@ interface NavigationBarProps {
   db?: Firestore;
 }
 
-const NavigationBar: React.FC<NavigationBarProps> = ({ navigate: navigationOverride }) => {
+const NavigationBar: React.FC<NavigationBarProps> = ({ navigate: navigationOverride, db }) => {
   const defaultNavigate = useNavigate();
   const navigate = navigationOverride || defaultNavigate;
   const { user, logout } = useAuth();
   const { addNotification } = useNotification();
+  const { isAdmin } = useIsAdmin(db);
 
   const handleLogout = async (): Promise<void> => {
     try {
@@ -48,6 +50,11 @@ const NavigationBar: React.FC<NavigationBarProps> = ({ navigate: navigationOverr
               <Link to="/tasks" className="text-gray-600 hover:text-blue-600 text-sm font-medium flex items-center gap-1">
                 <CheckSquare size={16} />
                 Tasks
+              </Link>
+            )}
+            {isAdmin && (
+              <Link to="/admin" className="text-gray-600 hover:text-indigo-600 text-sm font-medium flex items-center gap-1">
+                Admin
               </Link>
             )}
             <Link to="/about" className="text-gray-600 hover:text-blue-600 text-sm font-medium">

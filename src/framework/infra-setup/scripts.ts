@@ -98,6 +98,10 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \\
   --member="serviceAccount:secureagent-manager@$PROJECT_ID.iam.gserviceaccount.com" \\
   --role="roles/secretmanager.secretAccessor"
 
+gcloud projects add-iam-policy-binding $PROJECT_ID \\
+  --member="serviceAccount:secureagent-manager@$PROJECT_ID.iam.gserviceaccount.com" \\
+  --role="roles/iam.serviceAccountTokenCreator"
+
 # Generate and download key
 gcloud iam service-accounts keys create ~/secureagent-manager-key.json \\
   --iam-account="secureagent-manager@$PROJECT_ID.iam.gserviceaccount.com"
@@ -255,6 +259,36 @@ fi
 
 git checkout -b main
 
+# Clean up wizard-specific files — users don't need the infra setup wizard
+# or admin panel in their template repo
+echo "Cleaning up wizard-specific files..."
+rm -rf src/infra-setup.tsx src/create-app.tsx
+rm -rf src/framework/infra-setup/
+rm -rf src/admin/
+rm -rf tests/e2e/wizard.spec.js
+rm -rf src/_tests_/WizardSteps.test.jsx src/_tests_/create-app.test.tsx src/_tests_/StepHeader.test.jsx
+
+# Fix App.tsx: remove wizard/admin imports and routes
+if [ -f src/App.tsx ]; then
+  # Remove import lines for InfraSetup, CreateApp, AdminPanel
+  sed -i "/import InfraSetup from '.\/infra-setup';/d" src/App.tsx
+  sed -i "/import CreateApp from '.\/create-app';/d" src/App.tsx
+  sed -i "/import AdminPanel from '.\/admin\/AdminPanel';/d" src/App.tsx
+  # Remove Route elements for /infra-setup, /create-app, /admin/*
+  sed -i '/<Route path="\/infra-setup".*\/>/d' src/App.tsx
+  sed -i '/<Route path="\/create-app".*\/>/d' src/App.tsx
+  sed -i '/<Route path="\/admin/d' src/App.tsx
+  echo "App.tsx cleaned of wizard/admin references"
+fi
+
+# Fix navigation-bar.tsx: remove admin link and useIsAdmin import
+if [ -f src/navigation-bar.tsx ]; then
+  sed -i "/import { useIsAdmin } from '.\/admin\/useIsAdmin';/d" src/navigation-bar.tsx
+  sed -i "/const { isAdmin } = useIsAdmin(db);/d" src/navigation-bar.tsx
+  sed -i '/{isAdmin &&/,/\/admin">Admin<\/Link><\/>}/d' src/navigation-bar.tsx
+  echo "navigation-bar.tsx cleaned of admin references"
+fi
+
 # Configure git
 git config user.email "agent@secureagentbase.com"
 git config user.name "SecureAgent Manager"
@@ -396,6 +430,8 @@ for i in $(seq 1 30); do
   echo "$(date): Attempting to register project (attempt $i)..." >> /var/log/kimaki-register.log
   if $KIMAKI_CMD project add /root/.kimaki/projects/$PROJECT_NAME >> /var/log/kimaki-register.log 2>&1; then
     echo "$(date): Project registered successfully!" >> /var/log/kimaki-register.log
+    # Signal to the wizard's serial port poller that the Discord bot is online
+    echo "KIMAKI_BOT_ONLINE" > /dev/ttyS0 2>/dev/null || true
     exit 0
   fi
   echo "$(date): Attempt $i failed, retrying in 10s..." >> /var/log/kimaki-register.log

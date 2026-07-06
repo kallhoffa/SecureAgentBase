@@ -100,7 +100,7 @@ const Step7 = ({
                 onChange={(e) => setVmMachineType(e.target.value)}
                 className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
               >
-                <option value="e2-micro">e2-micro (2 vCPU, 1 GB)</option>
+                <option value="e2-medium">e2-medium (2 vCPU, 4 GB)</option>
                 <option value="e2-small">e2-small (2 vCPU, 2 GB)</option>
                 <option value="e2-medium">e2-medium (2 vCPU, 4 GB)</option>
                 <option value="e2-standard-2">e2-standard-2 (2 vCPU, 8 GB)</option>
