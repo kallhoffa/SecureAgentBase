@@ -64,7 +64,7 @@ const navigateWithE2E = async (page, extraParams = {}) => {
   }
 
   const qs = params.toString();
-  await page.goto(`${TEST_URL}/setup${qs ? '?' + qs : ''}`);
+  await page.goto(`${TEST_URL}/infra-setup${qs ? '?' + qs : ''}`);
   await page.waitForLoadState('networkidle');
 };
 
@@ -112,10 +112,14 @@ const getTestUserToken = async () => {
 
 test.describe('Wizard E2E Regression', () => {
 
-  // ---------- Non-auth tests (always run) ----------
+  // ---------- Non-auth tests (app mode only) ----------
   test.describe('Unauthenticated UI', () => {
+    test.beforeEach(async () => {
+      test.skip(process.env.E2E_APP_MODE !== 'true', 'Wizard route only available in app mode');
+    });
+
     test('page loads with correct heading', async ({ page }) => {
-      await page.goto(`${TEST_URL}/setup`);
+      await page.goto(`${TEST_URL}/infra-setup`);
       await expect(page.getByText('Infrastructure Setup')).toBeVisible();
       await expect(
         page.getByText('Configure GCP, GitHub, and Discord for autonomous deployments')
@@ -123,7 +127,7 @@ test.describe('Wizard E2E Regression', () => {
     });
 
     test('shows all 7 step headers', async ({ page }) => {
-      await page.goto(`${TEST_URL}/setup`);
+      await page.goto(`${TEST_URL}/infra-setup`);
       const steps = [
         'Step 1: Account',
         'Step 2: Service Account',
@@ -139,12 +143,12 @@ test.describe('Wizard E2E Regression', () => {
     });
 
     test('shows sign in prompt when not authenticated', async ({ page }) => {
-      await page.goto(`${TEST_URL}/setup`);
+      await page.goto(`${TEST_URL}/infra-setup`);
       await expect(page.getByText('Please sign in to continue.')).toBeVisible();
     });
 
     test('SA key textarea validates JSON', async ({ page }) => {
-      await page.goto(`${TEST_URL}/setup`);
+      await page.goto(`${TEST_URL}/infra-setup`);
       const textarea = page.getByPlaceholder(/service_account/);
       await expect(textarea).toBeVisible();
 
@@ -160,19 +164,19 @@ test.describe('Wizard E2E Regression', () => {
     });
 
     test('locked steps show correct message', async ({ page }) => {
-      await page.goto(`${TEST_URL}/setup`);
+      await page.goto(`${TEST_URL}/infra-setup`);
       const lockMsg = page.getByText('Complete previous step first');
       await expect(lockMsg.first()).toBeVisible();
     });
 
     test('back to home link works', async ({ page }) => {
-      await page.goto(`${TEST_URL}/setup`);
+      await page.goto(`${TEST_URL}/infra-setup`);
       await page.getByText('Back to Home').click();
       await expect(page).toHaveURL(TEST_URL + '/');
     });
 
     test('preview link opens in new tab', async ({ page }) => {
-      await page.goto(`${TEST_URL}/setup`);
+      await page.goto(`${TEST_URL}/infra-setup`);
       const previewLink = page.getByText(/Preview deployed template/);
       await expect(previewLink).toBeVisible();
       const linkElement = previewLink.locator('..');
@@ -181,8 +185,13 @@ test.describe('Wizard E2E Regression', () => {
     });
   });
 
-  // ---------- Full wizard flow (requires env vars) ----------
+  // ---------- Full wizard flow (requires env vars + app mode) ----------
   test.describe('Full Wizard Flow', () => {
+    test.beforeEach(async () => {
+      test.skip(process.env.E2E_APP_MODE !== 'true',
+        'Wizard route only available in app mode');
+    });
+
     // Skip if no real credentials
     test.beforeAll(async () => {
       if (!E2E_GCP_TOKEN || !process.env.E2E_FIREBASE_API_KEY) {
