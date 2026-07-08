@@ -395,7 +395,9 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     setFirebaseAutoConfigMessage(`Adding Firebase to ${newFirebaseProjectId}...`);
     setError(null);
     try {
-      await addFirebaseToProject(gcpAccessToken, newFirebaseProjectId);
+      const token = await generateFirebaseSaToken();
+      if (!token) throw new Error('Unable to get access token for Firebase Management API');
+      await addFirebaseToProject(token, newFirebaseProjectId);
       setFirebaseAutoConfigMessage(`Firebase added to ${newFirebaseProjectId}! Reloading project list...`);
       await fetchFirebaseProjects();
       setNewFirebaseProjectName('');
@@ -410,20 +412,21 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
   };
 
   const autoConfigureFirebaseProject = async (projectId, environment) => {
-    if (!gcpAccessToken) throw new Error('No GCP access token available');
+    const token = await generateFirebaseSaToken();
+    if (!token) throw new Error('No GCP access token available');
 
     setFirebaseAutoConfigMessage(`${environment}: Checking Firebase setup for ${projectId}...`);
 
-    const projects = await listFirebaseProjects(gcpAccessToken);
+    const projects = await listFirebaseProjects(token);
     const existingProject = projects.find(p => p.projectId === projectId || p.projectNumber === projectId);
 
     if (!existingProject) {
       setFirebaseAutoConfigMessage(`${environment}: Adding Firebase to ${projectId}...`);
-      await addFirebaseToProject(gcpAccessToken, projectId);
+      await addFirebaseToProject(token, projectId);
     }
 
     setFirebaseAutoConfigMessage(`${environment}: Checking web apps...`);
-    const webApps = await listFirebaseWebApps(gcpAccessToken, projectId);
+    const webApps = await listFirebaseWebApps(token, projectId);
 
     let appId;
     if (webApps.length > 0) {
@@ -431,19 +434,19 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       setFirebaseAutoConfigMessage(`${environment}: Using existing web app ${appId}`);
     } else {
       setFirebaseAutoConfigMessage(`${environment}: Creating web app...`);
-      const newApp = await createFirebaseWebApp(gcpAccessToken, projectId, `SecureAgent ${environment}`);
+      const newApp = await createFirebaseWebApp(token, projectId, `SecureAgent ${environment}`);
       appId = newApp.appId;
     }
 
     setFirebaseAutoConfigMessage(`${environment}: Fetching SDK config...`);
-    const config = await getFirebaseWebAppConfig(gcpAccessToken, projectId, appId);
+    const config = await getFirebaseWebAppConfig(token, projectId, appId);
 
     const originUrl = `https://${config.projectId}.web.app`;
     setFirebaseAutoConfigMessage(`${environment}: Creating OAuth client for ${originUrl}...`);
-    const clientId = await createOAuthClient(gcpAccessToken, projectId, `SecureAgent Wizard (${environment})`, originUrl);
+    const clientId = await createOAuthClient(token, projectId, `SecureAgent Wizard (${environment})`, originUrl);
 
     setFirebaseAutoConfigMessage(`${environment}: Adding authorized domains...`);
-    await updateAuthDomains(gcpAccessToken, projectId, [
+    await updateAuthDomains(token, projectId, [
       'localhost',
       config.projectId + '.web.app',
       config.projectId + '.firebaseapp.com',
@@ -676,61 +679,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       }
     }
     
-    if (!serviceAccountJson.private_key) {
-      console.error('Service account private key is missing. Please re-upload your service account JSON file.');
-      setError('Service account private key is missing. Please re-upload your service account JSON file.');
-      return null;
-    }
-    
-    const now = Math.floor(Date.now() / 1000);
-    const payload = {
-      iss: serviceAccountJson.client_email,
-      sub: serviceAccountJson.client_email,
-      aud: 'https://oauth2.googleapis.com/token',
-      iat: now,
-      exp: now + 3600,
-      scope: 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/compute https://www.googleapis.com/auth/devstorage.full_control https://www.googleapis.com/auth/cloud-billing.readonly'
-    };
-
-    const header = { alg: 'RS256', typ: 'JWT' };
-    
-    const encodeBase64Url = (str) => {
-      return btoa(JSON.stringify(str)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    };
-    
-    const encodedHeader = encodeBase64Url(header);
-    const encodedPayload = encodeBase64Url(payload);
-    const signatureInput = `${encodedHeader}.${encodedPayload}`;
-    
-    const encoder = new TextEncoder();
-    const data = encoder.encode(signatureInput);
-    
-    try {
-      const privateKey = serviceAccountJson.private_key.replace(/\\n/g, '\n');
-      const keyData = await crypto.subtle.importKey(
-        'pkcs8',
-        await importPrivateKey(privateKey),
-        { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-        false,
-        ['sign']
-      );
-      
-      const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', keyData, data);
-      const signatureBase64 = btoa(String.fromCharCode(...new Uint8Array(signature))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-      const jwt = `${signatureInput}.${signatureBase64}`;
-      
-      const response = await fetch('https://oauth2.googleapis.com/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`
-      });
-      
-      const tokenData = await response.json();
-      return tokenData.access_token;
-    } catch (e) {
-      console.error('Error getting service account token:', e);
-      return null;
-    }
+    return signJwtAssertion(serviceAccountJson, 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/compute https://www.googleapis.com/auth/devstorage.full_control https://www.googleapis.com/auth/cloud-billing.readonly');
   };
 
   const fetchVmLogs = async () => {
@@ -983,6 +932,70 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     }
   };
 
+  const signJwtAssertion = async (jsonKey, scopes) => {
+    if (!jsonKey.private_key) {
+      console.error('Service account private key is missing');
+      return null;
+    }
+
+    const now = Math.floor(Date.now() / 1000);
+    const payload = {
+      iss: jsonKey.client_email,
+      sub: jsonKey.client_email,
+      aud: 'https://oauth2.googleapis.com/token',
+      iat: now,
+      exp: now + 3600,
+      scope: scopes
+    };
+
+    const header = { alg: 'RS256', typ: 'JWT' };
+    const encodeBase64Url = (str) => {
+      return btoa(JSON.stringify(str)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    };
+
+    const encodedHeader = encodeBase64Url(header);
+    const encodedPayload = encodeBase64Url(payload);
+    const signatureInput = `${encodedHeader}.${encodedPayload}`;
+
+    const encoder = new TextEncoder();
+    const data = encoder.encode(signatureInput);
+
+    try {
+      const privateKey = jsonKey.private_key.replace(/\\n/g, '\n');
+      const keyData = await crypto.subtle.importKey(
+        'pkcs8',
+        await importPrivateKey(privateKey),
+        { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+        false,
+        ['sign']
+      );
+
+      const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', keyData, data);
+      const signatureBase64 = btoa(String.fromCharCode(...new Uint8Array(signature))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+      const jwt = `${signatureInput}.${signatureBase64}`;
+
+      const response = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`
+      });
+
+      const tokenData = await response.json();
+      return tokenData.access_token;
+    } catch (e) {
+      console.error('Error getting service account token:', e);
+      return null;
+    }
+  };
+
+  const generateFirebaseSaToken = async () => {
+    if (serviceAccountJson && serviceAccountJson.private_key) {
+      const token = await signJwtAssertion(serviceAccountJson, 'https://www.googleapis.com/auth/cloud-platform');
+      if (token) return token;
+    }
+    return gcpAccessToken;
+  };
+
   const grantGcpRolesProgrammatically = async (token, gcpProjectId, saEmail, userEmail) => {
     const roles = [
       'roles/compute.admin',
@@ -991,7 +1004,8 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       'roles/billing.projectManager',
       'roles/serviceusage.serviceUsageAdmin',
       'roles/iam.workloadIdentityPoolAdmin',
-      'roles/iam.securityAdmin'
+      'roles/iam.securityAdmin',
+      'roles/firebase.admin'
     ];
 
     const policyResp = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${gcpProjectId}:getIamPolicy`, {

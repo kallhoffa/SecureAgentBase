@@ -279,37 +279,37 @@ Both env vars are set in CI via GitHub Actions workflow variables.
 
 ---
 
-## Session Status (Jul 3, 2026)
+## Session Status (Jul 8, 2026)
 
 ### What was done
-- **Created guardrails system** in `src/guardrails/` with 4 modules + full test coverage:
-  - `validate(data, schema)` — Reusable validation with type/required/min/max/pattern/oneOf rules, custom labels, email/URL/boolean types
-  - `safe-firestore.js` — `safeCreate/safeUpdate/safeDelete/safeQuery` wrapping Firestore with audit stamps (createdBy, updatedBy, createdAt, updatedAt), field allowlists, and optional ownership enforcement (`requireOwnership`)
-  - `useFeatureFlag(flagName, defaultValue)` — Real-time Firestore-backed feature flags via `onSnapshot`, in-memory cache
-  - `useRateLimit(action, maxPerMinute)` — Client-side sliding window rate limiter with `check()`, `remaining`, `resetIn`
-  - 43 tests across 4 new test files: `validate.test.js` (12 tests), `safe-firestore.test.js` (10 tests), `useFeatureFlag.test.js` (4 tests), `useRateLimit.test.js` (4 tests)
-- **Updated Tasks template** (`src/template/pages/Tasks.jsx`): refactored to use all 4 guardrails — validates task title, rate limits adds (20/min), uses safeCreate/safeUpdate/safeDelete/safeQuery with field allowlists and ownership checks. Full error/success/loading states preserved.
-- **Fixed rate limit hook**: replaced stale `canAct` snapshot with functional check that recalculates the sliding window on each call
-- **Added `/preview` route** in `App.tsx` — always renders the Dashboard template regardless of `VITE_APP_MODE`. Used by the wizard as a "Preview deployed template" link (intro area + resources section)
-- **Added template e2e tests** (`tests/e2e/template.spec.js`): 11 tests covering template preview page, quick links, auth buttons, and tasks page
-- **All previously done items remain**: 31 test files, 319 unit tests, 18 e2e tests, coverage met, CI green, security hardening deployed
-- **Created admin panel** in `src/admin/` — feature flag management (create/toggle/delete), limits dashboard (rate limits table + GCP budget info), and admin check via Firestore `admins/{uid}` docs. Only accessible to users with an `admins/` doc. Nav bar shows "Admin" link for admins.
+- **All prior work preserved**: 320+ unit tests, 23+ e2e tests, guardrails system, admin panel, template mode, CI pipelines, startup script cleanup, wizard auto-configuration
+- **Production URL bug found and fixed**: `PRODUCTION_URL` was `agentbase-8c022.web.app` (project's default hosting) but `firebase.json:18` specifies `"site": "agentbase"` → deployment goes to `agentbase.web.app`. Updated via `gh variable set`.
+- **`v0.18.1` release created** with URL fix → production deploy succeeded at `https://agentbase.web.app`
+- **Profile page cleaned**: removed "Your Apps" block with "Create New App" button; removed unused `Plus` import; profile test updated to expect section is absent
+- **Version badge dynamic**: `navigation-bar.tsx:39` hardcoded `v0.1.0` → now uses `import.meta.env.VITE_APP_VERSION` (set from `${{ github.ref_name }}` by CI)
+- **Staging deploy fix**: profile test failing due to "Your Apps" text removal — updated test and pushed
+- **Wizard `addFirebaseToProject` 403 fix** — root cause: user's GCP OAuth token lacks `firebase.admin` even after IAM grant (different account or propagation delay):
+  - Extracted `signJwtAssertion(jsonKey, scopes)` helper (reusable SA key JWT assertion signing via Web Crypto API)
+  - Created `generateFirebaseSaToken()` — generates SA token via JWT signing (cloud-platform scope), falls back to user's `gcpAccessToken`
+  - Refactored `getServiceAccountToken()` to use `signJwtAssertion` helper (reducing duplication)
+  - Added `roles/firebase.admin` to SA roles in `grantGcpRolesProgrammatically`
+  - Updated `autoConfigureFirebaseProject()` and `handleCreateFirebaseProject()` to use SA token instead of user token for all Firebase Management API calls
+  - **Result**: Firebase API calls now authenticate directly as the SA (which has `firebase.admin`), bypassing IAM propagation delay and user token permission issues entirely
 
 ### What needs to be done
-1. Push `main` to `origin` to trigger staging CI + deploy
-2. Monitor staging deploy at `https://agentbase-staging.web.app` after push
-3. Create a GitHub release (`v0.18.0`) on `kallhoffa/SecureAgentBase` to trigger prod deploy
+1. Push `main` to `origin` to trigger staging CI + deploy with all wizard fixes
+2. Verify staging deploy green at `https://agentbase-staging.web.app`
+3. Test wizard `addFirebase` now works (SA key auth instead of user token)
+4. Cut `v0.18.2` release for prod deploy
+5. Run full e2e with `E2E_FULL=true` once GCP pre-requisites are set up
 
 ### Relevant files
-- `src/_tests_/` — 12 unit test files, 132 tests
-- `tests/e2e/` — 3 e2e spec files (auth-flow, navigation, smoke)
-- `.github/workflows/firebase-deploy-staging.yml` / `firebase-deploy.yml` — CI now runs tests + coverage
-- `vitest.config.js` — coverage thresholds, esbuild jsx: 'automatic', jsdom env
-- `playwright.config.js` / `playwright.ci.config.js` — e2e config (CI variant with staging URL)
-- `src/framework/infra-setup/steps/Step1.jsx`–`Step7.jsx` — added lucide-react imports
-- `package.json` — added `@vitest/coverage-v8`, updated `vitest`, `test:ci` includes `--coverage`
-- `src/guardrails/` — 4 modules: validate.js, safe-firestore.js, useFeatureFlag.js, useRateLimit.js
-- `src/admin/` — admin panel: AdminPanel.jsx, FeatureFlags.jsx, Limits.jsx, useIsAdmin.js
+- `src/infra-setup.tsx` — `signJwtAssertion()` (extracted JWT signing helper), `generateFirebaseSaToken()` (SA-based Firebase auth), `getServiceAccountToken()` refactored, `autoConfigureFirebaseProject()`/`handleCreateFirebaseProject()` now use SA token, `grantGcpRolesProgrammatically()` includes `roles/firebase.admin` for SA
+- `src/navigation-bar.tsx:39` — version badge uses `VITE_APP_VERSION`
+- `src/profile.tsx` — "Your Apps" block removed
+- `src/_tests_/profile.test.tsx` — test updated
+- `.github/workflows/firebase-deploy.yml` — `PRODUCTION_URL` var corrected
+- `src/guardrails/`, `src/admin/`, `src/template/` — unchanged from prior sessions
 
 ---
 
