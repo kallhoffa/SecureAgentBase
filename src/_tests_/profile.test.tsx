@@ -111,14 +111,12 @@ describe('Profile', () => {
     expect(screen.getByText('Saving...')).toBeInTheDocument();
   });
 
-  it('renders Your Apps section with create button', async () => {
+  it('does not render Your Apps section', async () => {
     renderProfile();
     await waitFor(() => {
-      expect(screen.getByText('Your Apps')).toBeInTheDocument();
-      expect(screen.getByText('Create New App')).toBeInTheDocument();
+      expect(screen.queryByText('Your Apps')).not.toBeInTheDocument();
+      expect(screen.queryByText('Create New App')).not.toBeInTheDocument();
     });
-    fireEvent.click(screen.getByText('Create New App'));
-    expect(mockNavigate).toHaveBeenCalledWith('/create-app');
   });
 
   it('renders Infrastructure section with configure button', async () => {

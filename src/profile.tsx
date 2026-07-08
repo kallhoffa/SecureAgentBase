@@ -3,7 +3,7 @@ import { useAuth } from './firestore-utils/auth-context';
 import { useNavigate } from 'react-router-dom';
 import { useNotification } from './firestore-utils/notification-context';
 import { getUserPreferences, setUserBetaPreference } from './firestore-utils/user-preferences';
-import { Shield, ExternalLink, Plus, Loader2 } from 'lucide-react';
+import { Shield, ExternalLink, Loader2 } from 'lucide-react';
 import { Firestore } from 'firebase/firestore';
 
 interface ProfileProps {
@@ -104,22 +104,6 @@ const Profile: React.FC<ProfileProps> = ({ db }) => {
         </div>
       </div>
 
-      <div className="bg-white rounded-lg shadow p-6">
-        <div className="flex items-center gap-3 mb-4">
-          <Plus className="text-green-600" size={24} />
-          <h2 className="text-lg font-semibold">Your Apps</h2>
-        </div>
-        <p className="text-gray-600 mb-4">
-          Create and manage your full-stack apps. Build entirely from Discord.
-        </p>
-        <button
-          onClick={() => navigate('/create-app')}
-          className="bg-green-600 text-white px-4 py-2 rounded-lg font-medium hover:bg-green-700 flex items-center gap-2"
-        >
-          <Plus size={18} />
-          Create New App
-        </button>
-      </div>
 
       <div className="bg-white rounded-lg shadow p-6">
         <div className="flex items-center gap-3 mb-4">

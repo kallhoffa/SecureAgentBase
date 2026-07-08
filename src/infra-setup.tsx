@@ -258,18 +258,31 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
   };
 
   const addFirebaseToProject = async (token, gcpProjectId) => {
-    const resp = await fetch(`https://firebase.googleapis.com/v1beta1/projects/${gcpProjectId}:addFirebase`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
-    });
-    if (!resp.ok) {
+    const maxAttempts = 6;
+    const initialDelay = 2000;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const resp = await fetch(`https://firebase.googleapis.com/v1beta1/projects/${gcpProjectId}:addFirebase`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }
+      });
+
+      if (resp.ok) return await resp.json();
+
       const err = await resp.text().catch(() => resp.statusText);
       if (err.includes('ALREADY_FIREBASE_PROJECT') || err.includes('already exists')) {
         return { alreadyExists: true };
       }
+
+      if (resp.status === 403 && attempt < maxAttempts - 1) {
+        const delay = initialDelay * Math.pow(2, attempt);
+        console.warn(`addFirebase 403 (attempt ${attempt + 1}), retrying in ${delay}ms...`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+
       throw new Error(`Failed to add Firebase to project (${resp.status}): ${err}`);
     }
-    return await resp.json();
   };
 
   const listFirebaseWebApps = async (token, firebaseProjectId) => {
@@ -961,7 +974,16 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     return email;
   };
 
-  const grantGcpRolesProgrammatically = async (token, gcpProjectId, saEmail) => {
+  const addMemberToBinding = (bindings, role, member) => {
+    let binding = bindings.find(b => b.role === role);
+    if (!binding) {
+      bindings.push({ role, members: [member] });
+    } else if (!binding.members.includes(member)) {
+      binding.members.push(member);
+    }
+  };
+
+  const grantGcpRolesProgrammatically = async (token, gcpProjectId, saEmail, userEmail) => {
     const roles = [
       'roles/compute.admin',
       'roles/iam.serviceAccountUser',
@@ -986,13 +1008,12 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     const bindings = policy.bindings || [];
 
     roles.forEach(role => {
-      let binding = bindings.find(b => b.role === role);
-      if (!binding) {
-        bindings.push({ role, members: [`serviceAccount:${saEmail}`] });
-      } else if (!binding.members.includes(`serviceAccount:${saEmail}`)) {
-        binding.members.push(`serviceAccount:${saEmail}`);
-      }
+      addMemberToBinding(bindings, role, `serviceAccount:${saEmail}`);
     });
+
+    if (userEmail) {
+      addMemberToBinding(bindings, 'roles/firebase.admin', `user:${userEmail}`);
+    }
 
     const setResp = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${gcpProjectId}:setIamPolicy`, {
       method: 'POST',
@@ -1015,41 +1036,65 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     const agentSaEmail = `secureagent-manager@${gcpProjectId}.iam.gserviceaccount.com`;
     const member = `serviceAccount:${agentSaEmail}`;
 
-    try {
-      const policyResp = await fetch(
-        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts/${encodeURIComponent(godSaEmail)}:getIamPolicy`,
-        {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}` }
+    const maxAttempts = 6;
+    const initialDelay = 2000;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const policyResp = await fetch(
+          `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts/${encodeURIComponent(godSaEmail)}:getIamPolicy`,
+          {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${token}` }
+          }
+        );
+
+        if (!policyResp.ok) {
+          const errBody = await policyResp.text().catch(() => '');
+          if (errBody.includes('404') || policyResp.status === 404) {
+            if (attempt < maxAttempts - 1) {
+              const delay = initialDelay * Math.pow(2, attempt);
+              console.warn(`IAM policy fetch 404 (attempt ${attempt + 1}), retrying in ${delay}ms...`);
+              await new Promise(r => setTimeout(r, delay));
+              continue;
+            }
+          }
+          console.warn('grantAgentSaTokenCreator skipped:', policyResp.status, errBody);
+          return;
         }
-      );
 
-      if (!policyResp.ok) return;
+        const policy = await policyResp.json();
+        const bindings = policy.bindings || [];
+        addMemberToBinding(bindings, 'roles/iam.serviceAccountTokenCreator', member);
 
-      const policy = await policyResp.json();
-      const bindings = policy.bindings || [];
-      const existing = bindings.find(b => b.role === 'roles/iam.serviceAccountTokenCreator');
-      if (!existing || !existing.members.includes(member)) {
-        if (!existing) {
-          bindings.push({ role: 'roles/iam.serviceAccountTokenCreator', members: [member] });
+        const setResp = await fetch(
+          `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts/${encodeURIComponent(godSaEmail)}:setIamPolicy`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ policy: { bindings, etag: policy.etag } })
+          }
+        );
+
+        if (!setResp.ok) {
+          const errBody = await setResp.text().catch(() => '');
+          console.warn('grantAgentSaTokenCreator setIamPolicy skipped:', setResp.status, errBody);
+          return;
+        }
+
+        return;
+      } catch (e) {
+        if (attempt < maxAttempts - 1) {
+          const delay = initialDelay * Math.pow(2, attempt);
+          console.warn(`IAM grant error (attempt ${attempt + 1}), retrying in ${delay}ms...`, e);
+          await new Promise(r => setTimeout(r, delay));
         } else {
-          existing.members.push(member);
+          console.error('Failed to grant agent SA tokenCreator on God SA:', e);
         }
       }
-
-      await fetch(
-        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts/${encodeURIComponent(godSaEmail)}:setIamPolicy`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ policy: { bindings, etag: policy.etag } })
-        }
-      );
-    } catch (e) {
-      console.error('Failed to grant agent SA tokenCreator on God SA:', e);
     }
   };
 
@@ -1108,7 +1153,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       const saEmail = await createServiceAccountProgrammatically(token, targetProjectId);
       
       setSaAutoProgress('Assigning IAM permissions (this takes a few seconds)...');
-      await grantGcpRolesProgrammatically(token, targetProjectId, saEmail);
+      await grantGcpRolesProgrammatically(token, targetProjectId, saEmail, user?.email);
 
       setSaAutoProgress('Granting agent SA impersonation access...');
       await grantAgentSaTokenCreator(token, targetProjectId, saEmail);
