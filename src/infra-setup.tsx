@@ -398,6 +398,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       const saProjectMatch = serviceAccountJson?.client_email?.split('@')[1]?.split('.')[0];
       if (saProjectMatch && saProjectMatch !== newFirebaseProjectId && serviceAccountJson?.client_email) {
         await grantSaFirebaseAdminOnProject(newFirebaseProjectId, serviceAccountJson.client_email);
+        await new Promise(r => setTimeout(r, 10000));
       }
       const token = await generateFirebaseSaToken();
       if (!token) throw new Error('Unable to get access token for Firebase Management API');
@@ -422,7 +423,11 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
         method: 'POST',
         headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
       });
-      if (!policyResp.ok) return;
+      if (!policyResp.ok) {
+        const errText = await policyResp.text().catch(() => policyResp.statusText);
+        console.warn(`Cannot read IAM policy on ${projectId} (${policyResp.status}): ${errText}`);
+        return;
+      }
       const policy = await policyResp.json();
       const bindings = policy.bindings || [];
       addMemberToBinding(bindings, 'roles/firebase.admin', `serviceAccount:${saEmail}`);
@@ -444,6 +449,8 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     if (saProjectId && saProjectId !== firebaseProjectId && serviceAccountJson?.client_email) {
       setFirebaseAutoConfigMessage(`${environment}: Granting SA firebase.admin on ${firebaseProjectId}...`);
       await grantSaFirebaseAdminOnProject(firebaseProjectId, serviceAccountJson.client_email);
+      setFirebaseAutoConfigMessage(`${environment}: Waiting for IAM propagation...`);
+      await new Promise(r => setTimeout(r, 10000));
     }
 
     setFirebaseAutoConfigMessage(`${environment}: Checking Firebase setup for ${firebaseProjectId}...`);
