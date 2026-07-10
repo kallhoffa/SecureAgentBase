@@ -485,9 +485,9 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     return { config, clientId };
   };
 
-  const handleAutoConfigureFirebase = async () => {
+  const handleCreateFirebaseProjects = async () => {
     if (!gcpAccessToken) {
-      setError('Please sign in to Google (Step 1) to enable auto-configuration.');
+      setError('Please sign in to Google (Step 1) first.');
       return;
     }
     if (!projectName) {
@@ -502,13 +502,10 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     setFirebaseAutoConfigMessage(`Creating staging Firebase project: ${stagingProjectId}...`);
     setError(null);
 
-    let stagingConfig = null;
-    let productionConfig = null;
-    let stagingClientId = null;
-    let productionClientId = null;
+    let stagingConfig = null, productionConfig = null;
+    let stagingClientId = null, productionClientId = null;
 
     try {
-      // Create and configure staging project
       await ensureGcpProjectExists(stagingProjectId, `${projectName} Staging`);
       await ensureFirebaseOnProject(stagingProjectId);
       setFirebaseAutoConfigMessage(`Setting up staging web app...`);
@@ -519,7 +516,6 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       setFirebaseStagingData(stagingConfig);
       if (stagingClientId) setGcpClientIdStaging(stagingClientId);
 
-      // Create and configure production project
       setFirebaseAutoConfigMessage(`Creating production Firebase project: ${prodProjectId}...`);
       await ensureGcpProjectExists(prodProjectId, projectName);
       await ensureFirebaseOnProject(prodProjectId);
@@ -534,11 +530,54 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       setFirebaseAutoConfigMessage('Firebase projects created and configured!');
       addNotification('Staging and production Firebase projects created successfully!', 'success');
       setExpandedSteps(prev => [...prev.filter(s => s !== 4), 5]);
-      try {
-        await saveConfig({ firebase_staging: stagingConfig, firebase_production: productionConfig });
-      } catch (err) {
-        console.error('Error saving Firebase config:', err);
+      await saveConfig({ firebase_staging: stagingConfig, firebase_production: productionConfig }).catch(() => {});
+    } catch (e) {
+      console.error(e);
+      setError('Firebase setup failed: ' + e.message);
+      setFirebaseAutoConfigMessage('');
+    } finally {
+      setAutoConfiguringFirebase(false);
+    }
+  };
+
+  const handleSetupExistingFirebase = async () => {
+    if (!gcpAccessToken) {
+      setError('Please sign in to Google (Step 1) first.');
+      return;
+    }
+    if (!selectedFirebaseStagingProject && !selectedFirebaseProductionProject) {
+      setError('Please select at least one Firebase project.');
+      return;
+    }
+    setAutoConfiguringFirebase(true);
+    setFirebaseAutoConfigMessage('Configuring selected Firebase projects...');
+    setError(null);
+
+    let stagingConfig = null, productionConfig = null;
+    let stagingClientId = null, productionClientId = null;
+    try {
+      if (selectedFirebaseStagingProject) {
+        const stagingResult = await setupFirebaseProject(selectedFirebaseStagingProject, 'Staging');
+        stagingConfig = stagingResult.config;
+        stagingClientId = stagingResult.clientId;
+        setFirebaseConfigStaging(JSON.stringify(stagingConfig, null, 2));
+        setFirebaseStagingData(stagingConfig);
+        if (stagingClientId) setGcpClientIdStaging(stagingClientId);
       }
+
+      if (selectedFirebaseProductionProject) {
+        const prodResult = await setupFirebaseProject(selectedFirebaseProductionProject, 'Production');
+        productionConfig = prodResult.config;
+        productionClientId = prodResult.clientId;
+        setFirebaseConfigProduction(JSON.stringify(productionConfig, null, 2));
+        setFirebaseProductionData(productionConfig);
+        if (productionClientId) setGcpClientIdProduction(productionClientId);
+      }
+
+      setFirebaseAutoConfigMessage('Firebase configuration complete!');
+      addNotification('Firebase projects configured successfully!', 'success');
+      setExpandedSteps(prev => [...prev.filter(s => s !== 4), 5]);
+      await saveConfig({ firebase_staging: stagingConfig, firebase_production: productionConfig }).catch(() => {});
     } catch (e) {
       console.error(e);
       setError('Firebase setup failed: ' + e.message);
@@ -3385,7 +3424,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                           <li>• Production: <code className="font-mono bg-blue-100 px-1 rounded">{projectName ? projectName.toLowerCase().replace(/[^a-z0-9-]/g, '-') : '...'}</code></li>
                         </ul>
                         <button
-                          onClick={handleAutoConfigureFirebase}
+                          onClick={handleCreateFirebaseProjects}
                           disabled={autoConfiguringFirebase || !projectName}
                           className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg text-sm"
                         >
