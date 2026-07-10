@@ -387,23 +387,18 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
   };
 
   const handleCreateFirebaseProject = async () => {
-    if (!gcpAccessToken || !newFirebaseProjectId) {
-      setError('Please enter a project ID and ensure you are signed in to Google.');
+    if (!gcpAccessToken || !projectId) {
+      setError('Complete Step 3 (GCP Project) first.');
       return;
     }
     setCreatingFirebaseProject(true);
-    setFirebaseAutoConfigMessage(`Adding Firebase to ${newFirebaseProjectId}...`);
+    setFirebaseAutoConfigMessage(`Adding Firebase to ${projectId}...`);
     setError(null);
     try {
-      const saProjectMatch = serviceAccountJson?.client_email?.split('@')[1]?.split('.')[0];
-      if (saProjectMatch && saProjectMatch !== newFirebaseProjectId && serviceAccountJson?.client_email) {
-        await grantSaFirebaseAdminOnProject(newFirebaseProjectId, serviceAccountJson.client_email);
-        await new Promise(r => setTimeout(r, 10000));
-      }
       const token = await generateFirebaseSaToken();
       if (!token) throw new Error('Unable to get access token for Firebase Management API');
-      await addFirebaseToProject(token, newFirebaseProjectId);
-      setFirebaseAutoConfigMessage(`Firebase added to ${newFirebaseProjectId}! Reloading project list...`);
+      await addFirebaseToProject(token, projectId);
+      setFirebaseAutoConfigMessage(`Firebase added to ${projectId}! Reloading project list...`);
       await fetchFirebaseProjects();
       setNewFirebaseProjectName('');
       setNewFirebaseProjectId('');
@@ -416,42 +411,9 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     }
   };
 
-  const grantSaFirebaseAdminOnProject = async (projectId, saEmail) => {
-    if (!gcpAccessToken || !saEmail) return;
-    try {
-      const policyResp = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${projectId}:getIamPolicy`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
-      });
-      if (!policyResp.ok) {
-        const errText = await policyResp.text().catch(() => policyResp.statusText);
-        console.warn(`Cannot read IAM policy on ${projectId} (${policyResp.status}): ${errText}`);
-        return;
-      }
-      const policy = await policyResp.json();
-      const bindings = policy.bindings || [];
-      addMemberToBinding(bindings, 'roles/firebase.admin', `serviceAccount:${saEmail}`);
-      await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${projectId}:setIamPolicy`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${gcpAccessToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ policy: { bindings, etag: policy.etag } })
-      });
-    } catch (e) {
-      console.warn(`Failed to grant firebase.admin on ${projectId}:`, e);
-    }
-  };
-
   const autoConfigureFirebaseProject = async (firebaseProjectId, environment) => {
     const token = await generateFirebaseSaToken();
     if (!token) throw new Error('No GCP access token available');
-
-    const saProjectId = serviceAccountJson?.client_email?.split('@')[1]?.split('.')[0];
-    if (saProjectId && saProjectId !== firebaseProjectId && serviceAccountJson?.client_email) {
-      setFirebaseAutoConfigMessage(`${environment}: Granting SA firebase.admin on ${firebaseProjectId}...`);
-      await grantSaFirebaseAdminOnProject(firebaseProjectId, serviceAccountJson.client_email);
-      setFirebaseAutoConfigMessage(`${environment}: Waiting for IAM propagation...`);
-      await new Promise(r => setTimeout(r, 10000));
-    }
 
     setFirebaseAutoConfigMessage(`${environment}: Checking Firebase setup for ${firebaseProjectId}...`);
 
@@ -513,7 +475,8 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     let productionClientId = null;
     try {
       if (selectedFirebaseStagingProject) {
-        const stagingResult = await autoConfigureFirebaseProject(selectedFirebaseStagingProject, 'Staging');
+        const targetId = selectedFirebaseStagingProject === '__new__' ? projectId : selectedFirebaseStagingProject;
+        const stagingResult = await autoConfigureFirebaseProject(targetId, 'Staging');
         stagingConfig = stagingResult.config;
         stagingClientId = stagingResult.clientId;
         setFirebaseConfigStaging(JSON.stringify(stagingConfig, null, 2));
@@ -522,7 +485,8 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       }
 
       if (selectedFirebaseProductionProject) {
-        const prodResult = await autoConfigureFirebaseProject(selectedFirebaseProductionProject, 'Production');
+        const targetId = selectedFirebaseProductionProject === '__new__' ? projectId : selectedFirebaseProductionProject;
+        const prodResult = await autoConfigureFirebaseProject(targetId, 'Production');
         productionConfig = prodResult.config;
         productionClientId = prodResult.clientId;
         setFirebaseConfigProduction(JSON.stringify(productionConfig, null, 2));
@@ -3431,23 +3395,22 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                           {(selectedFirebaseStagingProject === '__new__' || selectedFirebaseProductionProject === '__new__') && (
                             <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                               <p className="text-yellow-800 font-medium text-sm mb-2">Create New Firebase Project</p>
-                              <p className="text-yellow-700 text-xs mb-2">
-                                Enter the GCP Project ID to add Firebase to. The project must already exist in Google Cloud.
-                              </p>
-                              <input
-                                type="text"
-                                value={newFirebaseProjectId}
-                                onChange={(e) => setNewFirebaseProjectId(e.target.value)}
-                                placeholder="existing-gcp-project-id"
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm mb-2"
-                              />
-                              <button
-                                onClick={handleCreateFirebaseProject}
-                                disabled={creatingFirebaseProject || !newFirebaseProjectId.trim()}
-                                className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-400 text-white px-3 py-1.5 rounded-lg text-sm"
-                              >
-                                {creatingFirebaseProject ? 'Creating...' : 'Add Firebase to Project'}
-                              </button>
+                              {projectId ? (
+                                <>
+                                  <p className="text-yellow-700 text-xs mb-2">
+                                    This will enable Firebase on your GCP project: <code className="font-mono bg-yellow-100 px-1 rounded">{projectId}</code>
+                                  </p>
+                                  <button
+                                    onClick={handleCreateFirebaseProject}
+                                    disabled={creatingFirebaseProject}
+                                    className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-400 text-white px-3 py-1.5 rounded-lg text-sm"
+                                  >
+                                    {creatingFirebaseProject ? 'Adding Firebase...' : 'Add Firebase to Project'}
+                                  </button>
+                                </>
+                              ) : (
+                                <p className="text-yellow-700 text-xs">Complete Step 3 (GCP Project) first.</p>
+                              )}
                             </div>
                           )}
 
