@@ -494,29 +494,31 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       setError('Please set your app name at the top of this page.');
       return;
     }
+    if (!projectId) {
+      setError('Please complete Step 3 to set up the GCP project first.');
+      return;
+    }
 
-    const stagingProjectId = `${projectName.toLowerCase().replace(/[^a-z0-9-]/g, '-')}-staging`;
     const prodProjectId = projectName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
 
     setAutoConfiguringFirebase(true);
-    setFirebaseAutoConfigMessage(`Creating staging Firebase project: ${stagingProjectId}...`);
+    setFirebaseAutoConfigMessage(`Enabling Firebase on ${projectId}...`);
     setError(null);
 
     let stagingConfig = null, productionConfig = null;
     let stagingClientId = null, productionClientId = null;
 
     try {
-      await ensureGcpProjectExists(stagingProjectId, `${projectName} Staging`);
-      await ensureFirebaseOnProject(stagingProjectId);
+      await ensureFirebaseOnProject(projectId);
       setFirebaseAutoConfigMessage(`Setting up staging web app...`);
-      const stagingResult = await setupFirebaseProject(stagingProjectId, 'Staging');
+      const stagingResult = await setupFirebaseProject(projectId, 'Staging');
       stagingConfig = stagingResult.config;
       stagingClientId = stagingResult.clientId;
       setFirebaseConfigStaging(JSON.stringify(stagingConfig, null, 2));
       setFirebaseStagingData(stagingConfig);
       if (stagingClientId) setGcpClientIdStaging(stagingClientId);
 
-      setFirebaseAutoConfigMessage(`Creating production Firebase project: ${prodProjectId}...`);
+      setFirebaseAutoConfigMessage(`Creating production GCP+Firebase project: ${prodProjectId}...`);
       await ensureGcpProjectExists(prodProjectId, projectName);
       await ensureFirebaseOnProject(prodProjectId);
       setFirebaseAutoConfigMessage(`Setting up production web app...`);
@@ -3415,13 +3417,13 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                   {gcpAccessToken && (
                     <>
                       <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                        <p className="text-blue-800 font-medium text-sm mb-2">Auto-Create Firebase Projects</p>
+                        <p className="text-blue-800 font-medium text-sm mb-2">Create Staging & Production Firebase</p>
                         <p className="text-blue-700 text-xs mb-3">
-                          This will create two Firebase projects from your app name <strong>{projectName || '(set at top of page)'}</strong>:
+                          Staging uses your GCP project from Step 3 (<code className="font-mono bg-blue-100 px-1 rounded text-blue-800">{projectId || '(set in Step 3)'}</code>), production creates a new project:
                         </p>
                         <ul className="text-xs text-blue-700 mb-3 space-y-1">
-                          <li>• Staging: <code className="font-mono bg-blue-100 px-1 rounded">{projectName ? `${projectName.toLowerCase().replace(/[^a-z0-9-]/g, '-')}-staging` : '...'}</code></li>
-                          <li>• Production: <code className="font-mono bg-blue-100 px-1 rounded">{projectName ? projectName.toLowerCase().replace(/[^a-z0-9-]/g, '-') : '...'}</code></li>
+                          <li>• Staging: Firebase on <strong>existing</strong> <code className="font-mono bg-blue-100 px-1 rounded">{projectId || '...'}</code></li>
+                          <li>• Production: <code className="font-mono bg-blue-100 px-1 rounded">{projectName ? projectName.toLowerCase().replace(/[^a-z0-9-]/g, '-') : '...'}</code> (new GCP project)</li>
                         </ul>
                         <button
                           onClick={handleCreateFirebaseProjects}
@@ -3444,6 +3446,72 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                           <span className="text-sm">{firebaseAutoConfigMessage}</span>
                         </div>
                       )}
+
+                      {/* Load existing Firebase projects */}
+                      <div className="border-t border-gray-200 pt-4 mt-4">
+                        <p className="text-sm font-medium text-gray-700 mb-2">Or select existing Firebase projects:</p>
+                        {firebaseProjects.length === 0 && !loadingFirebaseProjects && (
+                          <div className="mb-4">
+                            <button
+                              onClick={fetchFirebaseProjects}
+                              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg text-sm"
+                            >
+                              Load Firebase Projects
+                            </button>
+                          </div>
+                        )}
+
+                        {loadingFirebaseProjects && (
+                          <div className="flex items-center gap-2 text-green-700 mb-4">
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-green-600"></div>
+                            <span className="text-sm">{firebaseAutoConfigMessage || 'Loading Firebase projects...'}</span>
+                          </div>
+                        )}
+
+                        {firebaseProjects.length > 0 && (
+                          <div className="space-y-4">
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">Staging Firebase Project:</label>
+                              <select
+                                value={selectedFirebaseStagingProject}
+                                onChange={(e) => setSelectedFirebaseStagingProject(e.target.value)}
+                                className="w-full px-3 py-2 border-2 border-gray-200 rounded-lg text-sm focus:outline-none focus:border-blue-400"
+                              >
+                                <option value="">Select a project</option>
+                                {firebaseProjects.map(proj => (
+                                  <option key={proj.projectId} value={proj.projectId}>
+                                    {proj.displayName} ({proj.projectId})
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">Production Firebase Project:</label>
+                              <select
+                                value={selectedFirebaseProductionProject}
+                                onChange={(e) => setSelectedFirebaseProductionProject(e.target.value)}
+                                className="w-full px-3 py-2 border-2 border-gray-200 rounded-lg text-sm focus:outline-none focus:border-blue-400"
+                              >
+                                <option value="">Select a project</option>
+                                {firebaseProjects.map(proj => (
+                                  <option key={proj.projectId} value={proj.projectId}>
+                                    {proj.displayName} ({proj.projectId})
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            <button
+                              onClick={handleSetupExistingFirebase}
+                              disabled={autoConfiguringFirebase || (!selectedFirebaseStagingProject && !selectedFirebaseProductionProject)}
+                              className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg text-sm"
+                            >
+                              {autoConfiguringFirebase ? 'Configuring...' : 'Configure Selected Firebase'}
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </>
                   )}
 
