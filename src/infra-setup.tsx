@@ -395,6 +395,10 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     setFirebaseAutoConfigMessage(`Adding Firebase to ${newFirebaseProjectId}...`);
     setError(null);
     try {
+      const saProjectMatch = serviceAccountJson?.client_email?.split('@')[1]?.split('.')[0];
+      if (saProjectMatch && saProjectMatch !== newFirebaseProjectId && serviceAccountJson?.client_email) {
+        await grantSaFirebaseAdminOnProject(newFirebaseProjectId, serviceAccountJson.client_email);
+      }
       const token = await generateFirebaseSaToken();
       if (!token) throw new Error('Unable to get access token for Firebase Management API');
       await addFirebaseToProject(token, newFirebaseProjectId);
