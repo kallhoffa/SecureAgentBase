@@ -411,45 +411,75 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     }
   };
 
-  const autoConfigureFirebaseProject = async (firebaseProjectId, environment) => {
-    const token = await generateFirebaseSaToken();
-    if (!token) throw new Error('No GCP access token available');
+  const ensureGcpProjectExists = async (projectIdVal, displayName) => {
+    const listRes = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${projectIdVal}`, {
+      headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
+    });
+    if (listRes.ok) return;
 
-    setFirebaseAutoConfigMessage(`${environment}: Checking Firebase setup for ${firebaseProjectId}...`);
-
-    const projects = await listFirebaseProjects(token);
-    const existingProject = projects.find(p => p.projectId === firebaseProjectId || p.projectNumber === firebaseProjectId);
-
-    if (!existingProject) {
-      setFirebaseAutoConfigMessage(`${environment}: Adding Firebase to ${firebaseProjectId}...`);
-      await addFirebaseToProject(token, firebaseProjectId);
+    const resp = await fetch('https://cloudresourcemanager.googleapis.com/v1/projects', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${gcpAccessToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ projectId: projectIdVal, name: displayName })
+    });
+    if (!resp.ok) {
+      const err = await resp.json();
+      if (err.error?.message?.includes('already exists')) return;
+      if (err.error?.code === 403) throw new Error('Cloud Resource Manager API not enabled.');
+      throw new Error(err.error?.message || 'Failed to create project');
     }
 
-    setFirebaseAutoConfigMessage(`${environment}: Checking web apps...`);
-    const webApps = await listFirebaseWebApps(token, firebaseProjectId);
+    for (let i = 0; i < 10; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      const check = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${projectIdVal}`, {
+        headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
+      });
+      if (check.ok) return;
+    }
+    throw new Error('Project created but didn\'t become available within 20s');
+  };
 
+  const ensureFirebaseOnProject = async (projectIdVal) => {
+    const policyResp = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${projectIdVal}:getIamPolicy`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
+    });
+    if (policyResp.ok) {
+      const policy = await policyResp.json();
+      const bindings = policy.bindings || [];
+      addMemberToBinding(bindings, 'roles/firebase.admin', `user:${user?.email || ''}`);
+      await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${projectIdVal}:setIamPolicy`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${gcpAccessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ policy: { bindings, etag: policy.etag } })
+      });
+      await new Promise(r => setTimeout(r, 5000));
+    }
+
+    await addFirebaseToProject(gcpAccessToken, projectIdVal);
+  };
+
+  const setupFirebaseProject = async (projectIdVal, environment) => {
+    setFirebaseAutoConfigMessage(`${environment}: Creating web app...`);
+    const webApps = await listFirebaseWebApps(gcpAccessToken, projectIdVal);
     let appId;
     if (webApps.length > 0) {
       appId = webApps[0].appId;
-      setFirebaseAutoConfigMessage(`${environment}: Using existing web app ${appId}`);
     } else {
-      setFirebaseAutoConfigMessage(`${environment}: Creating web app...`);
-      const newApp = await createFirebaseWebApp(token, firebaseProjectId, `SecureAgent ${environment}`);
+      const newApp = await createFirebaseWebApp(gcpAccessToken, projectIdVal, `${projectName} ${environment}`);
       appId = newApp.appId;
     }
 
     setFirebaseAutoConfigMessage(`${environment}: Fetching SDK config...`);
-    const config = await getFirebaseWebAppConfig(token, firebaseProjectId, appId);
+    const config = await getFirebaseWebAppConfig(gcpAccessToken, projectIdVal, appId);
 
     const originUrl = `https://${config.projectId}.web.app`;
-    setFirebaseAutoConfigMessage(`${environment}: Creating OAuth client for ${originUrl}...`);
-    const clientId = await createOAuthClient(token, firebaseProjectId, `SecureAgent Wizard (${environment})`, originUrl);
+    setFirebaseAutoConfigMessage(`${environment}: Creating OAuth client...`);
+    const clientId = await createOAuthClient(gcpAccessToken, projectIdVal, `${projectName} (${environment})`, originUrl);
 
     setFirebaseAutoConfigMessage(`${environment}: Adding authorized domains...`);
-    await updateAuthDomains(token, firebaseProjectId, [
-      'localhost',
-      config.projectId + '.web.app',
-      config.projectId + '.firebaseapp.com',
+    await updateAuthDomains(gcpAccessToken, projectIdVal, [
+      'localhost', config.projectId + '.web.app', config.projectId + '.firebaseapp.com',
     ]);
 
     return { config, clientId };
@@ -460,42 +490,49 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       setError('Please sign in to Google (Step 1) to enable auto-configuration.');
       return;
     }
-    if (!selectedFirebaseStagingProject && !selectedFirebaseProductionProject) {
-      setError('Please select at least one Firebase project.');
+    if (!projectName) {
+      setError('Please set your app name at the top of this page.');
       return;
     }
 
+    const stagingProjectId = `${projectName.toLowerCase().replace(/[^a-z0-9-]/g, '-')}-staging`;
+    const prodProjectId = projectName.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+
     setAutoConfiguringFirebase(true);
-    setFirebaseAutoConfigMessage('Starting Firebase auto-configuration...');
+    setFirebaseAutoConfigMessage(`Creating staging Firebase project: ${stagingProjectId}...`);
     setError(null);
 
     let stagingConfig = null;
     let productionConfig = null;
     let stagingClientId = null;
     let productionClientId = null;
+
     try {
-      if (selectedFirebaseStagingProject) {
-        const targetId = selectedFirebaseStagingProject === '__new__' ? projectId : selectedFirebaseStagingProject;
-        const stagingResult = await autoConfigureFirebaseProject(targetId, 'Staging');
-        stagingConfig = stagingResult.config;
-        stagingClientId = stagingResult.clientId;
-        setFirebaseConfigStaging(JSON.stringify(stagingConfig, null, 2));
-        setFirebaseStagingData(stagingConfig);
-        if (stagingClientId) setGcpClientIdStaging(stagingClientId);
-      }
+      // Create and configure staging project
+      await ensureGcpProjectExists(stagingProjectId, `${projectName} Staging`);
+      await ensureFirebaseOnProject(stagingProjectId);
+      setFirebaseAutoConfigMessage(`Setting up staging web app...`);
+      const stagingResult = await setupFirebaseProject(stagingProjectId, 'Staging');
+      stagingConfig = stagingResult.config;
+      stagingClientId = stagingResult.clientId;
+      setFirebaseConfigStaging(JSON.stringify(stagingConfig, null, 2));
+      setFirebaseStagingData(stagingConfig);
+      if (stagingClientId) setGcpClientIdStaging(stagingClientId);
 
-      if (selectedFirebaseProductionProject) {
-        const targetId = selectedFirebaseProductionProject === '__new__' ? projectId : selectedFirebaseProductionProject;
-        const prodResult = await autoConfigureFirebaseProject(targetId, 'Production');
-        productionConfig = prodResult.config;
-        productionClientId = prodResult.clientId;
-        setFirebaseConfigProduction(JSON.stringify(productionConfig, null, 2));
-        setFirebaseProductionData(productionConfig);
-        if (productionClientId) setGcpClientIdProduction(productionClientId);
-      }
+      // Create and configure production project
+      setFirebaseAutoConfigMessage(`Creating production Firebase project: ${prodProjectId}...`);
+      await ensureGcpProjectExists(prodProjectId, projectName);
+      await ensureFirebaseOnProject(prodProjectId);
+      setFirebaseAutoConfigMessage(`Setting up production web app...`);
+      const prodResult = await setupFirebaseProject(prodProjectId, 'Production');
+      productionConfig = prodResult.config;
+      productionClientId = prodResult.clientId;
+      setFirebaseConfigProduction(JSON.stringify(productionConfig, null, 2));
+      setFirebaseProductionData(productionConfig);
+      if (productionClientId) setGcpClientIdProduction(productionClientId);
 
-      setFirebaseAutoConfigMessage('Firebase auto-configuration complete!');
-      addNotification('Firebase projects auto-configured successfully!', 'success');
+      setFirebaseAutoConfigMessage('Firebase projects created and configured!');
+      addNotification('Staging and production Firebase projects created successfully!', 'success');
       setExpandedSteps(prev => [...prev.filter(s => s !== 4), 5]);
       try {
         await saveConfig({ firebase_staging: stagingConfig, firebase_production: productionConfig });
@@ -504,7 +541,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       }
     } catch (e) {
       console.error(e);
-      setError('Firebase auto-configuration failed: ' + e.message);
+      setError('Firebase setup failed: ' + e.message);
       setFirebaseAutoConfigMessage('');
     } finally {
       setAutoConfiguringFirebase(false);
@@ -3338,93 +3375,25 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
 
                   {gcpAccessToken && (
                     <>
-                      {firebaseProjects.length === 0 && !loadingFirebaseProjects && (
-                        <div className="mb-4">
-                          <button
-                            onClick={fetchFirebaseProjects}
-                            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
-                          >
-                            Load Firebase Projects
-                          </button>
-                        </div>
-                      )}
+                      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                        <p className="text-blue-800 font-medium text-sm mb-2">Auto-Create Firebase Projects</p>
+                        <p className="text-blue-700 text-xs mb-3">
+                          This will create two Firebase projects from your app name <strong>{projectName || '(set at top of page)'}</strong>:
+                        </p>
+                        <ul className="text-xs text-blue-700 mb-3 space-y-1">
+                          <li>• Staging: <code className="font-mono bg-blue-100 px-1 rounded">{projectName ? `${projectName.toLowerCase().replace(/[^a-z0-9-]/g, '-')}-staging` : '...'}</code></li>
+                          <li>• Production: <code className="font-mono bg-blue-100 px-1 rounded">{projectName ? projectName.toLowerCase().replace(/[^a-z0-9-]/g, '-') : '...'}</code></li>
+                        </ul>
+                        <button
+                          onClick={handleAutoConfigureFirebase}
+                          disabled={autoConfiguringFirebase || !projectName}
+                          className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg text-sm"
+                        >
+                          {autoConfiguringFirebase ? 'Creating...' : 'Create Staging & Production Firebase'}
+                        </button>
+                      </div>
 
-                      {loadingFirebaseProjects && (
-                        <div className="flex items-center gap-2 text-blue-700 mb-4">
-                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-                          <span className="text-sm">{firebaseAutoConfigMessage || 'Loading Firebase projects...'}</span>
-                        </div>
-                      )}
-
-                      {firebaseProjects.length > 0 && (
-                        <div className="space-y-4 mb-4">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Staging Firebase Project:</label>
-                            <select
-                              value={selectedFirebaseStagingProject}
-                              onChange={(e) => setSelectedFirebaseStagingProject(e.target.value)}
-                              className="w-full px-3 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
-                            >
-                              <option value="">Select a project</option>
-                              {firebaseProjects.map(proj => (
-                                <option key={proj.projectId} value={proj.projectId}>
-                                  {proj.displayName} ({proj.projectId})
-                                </option>
-                              ))}
-                              <option value="__new__">+ Create New Project</option>
-                            </select>
-                          </div>
-
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">Production Firebase Project:</label>
-                            <select
-                              value={selectedFirebaseProductionProject}
-                              onChange={(e) => setSelectedFirebaseProductionProject(e.target.value)}
-                              className="w-full px-3 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
-                            >
-                              <option value="">Select a project</option>
-                              {firebaseProjects.map(proj => (
-                                <option key={proj.projectId} value={proj.projectId}>
-                                  {proj.displayName} ({proj.projectId})
-                                </option>
-                              ))}
-                              <option value="__new__">+ Create New Project</option>
-                            </select>
-                          </div>
-
-                          {(selectedFirebaseStagingProject === '__new__' || selectedFirebaseProductionProject === '__new__') && (
-                            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                              <p className="text-yellow-800 font-medium text-sm mb-2">Create New Firebase Project</p>
-                              {projectId ? (
-                                <>
-                                  <p className="text-yellow-700 text-xs mb-2">
-                                    This will enable Firebase on your GCP project: <code className="font-mono bg-yellow-100 px-1 rounded">{projectId}</code>
-                                  </p>
-                                  <button
-                                    onClick={handleCreateFirebaseProject}
-                                    disabled={creatingFirebaseProject}
-                                    className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-400 text-white px-3 py-1.5 rounded-lg text-sm"
-                                  >
-                                    {creatingFirebaseProject ? 'Adding Firebase...' : 'Add Firebase to Project'}
-                                  </button>
-                                </>
-                              ) : (
-                                <p className="text-yellow-700 text-xs">Complete Step 3 (GCP Project) first.</p>
-                              )}
-                            </div>
-                          )}
-
-                          <button
-                            onClick={handleAutoConfigureFirebase}
-                            disabled={autoConfiguringFirebase || (!selectedFirebaseStagingProject && !selectedFirebaseProductionProject)}
-                            className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg"
-                          >
-                            {autoConfiguringFirebase ? 'Auto-Configuring...' : 'Auto-Configure Firebase'}
-                          </button>
-                        </div>
-                      )}
-
-                      {firebaseAutoConfigMessage && !autoConfiguringFirebase && !loadingFirebaseProjects && (
+                      {firebaseAutoConfigMessage && !autoConfiguringFirebase && (
                         <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-blue-700 text-sm">
                           {firebaseAutoConfigMessage}
                         </div>
