@@ -411,22 +411,49 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     }
   };
 
-  const autoConfigureFirebaseProject = async (projectId, environment) => {
+  const grantSaFirebaseAdminOnProject = async (projectId, saEmail) => {
+    if (!gcpAccessToken || !saEmail) return;
+    try {
+      const policyResp = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${projectId}:getIamPolicy`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
+      });
+      if (!policyResp.ok) return;
+      const policy = await policyResp.json();
+      const bindings = policy.bindings || [];
+      addMemberToBinding(bindings, 'roles/firebase.admin', `serviceAccount:${saEmail}`);
+      await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${projectId}:setIamPolicy`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${gcpAccessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ policy: { bindings, etag: policy.etag } })
+      });
+    } catch (e) {
+      console.warn(`Failed to grant firebase.admin on ${projectId}:`, e);
+    }
+  };
+
+  const autoConfigureFirebaseProject = async (firebaseProjectId, environment) => {
     const token = await generateFirebaseSaToken();
     if (!token) throw new Error('No GCP access token available');
 
-    setFirebaseAutoConfigMessage(`${environment}: Checking Firebase setup for ${projectId}...`);
+    const saProjectId = serviceAccountJson?.client_email?.split('@')[1]?.split('.')[0];
+    if (saProjectId && saProjectId !== firebaseProjectId && serviceAccountJson?.client_email) {
+      setFirebaseAutoConfigMessage(`${environment}: Granting SA firebase.admin on ${firebaseProjectId}...`);
+      await grantSaFirebaseAdminOnProject(firebaseProjectId, serviceAccountJson.client_email);
+    }
+
+    setFirebaseAutoConfigMessage(`${environment}: Checking Firebase setup for ${firebaseProjectId}...`);
 
     const projects = await listFirebaseProjects(token);
-    const existingProject = projects.find(p => p.projectId === projectId || p.projectNumber === projectId);
+    const existingProject = projects.find(p => p.projectId === firebaseProjectId || p.projectNumber === firebaseProjectId);
 
     if (!existingProject) {
-      setFirebaseAutoConfigMessage(`${environment}: Adding Firebase to ${projectId}...`);
-      await addFirebaseToProject(token, projectId);
+      setFirebaseAutoConfigMessage(`${environment}: Adding Firebase to ${firebaseProjectId}...`);
+      await addFirebaseToProject(token, firebaseProjectId);
     }
 
     setFirebaseAutoConfigMessage(`${environment}: Checking web apps...`);
-    const webApps = await listFirebaseWebApps(token, projectId);
+    const webApps = await listFirebaseWebApps(token, firebaseProjectId);
 
     let appId;
     if (webApps.length > 0) {
@@ -434,19 +461,19 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       setFirebaseAutoConfigMessage(`${environment}: Using existing web app ${appId}`);
     } else {
       setFirebaseAutoConfigMessage(`${environment}: Creating web app...`);
-      const newApp = await createFirebaseWebApp(token, projectId, `SecureAgent ${environment}`);
+      const newApp = await createFirebaseWebApp(token, firebaseProjectId, `SecureAgent ${environment}`);
       appId = newApp.appId;
     }
 
     setFirebaseAutoConfigMessage(`${environment}: Fetching SDK config...`);
-    const config = await getFirebaseWebAppConfig(token, projectId, appId);
+    const config = await getFirebaseWebAppConfig(token, firebaseProjectId, appId);
 
     const originUrl = `https://${config.projectId}.web.app`;
     setFirebaseAutoConfigMessage(`${environment}: Creating OAuth client for ${originUrl}...`);
-    const clientId = await createOAuthClient(token, projectId, `SecureAgent Wizard (${environment})`, originUrl);
+    const clientId = await createOAuthClient(token, firebaseProjectId, `SecureAgent Wizard (${environment})`, originUrl);
 
     setFirebaseAutoConfigMessage(`${environment}: Adding authorized domains...`);
-    await updateAuthDomains(token, projectId, [
+    await updateAuthDomains(token, firebaseProjectId, [
       'localhost',
       config.projectId + '.web.app',
       config.projectId + '.firebaseapp.com',
