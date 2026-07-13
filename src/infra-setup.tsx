@@ -491,7 +491,17 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
 
   const setupFirebaseProject = async (projectIdVal, environment) => {
     setFirebaseAutoConfigMessage(`${environment}: Creating web app...`);
-    const webApps = await listFirebaseWebApps(gcpAccessToken, projectIdVal);
+    let webApps;
+    for (let i = 0; i < 12; i++) {
+      try {
+        webApps = await listFirebaseWebApps(gcpAccessToken, projectIdVal);
+        break;
+      } catch (e) {
+        if (i >= 11) throw e;
+        console.warn(`${environment}: Firebase project not ready (attempt ${i + 1}), retrying...`);
+        await new Promise(r => setTimeout(r, 5000));
+      }
+    }
     let appId;
     if (webApps.length > 0) {
       appId = webApps[0].appId;
