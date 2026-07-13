@@ -483,7 +483,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
         headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ policy: { bindings, etag: policy.etag } })
       });
-      await new Promise(r => setTimeout(r, 5000));
+      await new Promise(r => setTimeout(r, 15000));
     }
 
     await addFirebaseToProject(token, projectIdVal);
@@ -571,7 +571,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
         setFirebaseAutoConfigMessage(`Creating production project ${prodProjectId}...`);
         try {
           await ensureGcpProjectExists(prodProjectId, projectName || 'Production', false);
-          await ensureFirebaseOnProject(prodProjectId, true);
+          await ensureFirebaseOnProject(prodProjectId, false);
           setFirebaseAutoConfigMessage('Setting up production web app...');
           const prodResult = await setupFirebaseProject(prodProjectId, 'Production');
           productionConfig = prodResult.config;
