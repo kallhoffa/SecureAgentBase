@@ -354,10 +354,38 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
         const data = await resp.json().catch(() => ({}));
         return data.id || null;
       }
-      console.warn(`Failed to create OAuth client (${resp.status}), falling back to auto-discovered client`);
+      console.warn(`Failed to create OAuth client (${resp.status})`);
     } catch (e) {
-      console.warn('OAuth client creation skipped (CORS blocked by Google API). You can configure it later in the console.');
+      console.warn('OAuth client creation blocked by CORS. Trying to read existing client...');
     }
+
+    // Fallback: try to read existing client via Identity Toolkit API (CORS-friendly)
+    try {
+      const configResp = await fetch(`https://identitytoolkit.googleapis.com/v2/projects/${projectId}/config`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (configResp.ok) {
+        const config = await configResp.json();
+        if (config.client?.web?.oauthClientId) return config.client.web.oauthClientId;
+      }
+    } catch (e) {
+      console.warn('Could not read existing OAuth client from Identity Toolkit API.');
+    }
+
+    // Last resort: try listing OAuth clients to find auto-created web client
+    try {
+      const listResp = await fetch('https://www.googleapis.com/oauth2/v1/clients', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (listResp.ok) {
+        const clients = await listResp.json();
+        const webClient = clients.find(c => c.type === 'web' && c.javascript_origins?.includes?.(originUrl));
+        if (webClient?.id) return webClient.id;
+      }
+    } catch (e) {
+      console.warn('Could not list OAuth clients (CORS).');
+    }
+
     return null;
   };
 
