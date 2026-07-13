@@ -548,17 +548,8 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
         setFirebaseProductionData(productionConfig);
         if (productionClientId) setGcpClientIdProduction(productionClientId);
       } else {
-        const prodProjectId = projectName ? `${projectName.toLowerCase().replace(/[^a-z0-9-]/g, '-')}-production` : `${projectId}-prod`;
-        setFirebaseAutoConfigMessage(`Production not selected — creating ${prodProjectId}...`);
-        await ensureGcpProjectExists(prodProjectId, projectName || 'Production', true);
-        await ensureFirebaseOnProject(prodProjectId, true);
-        setFirebaseAutoConfigMessage('Setting up production web app...');
-        const prodResult = await setupFirebaseProject(prodProjectId, 'Production');
-        productionConfig = prodResult.config;
-        productionClientId = prodResult.clientId;
-        setFirebaseConfigProduction(JSON.stringify(productionConfig, null, 2));
-        setFirebaseProductionData(productionConfig);
-        if (productionClientId) setGcpClientIdProduction(productionClientId);
+        setFirebaseAutoConfigMessage('Production project not specified. Skipping auto-creation (requires GCP project creator role). You can configure production later.');
+        addNotification('Production project skipped. Configure it later in your Firebase console.', 'info');
       }
 
       setFirebaseAutoConfigMessage('Firebase configuration complete!');
@@ -1063,7 +1054,8 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       'roles/serviceusage.serviceUsageAdmin',
       'roles/iam.workloadIdentityPoolAdmin',
       'roles/iam.securityAdmin',
-      'roles/firebase.admin'
+      'roles/firebase.admin',
+      'roles/resourcemanager.projectCreator'
     ];
 
     const policyResp = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${gcpProjectId}:getIamPolicy`, {
