@@ -334,7 +334,35 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     });
   };
 
-  const createOAuthClient = async (token, projectId, displayName, originUrl) => {
+  const findOAuthClientId = async (token, projectId) => {
+    for (let attempt = 0; attempt < 8; attempt++) {
+      try {
+        const configResp = await fetch(`https://identitytoolkit.googleapis.com/v2/projects/${projectId}/config`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (configResp.ok) {
+          const config = await configResp.json();
+          if (config.client?.web?.oauthClientId) return config.client.web.oauthClientId;
+        }
+        if (configResp.status === 404 && attempt === 0) {
+          await fetch(`https://identitytoolkit.googleapis.com/v2/projects/${projectId}/config`, {
+            method: 'PATCH',
+            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              signIn: { email: { enabled: true, passwordRequired: true } }
+            })
+          });
+        }
+      } catch (e) {
+        console.warn('Identity Toolkit config fetch failed:', e);
+      }
+      await new Promise(r => setTimeout(r, 3000));
+    }
+    return null;
+  };
+
+  const createOrFindOAuthClient = async (token, projectId, displayName, originUrl) => {
+    // Try creating via OAuth API (may fail CORS)
     try {
       const resp = await fetch('https://www.googleapis.com/oauth2/v1/clients', {
         method: 'POST',
@@ -354,23 +382,14 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
         const data = await resp.json().catch(() => ({}));
         return data.id || null;
       }
-      console.warn(`Failed to create OAuth client (${resp.status})`);
+      console.warn(`Failed to create OAuth client (${resp.status}), trying alternative...`);
     } catch (e) {
-      console.warn('OAuth client creation blocked by CORS. Trying to read existing client...');
+      console.warn('OAuth client creation blocked by CORS. Trying alternative...');
     }
 
-    // Fallback: try to read existing client via Identity Toolkit API (CORS-friendly)
-    try {
-      const configResp = await fetch(`https://identitytoolkit.googleapis.com/v2/projects/${projectId}/config`, {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (configResp.ok) {
-        const config = await configResp.json();
-        if (config.client?.web?.oauthClientId) return config.client.web.oauthClientId;
-      }
-    } catch (e) {
-      console.warn('Could not read existing OAuth client from Identity Toolkit API.');
-    }
+    // Fallback: enable Identity Toolkit and read OAuth client from its config
+    const clientId = await findOAuthClientId(token, projectId);
+    if (clientId) return clientId;
 
     // Last resort: try listing OAuth clients to find auto-created web client
     try {
@@ -485,8 +504,8 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     const config = await getFirebaseWebAppConfig(gcpAccessToken, projectIdVal, appId);
 
     const originUrl = `https://${config.projectId}.web.app`;
-    setFirebaseAutoConfigMessage(`${environment}: Creating OAuth client...`);
-    const clientId = await createOAuthClient(gcpAccessToken, projectIdVal, `${projectName} (${environment})`, originUrl);
+    setFirebaseAutoConfigMessage(`${environment}: Setting up OAuth client...`);
+    const clientId = await createOrFindOAuthClient(gcpAccessToken, projectIdVal, `${projectName} (${environment})`, originUrl);
 
     setFirebaseAutoConfigMessage(`${environment}: Adding authorized domains...`);
     await updateAuthDomains(gcpAccessToken, projectIdVal, [
