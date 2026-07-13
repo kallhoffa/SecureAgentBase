@@ -335,25 +335,29 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
   };
 
   const createOAuthClient = async (token, projectId, displayName, originUrl) => {
-    const resp = await fetch('https://www.googleapis.com/oauth2/v1/clients', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: displayName,
-        type: 'web',
-        javascript_origins: [originUrl, 'http://localhost:3000'],
-        redirect_uris: [originUrl]
-      })
-    });
-    if (resp.ok) {
-      const data = await resp.json();
-      return data.id || null;
+    try {
+      const resp = await fetch('https://www.googleapis.com/oauth2/v1/clients', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: displayName,
+          type: 'web',
+          javascript_origins: [originUrl, 'http://localhost:3000'],
+          redirect_uris: [originUrl]
+        })
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        return data.id || null;
+      }
+      if (resp.status === 409) {
+        const data = await resp.json().catch(() => ({}));
+        return data.id || null;
+      }
+      console.warn(`Failed to create OAuth client (${resp.status}), falling back to auto-discovered client`);
+    } catch (e) {
+      console.warn('OAuth client creation skipped (CORS blocked by Google API). You can configure it later in the console.');
     }
-    if (resp.status === 409) {
-      const data = await resp.json().catch(() => ({}));
-      return data.id || null;
-    }
-    console.warn(`Failed to create OAuth client (${resp.status}), falling back to auto-discovered client`);
     return null;
   };
 
