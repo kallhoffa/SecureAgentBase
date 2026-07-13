@@ -527,7 +527,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
         if (projectId) {
           await ensureFirebaseOnProject(projectId);
         } else {
-          await ensureGcpProjectExists(stagingProjectId, `${projectName || 'App'} Staging`, true);
+          await ensureGcpProjectExists(stagingProjectId, `${projectName || 'App'} Staging`, false);
           await ensureFirebaseOnProject(stagingProjectId, true);
         }
         const stagingTarget = projectId || stagingProjectId;
@@ -547,9 +547,25 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
         setFirebaseConfigProduction(JSON.stringify(productionConfig, null, 2));
         setFirebaseProductionData(productionConfig);
         if (productionClientId) setGcpClientIdProduction(productionClientId);
+      } else if (gcpAccessToken) {
+        const prodProjectId = projectName ? `${projectName.toLowerCase().replace(/[^a-z0-9-]/g, '-')}-production` : `${projectId}-prod`;
+        setFirebaseAutoConfigMessage(`Creating production project ${prodProjectId}...`);
+        try {
+          await ensureGcpProjectExists(prodProjectId, projectName || 'Production', false);
+          await ensureFirebaseOnProject(prodProjectId, true);
+          setFirebaseAutoConfigMessage('Setting up production web app...');
+          const prodResult = await setupFirebaseProject(prodProjectId, 'Production');
+          productionConfig = prodResult.config;
+          productionClientId = prodResult.clientId;
+          setFirebaseConfigProduction(JSON.stringify(productionConfig, null, 2));
+          setFirebaseProductionData(productionConfig);
+          if (productionClientId) setGcpClientIdProduction(productionClientId);
+        } catch (prodErr) {
+          console.error('Production auto-creation failed:', prodErr);
+          addNotification('Production project setup failed. You can configure it later.', 'info');
+        }
       } else {
-        setFirebaseAutoConfigMessage('Production project not specified. Skipping auto-creation (requires GCP project creator role). You can configure production later.');
-        addNotification('Production project skipped. Configure it later in your Firebase console.', 'info');
+        addNotification('Production project skipped. Configure it later or connect Google Cloud to auto-create.', 'info');
       }
 
       setFirebaseAutoConfigMessage('Firebase configuration complete!');
