@@ -1054,8 +1054,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       'roles/serviceusage.serviceUsageAdmin',
       'roles/iam.workloadIdentityPoolAdmin',
       'roles/iam.securityAdmin',
-      'roles/firebase.admin',
-      'roles/resourcemanager.projectCreator'
+      'roles/firebase.admin'
     ];
 
     const policyResp = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${gcpProjectId}:getIamPolicy`, {
