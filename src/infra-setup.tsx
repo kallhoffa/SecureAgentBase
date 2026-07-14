@@ -3814,7 +3814,23 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                         </p>
                       </div>
 
-                     {discordInviteUrl && (
+                      {discordBotTokenInput.trim() && !extractClientIdFromToken(discordBotTokenInput) && (
+                        <div className="mb-4">
+                          <label className="block text-sm font-medium text-gray-700 mb-2">Discord Client ID:</label>
+                          <input
+                            type="text"
+                            value={discordClientId}
+                            onChange={(e) => setDiscordClientId(e.target.value)}
+                            placeholder="Paste your Client ID (found in OAuth2 → General in Discord Dev Portal)"
+                            className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
+                          />
+                          <p className="text-gray-500 text-xs mt-1">
+                            Could not auto-extract from token — enter it manually.
+                          </p>
+                        </div>
+                      )}
+
+                      {discordInviteUrl && (
                       <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
                         <p className="text-green-800 text-sm mb-2 font-medium">Invite link ready!</p>
                         <a
