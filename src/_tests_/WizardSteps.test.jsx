@@ -205,9 +205,10 @@ describe('Step6 - Discord Bot', () => {
     expanded: true, prevComplete: true, itselfComplete: false,
     discordClientId: '', setDiscordClientId: vi.fn(),
     discordBotTokenInput: '', setDiscordBotTokenInput: vi.fn(),
-    discordBotToken: '', discordInviteUrl: '', discordGuildId: '',
+    discordBotToken: '', discordInviteUrl: '',
     setDiscordInviteUrl: vi.fn(),
     handleCreateDiscordBot: vi.fn(),
+    handleBotAdded: vi.fn(),
     discordDetecting: false, error: null,
   };
 
@@ -223,7 +224,7 @@ describe('Step6 - Discord Bot', () => {
 
   it('shows completion state', () => {
     render(<Step6 {...baseProps} itselfComplete />);
-    expect(screen.getByText(/discord bot configured/i)).toBeInTheDocument();
+    expect(screen.getByText(/discord bot configured and added/i)).toBeInTheDocument();
   });
 
   it('shows token input', () => {
@@ -243,9 +244,14 @@ describe('Step6 - Discord Bot', () => {
     expect(screen.getByText('Invalid token')).toBeInTheDocument();
   });
 
-  it('shows Save Discord Bot button', () => {
-    render(<Step6 {...baseProps} />);
+  it('shows Save Discord Bot button when token entered and no invite URL yet', () => {
+    render(<Step6 {...baseProps} discordBotTokenInput="some-token" />);
     expect(screen.getByText('Save Discord Bot')).toBeInTheDocument();
+  });
+
+  it('shows Bot Added button when invite URL is ready', () => {
+    render(<Step6 {...baseProps} discordBotTokenInput="some-token" discordInviteUrl="https://discord.com/oauth2/authorize?client_id=123" />);
+    expect(screen.getByText('Bot Added — Continue')).toBeInTheDocument();
   });
 });
 

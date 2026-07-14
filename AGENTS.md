@@ -279,7 +279,7 @@ Both env vars are set in CI via GitHub Actions workflow variables.
 
 ---
 
-## Session Status (Jul 8, 2026)
+## Session Status (Jul 14, 2026)
 
 ### What was done
 - **All prior work preserved**: 320+ unit tests, 23+ e2e tests, guardrails system, admin panel, template mode, CI pipelines, startup script cleanup, wizard auto-configuration
@@ -295,6 +295,8 @@ Both env vars are set in CI via GitHub Actions workflow variables.
   - Added `roles/firebase.admin` to SA roles in `grantGcpRolesProgrammatically`
   - Updated `autoConfigureFirebaseProject()` and `handleCreateFirebaseProject()` to use SA token instead of user token for all Firebase Management API calls
   - **Result**: Firebase API calls now authenticate directly as the SA (which has `firebase.admin`), bypassing IAM propagation delay and user token permission issues entirely
+- **SA creation race condition fixed**: `createDeployServiceAccount` (api.ts:226) when POST returned 409 but GET for existing SA also failed (race — SA creation not yet propagated), it crashed silently → now catches GET failure, waits 3s, retries POST creation
+- **SA IAM propagation delay fixed**: `grantFirebaseRoles` (api.ts:252) failed with "SA does not exist" when IAM policy was set before SA creation propagated → now retries up to 6x with 5s delays
 
 ### What needs to be done
 1. Push `main` to `origin` to trigger staging CI + deploy with all wizard fixes
@@ -302,9 +304,11 @@ Both env vars are set in CI via GitHub Actions workflow variables.
 3. Test wizard `addFirebase` now works (SA key auth instead of user token)
 4. Cut `v0.18.2` release for prod deploy
 5. Run full e2e with `E2E_FULL=true` once GCP pre-requisites are set up
+6. **Still failing: OAuth client ID null** — Step 5 (Identity Toolkit API) returns 404 even after enabling via Service Usage API. Root cause unclear: may need separate Firebase Authentication provisioning via Firebase API, or longer propagation. The OAuth discovery flow (`discoveryUrl` → `oauthClientId`) is a best-effort convenience and may require manual Firebase Auth config in console.
 
 ### Relevant files
 - `src/infra-setup.tsx` — `signJwtAssertion()` (extracted JWT signing helper), `generateFirebaseSaToken()` (SA-based Firebase auth), `getServiceAccountToken()` refactored, `autoConfigureFirebaseProject()`/`handleCreateFirebaseProject()` now use SA token, `grantGcpRolesProgrammatically()` includes `roles/firebase.admin` for SA
+- `src/framework/infra-setup/api.ts` — `createDeployServiceAccount()` (retry on GET race), `grantFirebaseRoles()` (retry up to 6x on "does not exist" propagation delay)
 - `src/navigation-bar.tsx:39` — version badge uses `VITE_APP_VERSION`
 - `src/profile.tsx` — "Your Apps" block removed
 - `src/_tests_/profile.test.tsx` — test updated

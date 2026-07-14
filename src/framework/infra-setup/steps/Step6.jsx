@@ -5,9 +5,9 @@ const Step6 = ({
   discordClientId, setDiscordClientId,
   discordBotTokenInput, setDiscordBotTokenInput,
   discordBotToken, discordInviteUrl,
-  discordGuildId,
   setDiscordInviteUrl,
   handleCreateDiscordBot,
+  handleBotAdded,
   discordDetecting, error
 }) => {
   if (!expanded) return null;
@@ -23,9 +23,11 @@ const Step6 = ({
   return (
     <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
       {itselfComplete ? (
-        <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
-          <Check size={20} />
-          <span className="font-medium">Discord bot configured</span>
+        <div className="space-y-3">
+          <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
+            <Check size={20} />
+            <span className="font-medium">Discord bot configured and added to server</span>
+          </div>
         </div>
       ) : (
         <>
@@ -39,8 +41,8 @@ const Step6 = ({
               <li>Go to "Bot" → "General Information" → <strong>disable "Public Bot"</strong></li>
               <li>In "Bot", scroll to "Privileged Gateway Intents" → enable <strong>Message Content Intent</strong></li>
               <li>Go to "Bot" → click "Reset Token" → copy the token</li>
-              <li>Enter the token below, then click "Generate Invite Link" to invite the bot to your server</li>
-              <li>Enable Developer Mode in Discord (<strong>User Settings → Advanced → Developer Mode</strong>), then right-click your server name → <strong>Copy Server ID</strong></li>
+              <li>Enter the token below, then click <strong>"Save Discord Bot"</strong></li>
+              <li>Click the invite link to add the bot to your server, then click <strong>"Bot Added"</strong></li>
             </ol>
           </div>
 
@@ -98,20 +100,32 @@ const Step6 = ({
               {error}
             </div>
           )}
-          <button
-            onClick={handleCreateDiscordBot}
-            disabled={!discordBotTokenInput.trim() || discordDetecting}
-            className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg flex items-center gap-2"
-          >
-            {discordDetecting ? (
-              <>
-                <span className="animate-spin">⟳</span>
-                Saving...
-              </>
-            ) : (
-              'Save Discord Bot'
+          <div className="flex gap-2 flex-wrap">
+            {discordBotTokenInput.trim() && !discordInviteUrl && (
+              <button
+                onClick={handleCreateDiscordBot}
+                disabled={discordDetecting}
+                className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg flex items-center gap-2"
+              >
+                {discordDetecting ? (
+                  <>
+                    <span className="animate-spin">⟳</span>
+                    Saving...
+                  </>
+                ) : (
+                  'Save Discord Bot'
+                )}
+              </button>
             )}
-          </button>
+            {discordInviteUrl && (
+              <button
+                onClick={handleBotAdded}
+                className="bg-green-600 hover:bg-green-700 text-white px-5 py-2 rounded-lg font-medium text-sm"
+              >
+                Bot Added — Continue
+              </button>
+            )}
+          </div>
         </>
       )}
     </div>

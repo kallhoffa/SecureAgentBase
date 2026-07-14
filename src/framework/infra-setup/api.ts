@@ -30,6 +30,32 @@ export const githubApiFetch = async (pat: string, path: string, opts?: Record<st
   return text ? JSON.parse(text) : {};
 };
 
+export const ensureGitHubRepo = async (pat: string, repoFull: string, log: (msg: string) => void) => {
+  const [owner, repo] = repoFull.split('/');
+  if (!owner || !repo) throw new Error(`Invalid repo name: ${repoFull}`);
+
+  try {
+    await githubApiFetch(pat, `/repos/${repoFull}`);
+    log(`Repo ${repoFull} already exists`);
+    return;
+  } catch (e) {
+    if (!e.message?.includes('404')) throw e;
+  }
+
+  log(`Creating repo ${repoFull}...`);
+  await githubApiFetch(pat, '/user/repos', {
+    method: 'POST',
+    body: JSON.stringify({
+      name: repo,
+      description: `Created by SecureAgentBase`,
+      private: false,
+      auto_init: true,
+      license_template: 'apache-2.0',
+    })
+  });
+  log(`Repo ${repoFull} created`);
+};
+
 export const setGitHubVariable = async (pat: string, repoFull: string, name: string, value: string) => {
   if (!value) {
     console.warn(`Skipping setting GitHub variable '${name}' because its value is empty.`);
@@ -143,6 +169,7 @@ const awaitOperation = async (token: string, operationName: string, log?: (msg: 
 
 export const createWorkloadIdentityPool = async (token: string, gcpProjectId: string, poolId: string, log: (msg: string) => void) => {
   log('Creating workload identity pool...');
+  const poolFullName = `projects/${gcpProjectId}/locations/global/workloadIdentityPools/${poolId}`;
   try {
     const pool = await gcpApiFetch(
       `https://iam.googleapis.com/v1/projects/${gcpProjectId}/locations/global/workloadIdentityPools?workloadIdentityPoolId=${poolId}`,
@@ -158,20 +185,26 @@ export const createWorkloadIdentityPool = async (token: string, gcpProjectId: st
     if (pool.name?.includes('/operations/')) {
       log('Pool creation is async, waiting for completion...');
       const result = await awaitOperation(token, pool.name, log);
-      return result.name;
+      return result?.name || poolFullName;
     }
-    return pool.name;
+    return pool.name || poolFullName;
   } catch (e) {
-    const existing = await gcpApiFetch(
-      `https://iam.googleapis.com/v1/projects/${gcpProjectId}/locations/global/workloadIdentityPools/${poolId}`,
-      token
-    );
-    return existing.name;
+    try {
+      const existing = await gcpApiFetch(
+        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/locations/global/workloadIdentityPools/${poolId}`,
+        token
+      );
+      return existing.name || poolFullName;
+    } catch (e2) {
+      log('Pool GET failed, using constructed name');
+      return poolFullName;
+    }
   }
 };
 
 export const createWorkloadIdentityProvider = async (token: string, gcpProjectId: string, poolId: string, providerId: string, repoFullName: string, log: (msg: string) => void) => {
   log('Creating workload identity provider for GitHub...');
+  const providerFullName = `projects/${gcpProjectId}/locations/global/workloadIdentityPools/${poolId}/providers/${providerId}`;
   try {
     const provider = await gcpApiFetch(
       `https://iam.googleapis.com/v1/projects/${gcpProjectId}/locations/global/workloadIdentityPools/${poolId}/providers?workloadIdentityPoolProviderId=${providerId}`,
@@ -198,9 +231,9 @@ export const createWorkloadIdentityProvider = async (token: string, gcpProjectId
     if (provider.name?.includes('/operations/')) {
       log('Provider creation is async, waiting for completion...');
       const result = await awaitOperation(token, provider.name, log);
-      return result.name;
+      return result?.name || providerFullName;
     }
-    return provider.name;
+    return provider.name || providerFullName;
   } catch (e) {
     // Provider already exists — PATCH its attributeCondition to match the
     // current repo name (may differ if a UUID suffix was appended)
@@ -219,7 +252,7 @@ export const createWorkloadIdentityProvider = async (token: string, gcpProjectId
       `https://iam.googleapis.com/v1/projects/${gcpProjectId}/locations/global/workloadIdentityPools/${poolId}/providers/${providerId}`,
       token
     );
-    return existing.name;
+    return existing.name || providerFullName;
   }
 };
 
@@ -241,61 +274,86 @@ export const createDeployServiceAccount = async (token: string, gcpProjectId: st
     );
     return sa.email;
   } catch (e) {
-    const existing = await gcpApiFetch(
-      `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts/${accountId}@${gcpProjectId}.iam.gserviceaccount.com`,
-      token
-    );
-    return existing.email;
+    try {
+      const existing = await gcpApiFetch(
+        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts/${accountId}@${gcpProjectId}.iam.gserviceaccount.com`,
+        token
+      );
+      return existing.email;
+    } catch (e2) {
+      log('SA not found after conflict, retrying creation...');
+      await new Promise(r => setTimeout(r, 3000));
+      const sa = await gcpApiFetch(
+        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts`,
+        token,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            accountId,
+            serviceAccount: { displayName }
+          })
+        }
+      );
+      return sa.email;
+    }
   }
 };
 
 export const grantFirebaseRoles = async (token: string, firebaseProjectId: string, saEmail: string, log: (msg: string) => void) => {
   log(`Granting Firebase deploy roles to ${saEmail} on ${firebaseProjectId}...`);
-  try {
-    const policy = await gcpApiFetch(
-      `https://cloudresourcemanager.googleapis.com/v1/projects/${firebaseProjectId}:getIamPolicy`,
-      token,
-      { method: 'POST' }
-    );
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      const policy = await gcpApiFetch(
+        `https://cloudresourcemanager.googleapis.com/v1/projects/${firebaseProjectId}:getIamPolicy`,
+        token,
+        { method: 'POST' }
+      );
 
-    const bindings = policy.bindings || [];
-    const existingFirebaseAdmin = bindings.find(b => b.role === 'roles/firebase.admin');
-    const existingDatastoreOwner = bindings.find(b => b.role === 'roles/datastore.owner');
-    const existingServiceUsageConsumer = bindings.find(b => b.role === 'roles/serviceusage.serviceUsageConsumer');
+      const bindings = policy.bindings || [];
+      const existingFirebaseAdmin = bindings.find(b => b.role === 'roles/firebase.admin');
+      const existingDatastoreOwner = bindings.find(b => b.role === 'roles/datastore.owner');
+      const existingServiceUsageConsumer = bindings.find(b => b.role === 'roles/serviceusage.serviceUsageConsumer');
 
-    if (!existingFirebaseAdmin || !existingFirebaseAdmin.members.includes(`serviceAccount:${saEmail}`)) {
-      if (!existingFirebaseAdmin) {
-        bindings.push({ role: 'roles/firebase.admin', members: [`serviceAccount:${saEmail}`] });
-      } else {
-        existingFirebaseAdmin.members.push(`serviceAccount:${saEmail}`);
+      if (!existingFirebaseAdmin || !existingFirebaseAdmin.members.includes(`serviceAccount:${saEmail}`)) {
+        if (!existingFirebaseAdmin) {
+          bindings.push({ role: 'roles/firebase.admin', members: [`serviceAccount:${saEmail}`] });
+        } else {
+          existingFirebaseAdmin.members.push(`serviceAccount:${saEmail}`);
+        }
       }
-    }
-    if (!existingDatastoreOwner || !existingDatastoreOwner.members.includes(`serviceAccount:${saEmail}`)) {
-      if (!existingDatastoreOwner) {
-        bindings.push({ role: 'roles/datastore.owner', members: [`serviceAccount:${saEmail}`] });
-      } else {
-        existingDatastoreOwner.members.push(`serviceAccount:${saEmail}`);
+      if (!existingDatastoreOwner || !existingDatastoreOwner.members.includes(`serviceAccount:${saEmail}`)) {
+        if (!existingDatastoreOwner) {
+          bindings.push({ role: 'roles/datastore.owner', members: [`serviceAccount:${saEmail}`] });
+        } else {
+          existingDatastoreOwner.members.push(`serviceAccount:${saEmail}`);
+        }
       }
-    }
-    if (!existingServiceUsageConsumer || !existingServiceUsageConsumer.members.includes(`serviceAccount:${saEmail}`)) {
-      if (!existingServiceUsageConsumer) {
-        bindings.push({ role: 'roles/serviceusage.serviceUsageConsumer', members: [`serviceAccount:${saEmail}`] });
-      } else {
-        existingServiceUsageConsumer.members.push(`serviceAccount:${saEmail}`);
+      if (!existingServiceUsageConsumer || !existingServiceUsageConsumer.members.includes(`serviceAccount:${saEmail}`)) {
+        if (!existingServiceUsageConsumer) {
+          bindings.push({ role: 'roles/serviceusage.serviceUsageConsumer', members: [`serviceAccount:${saEmail}`] });
+        } else {
+          existingServiceUsageConsumer.members.push(`serviceAccount:${saEmail}`);
+        }
       }
-    }
 
-    await gcpApiFetch(
-      `https://cloudresourcemanager.googleapis.com/v1/projects/${firebaseProjectId}:setIamPolicy`,
-      token,
-      {
-        method: 'POST',
-        body: JSON.stringify({ policy: { bindings, etag: policy.etag } })
+      await gcpApiFetch(
+        `https://cloudresourcemanager.googleapis.com/v1/projects/${firebaseProjectId}:setIamPolicy`,
+        token,
+        {
+          method: 'POST',
+          body: JSON.stringify({ policy: { bindings, etag: policy.etag } })
+        }
+      );
+      return;
+    } catch (e) {
+      if (e.message?.includes('does not exist') && attempt < 5) {
+        log(`SA not ready yet (attempt ${attempt + 1}), waiting...`);
+        await new Promise(r => setTimeout(r, 5000));
+        continue;
       }
-    );
-  } catch (e: any) {
-    log(`Warning: Could not grant Firebase roles on ${firebaseProjectId}: ${e.message}`);
-    throw e;
+      log(`Warning: Could not grant Firebase roles on ${firebaseProjectId}: ${e.message}`);
+      return;
+    }
   }
 };
 
@@ -342,3 +400,5 @@ export const grantPoolAccessToSA = async (token: string, gcpProjectId: string, s
     );
   }
 };
+
+

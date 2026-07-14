@@ -7,7 +7,7 @@ import { Check, Copy, Upload, AlertTriangle, Trash2, ExternalLink, Shield, Serve
 import { encryptData, decryptData } from './framework/infra-setup/crypto';
 import { CloudShellScript, getStartupScript } from './framework/infra-setup/scripts';
 import {
-  gcpApiFetch, githubApiFetch, setGitHubVariable, getServiceAccountToken,
+  gcpApiFetch, githubApiFetch, setGitHubVariable, getServiceAccountToken, ensureGitHubRepo,
   createWorkloadIdentityPool, createWorkloadIdentityProvider,
   createDeployServiceAccount, grantFirebaseRoles, grantPoolAccessToSA
 } from './framework/infra-setup/api';
@@ -171,6 +171,7 @@ const [loading, setLoading] = useState(true);
   const [discordBotTokenInput, setDiscordBotTokenInput] = useState('');
 const [discordGuildId, setDiscordGuildId] = useState('');
 const [discordDetecting, setDiscordDetecting] = useState(false);
+const [discordBotAdded, setDiscordBotAdded] = useState(false);
   const [vmHttpsUrl, setVmHttpsUrl] = useState('');
   const [formProgressLoaded, setFormProgressLoaded] = useState(false);
   const [useOptimizedBundle, setUseOptimizedBundle] = useState(false);
@@ -730,6 +731,9 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     setGithubVarUploading(true);
     
     try {
+      // Ensure the GitHub repo exists before uploading variables
+      await ensureGitHubRepo(githubPat, githubRepoName, addOidcLog);
+
       // Upload Firebase config as GitHub variables (API keys are client-side, not truly secret)
       const firebaseStaging = firebaseStagingData as any;
       const firebaseProd = firebaseProductionData as any;
@@ -989,8 +993,9 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     return [];
   };
 
-  const linkBillingAccount = async () => {
-    if (!projectId || !gcpAccessToken || !selectedBillingAccount) return;
+  const linkBillingAccount = async (accountName) => {
+    const account = accountName || selectedBillingAccount;
+    if (!projectId || !gcpAccessToken || !account) return;
     setLinkingBilling(true);
     setError(null);
     try {
@@ -1000,7 +1005,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
           'Authorization': `Bearer ${gcpAccessToken}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ billingAccountName: selectedBillingAccount })
+        body: JSON.stringify({ billingAccountName: account })
       });
       if (response.ok) {
         setBillingLinkedSuccess(true);
@@ -1362,7 +1367,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     if (step === 3) return step3Complete;
     if (step === 4) return !!(firebaseStagingData?.projectId && firebaseProductionData?.projectId);
     if (step === 5) return !!githubPat;
-    if (step === 6) return !!discordBotToken; // Step 6: Discord Bot
+    if (step === 6) return discordBotAdded; // Step 6: Discord Bot
     if (step === 7) return !!vmIp; // Step 7: Create VM
     return false;
   };
@@ -2612,17 +2617,14 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       setDiscordBotToken(discordBotTokenInput);
       console.log('Saving Discord config:', {
         discord_bot_token: '[REDACTED]',
-        discord_guild_id: detectedGuildId || 'EMPTY',
         invite_url_generated: !!inviteUrl
       });
 
       await saveConfig({
-        discord_bot_token: discordBotTokenInput,
-        discord_guild_id: detectedGuildId || discordGuildId
+        discord_bot_token: discordBotTokenInput
       });
 
       console.log('Discord config saved');
-      expandNextStep(7);
     } catch (err) {
       console.error('Error saving discord bot token:', err);
       setError(err.message);
@@ -2630,6 +2632,11 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       setSaving(false);
       setDiscordDetecting(false);
     }
+  };
+
+  const handleBotAdded = () => {
+    setDiscordBotAdded(true);
+    setExpandedSteps(prev => [...prev.filter(s => s !== 6), 7]);
   };
 
   const pendingConfig = !user && loadFromLocalStorage();
@@ -3222,11 +3229,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                           ✓ Billing is linked and active!
                         </p>
                       )}
-                      {billingEnabled === null && (
-                        <p className="text-xs text-yellow-600 mt-2 font-medium">
-                          ⚠️ Could not verify billing status via API. Ensure Cloud Billing API is enabled and you have billing permissions.
-                        </p>
-                      )}
+
                     </div>
                     <button
                       type="button"
@@ -3775,94 +3778,92 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                 </div>
               ) : (
                    <>
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                      <p className="text-blue-800 font-medium mb-2">Create a Discord bot:</p>
-                       <ol className="list-decimal list-inside space-y-2 text-blue-700 text-sm">
-                         <li>Go to <a href="https://discord.com/developers/applications" target="_blank" rel="noopener noreferrer" className="underline font-medium">Discord Developer Portal</a></li>
-                         <li>Click "New Application" → give it a name (e.g., "Kimaki") — a bot is created automatically</li>
-                         <li>Go to <strong>"Installation"</strong> → set <strong>"Install Link" to "None"</strong> (we generate our own invite link below)</li>
-                         <li>Go to "Bot" → disable <strong>"Public Bot"</strong></li>
-                         <li>In "Bot", scroll to "Privileged Gateway Intents" → enable <strong>Message Content Intent</strong> (required for Kimaki to read messages)</li>
-                         <li>Go to "Bot" → click "Reset Token" → copy the token</li>
-                         <li>Enter the token below — your Client ID will be extracted automatically</li>
-                         <li>Enable Developer Mode in Discord (<strong>User Settings → Advanced → Developer Mode</strong>), then right-click your server name → <strong>Copy Server ID</strong></li>
-                       </ol>
+                     <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                       <p className="text-blue-800 font-medium mb-2">Create a Discord bot:</p>
+                        <ol className="list-decimal list-inside space-y-2 text-blue-700 text-sm">
+                          <li>Go to <a href="https://discord.com/developers/applications" target="_blank" rel="noopener noreferrer" className="underline font-medium">Discord Developer Portal</a></li>
+                          <li>Click "New Application" → give it a name (e.g., "Kimaki") — a bot is created automatically</li>
+                          <li>Go to <strong>"Installation"</strong> → set <strong>"Install Link" to "None"</strong> (we generate our own invite link below)</li>
+                          <li>Go to "Bot" → disable <strong>"Public Bot"</strong></li>
+                          <li>In "Bot", scroll to "Privileged Gateway Intents" → enable <strong>Message Content Intent</strong> (required for Kimaki to read messages)</li>
+                          <li>Go to "Bot" → click "Reset Token" → copy the token</li>
+                          <li>Enter the token below — your Client ID will be extracted automatically, then click <strong>"Save Discord Bot"</strong></li>
+                          <li>Click the invite link below to add the bot to your server, then click <strong>"Bot Added"</strong> to proceed</li>
+                        </ol>
+                     </div>
+
+                      <div className="mb-4">
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Discord Bot Token:</label>
+                         <input
+                           type="password"
+                           value={discordBotTokenInput}
+                           onChange={(e) => {
+                             const token = e.target.value;
+                             setDiscordBotTokenInput(token);
+                             setDiscordInviteUrl('');
+                             const extractedId = extractClientIdFromToken(token);
+                             if (extractedId) {
+                               setDiscordClientId(extractedId);
+                             }
+                           }}
+                           placeholder="MTE4MzEyODU2MTc0ODQxMDA5OH.GxXxXx.xxxxxxxx"
+                           className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
+                         />
+                        <p className="text-gray-500 text-xs mt-1">
+                          Your bot token from Discord Developer Portal → Bot → Reset Token
+                        </p>
+                      </div>
+
+                     {discordInviteUrl && (
+                      <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+                        <p className="text-green-800 text-sm mb-2 font-medium">Invite link ready!</p>
+                        <a
+                          href={discordInviteUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 underline text-sm break-all"
+                        >
+                          {discordInviteUrl}
+                        </a>
+                        <p className="text-green-700 text-xs mt-2">
+                          Open this link to invite your bot to your Discord server.
+                        </p>
+                      </div>
+                    )}
+
+                     {error && (
+                      <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                        {error}
+                      </div>
+                    )}
+                    <div className="flex gap-2 flex-wrap">
+                      {discordBotTokenInput.trim() && !discordInviteUrl && (
+                        <button
+                          onClick={handleCreateDiscordBot}
+                          disabled={discordDetecting}
+                          className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg flex items-center gap-2"
+                        >
+                          {discordDetecting ? (
+                            <>
+                              <span className="animate-spin">⟳</span>
+                              Saving...
+                            </>
+                          ) : (
+                            'Save Discord Bot'
+                          )}
+                        </button>
+                      )}
+                      {discordInviteUrl && (
+                        <button
+                          onClick={handleBotAdded}
+                          className="bg-green-600 hover:bg-green-700 text-white px-5 py-2 rounded-lg font-medium text-sm"
+                        >
+                          Bot Added — Continue
+                        </button>
+                      )}
                     </div>
-
-                     <div className="mb-4">
-                       <label className="block text-sm font-medium text-gray-700 mb-2">Discord Bot Token:</label>
-                        <input
-                          type="password"
-                          value={discordBotTokenInput}
-                          onChange={(e) => {
-                            const token = e.target.value;
-                            setDiscordBotTokenInput(token);
-                            setDiscordInviteUrl('');
-                            const extractedId = extractClientIdFromToken(token);
-                            if (extractedId) {
-                              setDiscordClientId(extractedId);
-                            }
-                          }}
-                          placeholder="MTE4MzEyODU2MTc0ODQxMDA5OH.GxXxXx.xxxxxxxx"
-                          className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
-                        />
-                       <p className="text-gray-500 text-xs mt-1">
-                         Your bot token from Discord Developer Portal → Bot → Reset Token
-                       </p>
-                     </div>
-
-                    {discordInviteUrl && (
-                     <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
-                       <p className="text-green-800 text-sm mb-2 font-medium">Invite link ready!</p>
-                       <a
-                         href={discordInviteUrl}
-                         target="_blank"
-                         rel="noopener noreferrer"
-                         className="text-blue-600 underline text-sm break-all"
-                       >
-                         {discordInviteUrl}
-                       </a>
-                       <p className="text-green-700 text-xs mt-2">
-                         Open this link to invite your bot to your Discord server.
-                       </p>
-                     </div>
-                   )}
-
-                    <div className="mb-4">
-                      <label className="block text-sm font-medium text-gray-700 mb-2">Discord Server ID (optional):</label>
-                      <input
-                        type="text"
-                        value={discordGuildId}
-                        onChange={(e) => setDiscordGuildId(e.target.value)}
-                        placeholder="1476738289556783156"
-                        className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
-                      />
-                      <p className="text-gray-500 text-xs mt-1">
-                        Right-click your server name in Discord → Copy Server ID. If left blank, the VM will auto-detect your server from the bot token.
-                      </p>
-                    </div>
-
-                    {error && (
-                     <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-                       {error}
-                     </div>
-                   )}
-                   <button
-                     onClick={handleCreateDiscordBot}
-                     disabled={!discordBotTokenInput.trim() || discordDetecting}
-                     className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg flex items-center gap-2"
-                   >
-                     {discordDetecting ? (
-                       <>
-                         <span className="animate-spin">⟳</span>
-                         Saving...
-                       </>
-                     ) : (
-                       'Save Discord Bot'
-                     )}
-                   </button>
-                 </>
-              )}
+                  </>
+               )}
             </div>
           )}
         </div>
@@ -4013,9 +4014,74 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                         )}
                       </div>
                     </label>
-                  </div>
-                  
-                  {step4Status === 'idle' && (
+                    </div>
+
+                   {billingEnabled === false && step4Status === 'idle' && (
+                     <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+                       <p className="text-yellow-800 font-semibold text-xs mb-1">⚠️ Billing Required</p>
+                       <p className="text-yellow-700 text-xs mb-3">
+                         Compute Engine requires an active billing account. Select one below or it will be linked automatically when you click Create VM.
+                       </p>
+                       {billingAccounts.length > 0 ? (
+                         <div className="space-y-3">
+                           <div className="flex items-center gap-2">
+                             <label className="text-xs font-semibold text-gray-700">Billing Account:</label>
+                             <select
+                               value={selectedBillingAccount}
+                               onChange={(e) => setSelectedBillingAccount(e.target.value)}
+                               className="flex-grow px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:border-blue-400 text-gray-800 font-medium"
+                             >
+                               {billingAccounts.map(acc => (
+                                 <option key={acc.name} value={acc.name}>{acc.displayName}</option>
+                               ))}
+                             </select>
+                           </div>
+                           <button
+                             type="button"
+                             onClick={linkBillingAccount}
+                             disabled={linkingBilling}
+                             className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-400 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"
+                           >
+                             {linkingBilling ? (
+                               <>
+                                 <span className="animate-spin">⟳</span>
+                                 Linking Billing...
+                               </>
+                             ) : (
+                               'Link Selected Billing Account'
+                             )}
+                           </button>
+                         </div>
+                       ) : (
+                         <div className="text-xs text-yellow-700">
+                           No billing accounts found. Enable billing at{' '}
+                           <a href={`https://console.cloud.google.com/billing/linkedaccount?project=${projectId}`} target="_blank" rel="noopener noreferrer" className="underline font-semibold">Cloud Console</a>, then click{' '}
+                           <button
+                             type="button"
+                             onClick={async () => {
+                               await checkBillingStatus();
+                               await fetchBillingAccounts();
+                             }}
+                             className="underline font-semibold"
+                           >
+                             Re-check
+                           </button>
+                         </div>
+                       )}
+                       <button
+                         type="button"
+                         onClick={async () => {
+                           await checkBillingStatus();
+                           await fetchBillingAccounts();
+                         }}
+                         className="mt-2 text-xs text-yellow-800 underline hover:text-yellow-950 font-semibold block"
+                       >
+                         Re-check Billing Status
+                       </button>
+                     </div>
+                   )}
+                   
+                   {step4Status === 'idle' && (
                     <div className="flex gap-2 flex-wrap">
                       <button
                         id="recreate-vm-trigger"
@@ -4025,9 +4091,36 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                             return;
                           }
                           setStep4Status('enabling');
-                          setStep4Message('Getting service account token...');
+                          setStep4Message('Checking billing status...');
                           addStep4Log('Starting VM creation process...');
-                          
+
+                          // Check billing with user's OAuth token first
+                          const billingOk = await checkBillingStatus();
+                          if (billingOk === null) {
+                            addStep4Log('Billing API not accessible, skipping auto-check');
+                          } else if (billingOk === true) {
+                            addStep4Log('Billing is enabled');
+                          } else {
+                            addStep4Log('Billing not enabled - attempting to link billing account...');
+                            const accounts = await fetchBillingAccounts();
+                            if (accounts.length > 0 && gcpAccessToken) {
+                              setSelectedBillingAccount(accounts[0].name);
+                              setError(null);
+                              await linkBillingAccount();
+                            }
+                            // Re-check billing after linking attempt
+                            const stillOk = await checkBillingStatus();
+                            if (!stillOk) {
+                              setError(`Billing is required. Link a billing account at https://console.cloud.google.com/billing/linkedaccount?project=${projectId} then retry.`);
+                              setStep4Status('error');
+                              return;
+                            }
+                            addStep4Log('Billing account linked successfully');
+                          }
+
+                          setStep4Message('Getting service account token...');
+                          addStep4Log('Authenticating service account...');
+
                           const token = await getServiceAccountToken();
                           if (!token) {
                             setError('Failed to authenticate with service account');
@@ -4035,7 +4128,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                             return;
                           }
                           addStep4Log('Service account authenticated');
-                          
+
                           const apis = [
                             { name: 'compute.googleapis.com', displayName: 'Compute Engine API' },
                             { name: 'cloudresourcemanager.googleapis.com', displayName: 'Cloud Resource Manager API' },
@@ -4060,13 +4153,18 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                               } else {
                                 const errData = await response.json().catch(() => ({}));
                                 const errMsg = errData.error?.message || '';
-                                if (errMsg.includes('billing')) {
-                                  setError('Billing must be enabled on your GCP project');
+                                if (errMsg.includes('billing') || errMsg.includes('Billing')) {
+                                  setError(`Billing must be enabled on project ${projectId}. Go to Google Cloud Console > Billing to link a billing account.`);
                                   addStep4Log(`ERROR: Billing required for ${api.displayName}`);
-                                } else if (errMsg.includes('already') || errMsg.includes('enabled')) {
+                                  setStep4Status('error');
+                                  return;
+                                } else if (errMsg.includes('already') || errMsg.includes('enabled') || errMsg.includes('ALREADY')) {
                                   addStep4Log(`${api.displayName} already enabled`);
                                 } else {
-                                  addStep4Log(`Note: ${errMsg || 'Continuing anyway...'}`);
+                                  setError(`Failed to enable ${api.displayName}: ${errMsg || response.statusText} (${response.status})`);
+                                  addStep4Log(`ERROR: ${errMsg}`);
+                                  setStep4Status('error');
+                                  return;
                                 }
                               }
                             } catch (e) {
@@ -4257,9 +4355,34 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                             addStep4Log('WARNING: Discord Guild ID not set - Discord channel will not be created');
                           }
                           setStep4Status('enabling');
-                          setStep4Message('Getting service account token...');
+                          setStep4Message('Checking billing status...');
                           addStep4Log('Starting VM recreation process...');
-                          
+
+                          const billingOk = await checkBillingStatus();
+                          if (billingOk === null) {
+                            addStep4Log('Billing API not accessible, skipping auto-check');
+                          } else if (billingOk === true) {
+                            addStep4Log('Billing is enabled');
+                          } else {
+                            addStep4Log('Billing not enabled - attempting to link billing account...');
+                            const accounts = await fetchBillingAccounts();
+                            if (accounts.length > 0 && gcpAccessToken) {
+                              setSelectedBillingAccount(accounts[0].name);
+                              setError(null);
+                              await linkBillingAccount(accounts[0].name);
+                            }
+                            const stillOk = await checkBillingStatus();
+                            if (!stillOk) {
+                              setError(`Billing is required. Link a billing account at https://console.cloud.google.com/billing/linkedaccount?project=${projectId} then retry.`);
+                              setStep4Status('error');
+                              return;
+                            }
+                            addStep4Log('Billing account linked successfully');
+                          }
+
+                          setStep4Message('Getting service account token...');
+                          addStep4Log('Authenticating service account...');
+
                           const token = await getServiceAccountToken();
                           if (!token) {
                             setError('Failed to authenticate with service account');
@@ -4267,7 +4390,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                             return;
                           }
                           addStep4Log('Service account authenticated');
-                          
+
                           const apis = [
                             { name: 'compute.googleapis.com', displayName: 'Compute Engine API' },
                             { name: 'cloudresourcemanager.googleapis.com', displayName: 'Cloud Resource Manager API' },
@@ -4292,13 +4415,18 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
                               } else {
                                 const errData = await response.json().catch(() => ({}));
                                 const errMsg = errData.error?.message || '';
-                                if (errMsg.includes('billing')) {
-                                  setError('Billing must be enabled on your GCP project');
+                                if (errMsg.includes('billing') || errMsg.includes('Billing')) {
+                                  setError(`Billing must be enabled on project ${projectId}. Go to Google Cloud Console > Billing to link a billing account.`);
                                   addStep4Log(`ERROR: Billing required for ${api.displayName}`);
-                                } else if (errMsg.includes('already') || errMsg.includes('enabled')) {
+                                  setStep4Status('error');
+                                  return;
+                                } else if (errMsg.includes('already') || errMsg.includes('enabled') || errMsg.includes('ALREADY')) {
                                   addStep4Log(`${api.displayName} already enabled`);
                                 } else {
-                                  addStep4Log(`Note: ${errMsg || 'Continuing anyway...'}`);
+                                  setError(`Failed to enable ${api.displayName}: ${errMsg || response.statusText} (${response.status})`);
+                                  addStep4Log(`ERROR: ${errMsg}`);
+                                  setStep4Status('error');
+                                  return;
                                 }
                               }
                             } catch (e) {
