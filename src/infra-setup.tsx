@@ -4106,7 +4106,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                             if (accounts.length > 0 && gcpAccessToken) {
                               setSelectedBillingAccount(accounts[0].name);
                               setError(null);
-                              await linkBillingAccount();
+                              await linkBillingAccount(accounts[0].name);
                             }
                             // Re-check billing after linking attempt
                             const stillOk = await checkBillingStatus();
