@@ -335,16 +335,20 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
   };
 
   const findOAuthClientId = async (token, projectId) => {
-    for (let attempt = 0; attempt < 8; attempt++) {
+    for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const configResp = await fetch(`https://identitytoolkit.googleapis.com/v2/projects/${projectId}/config`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
         if (configResp.ok) {
           const config = await configResp.json();
-          if (config.client?.web?.oauthClientId) return config.client.web.oauthClientId;
+          if (config.client?.web?.oauthClientId) {
+            console.log(`Found OAuth client via Identity Toolkit: ${config.client.web.oauthClientId}`);
+            return config.client.web.oauthClientId;
+          }
         }
         if (configResp.status === 404 && attempt === 0) {
+          // Try initializing Identity Toolkit with email auth
           await fetch(`https://identitytoolkit.googleapis.com/v2/projects/${projectId}/config`, {
             method: 'PATCH',
             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -356,7 +360,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       } catch (e) {
         console.warn('Identity Toolkit config fetch failed:', e);
       }
-      await new Promise(r => setTimeout(r, 3000));
+      await new Promise(r => setTimeout(r, 2000));
     }
     return null;
   };
@@ -387,11 +391,11 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       console.warn('OAuth client creation blocked by CORS. Trying alternative...');
     }
 
-    // Fallback: enable Identity Toolkit and read OAuth client from its config
+    // Fallback: try Identity Toolkit API (CORS-friendly)
     const clientId = await findOAuthClientId(token, projectId);
     if (clientId) return clientId;
 
-    // Last resort: try listing OAuth clients to find auto-created web client
+    // Last resort: try listing OAuth clients (also CORS-blocked)
     try {
       const listResp = await fetch('https://www.googleapis.com/oauth2/v1/clients', {
         headers: { 'Authorization': `Bearer ${token}` }
@@ -405,6 +409,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       console.warn('Could not list OAuth clients (CORS).');
     }
 
+    console.warn('Unable to discover OAuth client ID. Google Sign-In will need manual config in GCP Console > APIs & Services > Credentials.');
     return null;
   };
 
@@ -521,6 +526,10 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
     await updateAuthDomains(gcpAccessToken, projectIdVal, [
       'localhost', config.projectId + '.web.app', config.projectId + '.firebaseapp.com',
     ]);
+
+    if (!clientId) {
+      addNotification(`${environment}: OAuth client ID not found. Set it in GCP Console > APIs & Services > Credentials for Google Sign-In to work.`, 'info');
+    }
 
     return { config, clientId };
   };
