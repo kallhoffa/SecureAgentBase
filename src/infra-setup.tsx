@@ -337,12 +337,18 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
   const findOAuthClientId = async (token, projectId) => {
     // Try to enable Identity Toolkit API first (needed for the config endpoint to work)
     try {
-      await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/identitytoolkit.googleapis.com:enable`, {
+      const enableResp = await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/identitytoolkit.googleapis.com:enable`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${token}` }
       });
+      if (enableResp.ok) {
+        console.log(`Identity Toolkit API enablement initiated for ${projectId}`);
+      } else {
+        const errText = await enableResp.text().catch(() => '');
+        console.warn(`Identity Toolkit API enablement returned ${enableResp.status}:`, errText);
+      }
     } catch (e) {
-      console.warn('Could not enable Identity Toolkit API:', e);
+      console.warn('Could not enable Identity Toolkit API (likely CORS):', e);
     }
 
     for (let attempt = 0; attempt < 6; attempt++) {

@@ -131,6 +131,16 @@ export const generateShortLivedToken = async (userToken: string, saEmail: string
   }
 };
 
+const awaitOperation = async (token: string, operationName: string, log?: (msg: string) => void) => {
+  for (let i = 0; i < 30; i++) {
+    const op = await gcpApiFetch(`https://iam.googleapis.com/v1/${operationName}`, token);
+    if (op.done) return op.response;
+    log?.(`Waiting for operation ${operationName}...`);
+    await new Promise(r => setTimeout(r, 2000));
+  }
+  throw new Error(`Operation ${operationName} did not complete within 60s`);
+};
+
 export const createWorkloadIdentityPool = async (token: string, gcpProjectId: string, poolId: string, log: (msg: string) => void) => {
   log('Creating workload identity pool...');
   try {
@@ -145,6 +155,11 @@ export const createWorkloadIdentityPool = async (token: string, gcpProjectId: st
         })
       }
     );
+    if (pool.name?.includes('/operations/')) {
+      log('Pool creation is async, waiting for completion...');
+      const result = await awaitOperation(token, pool.name, log);
+      return result.name;
+    }
     return pool.name;
   } catch (e) {
     const existing = await gcpApiFetch(
@@ -180,6 +195,11 @@ export const createWorkloadIdentityProvider = async (token: string, gcpProjectId
         })
       }
     );
+    if (provider.name?.includes('/operations/')) {
+      log('Provider creation is async, waiting for completion...');
+      const result = await awaitOperation(token, provider.name, log);
+      return result.name;
+    }
     return provider.name;
   } catch (e) {
     // Provider already exists — PATCH its attributeCondition to match the
