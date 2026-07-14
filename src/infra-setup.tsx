@@ -3814,19 +3814,24 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                         </p>
                       </div>
 
-                      {discordBotTokenInput.trim() && !extractClientIdFromToken(discordBotTokenInput) && (
+                      {discordBotTokenInput.trim() && !discordInviteUrl && (
                         <div className="mb-4">
-                          <label className="block text-sm font-medium text-gray-700 mb-2">Discord Client ID:</label>
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Discord Client ID {discordClientId ? '(auto-detected)' : ''}
+                          </label>
                           <input
                             type="text"
                             value={discordClientId}
                             onChange={(e) => setDiscordClientId(e.target.value)}
-                            placeholder="Paste your Client ID (found in OAuth2 → General in Discord Dev Portal)"
+                            placeholder={discordClientId ? '' : "Could not auto-detect — paste Client ID from OAuth2 → General"}
                             className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
+                            readOnly={!!discordClientId}
                           />
-                          <p className="text-gray-500 text-xs mt-1">
-                            Could not auto-extract from token — enter it manually.
-                          </p>
+                          {!discordClientId && (
+                            <p className="text-gray-500 text-xs mt-1">
+                              Enter your Discord Application Client ID manually (found in OAuth2 → General).
+                            </p>
+                          )}
                         </div>
                       )}
 

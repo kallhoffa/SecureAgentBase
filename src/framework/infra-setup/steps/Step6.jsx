@@ -78,6 +78,27 @@ const Step6 = ({
             </p>
           </div>
 
+          {discordBotTokenInput.trim() && !discordInviteUrl && (
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Discord Client ID {discordClientId ? '(auto-detected)' : ''}
+              </label>
+              <input
+                type="text"
+                value={discordClientId}
+                onChange={(e) => setDiscordClientId(e.target.value)}
+                placeholder={discordClientId ? '' : "Could not auto-detect — paste Client ID from OAuth2 → General"}
+                className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
+                readOnly={!!discordClientId}
+              />
+              {!discordClientId && (
+                <p className="text-gray-500 text-xs mt-1">
+                  Enter your Discord Application Client ID manually (found in OAuth2 → General).
+                </p>
+              )}
+            </div>
+          )}
+
           {discordInviteUrl && (
             <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
               <p className="text-green-800 text-sm mb-2 font-medium">Invite URL generated!</p>
