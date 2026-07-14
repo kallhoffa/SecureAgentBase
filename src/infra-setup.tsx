@@ -2562,8 +2562,10 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
   };
 
   const getAccessToken = async () => {
-    if (gcpAccessToken && gcpTokenExpiry && Date.now() < gcpTokenExpiry) return gcpAccessToken;
-    if (gcpAccessToken && (!gcpTokenExpiry || Date.now() >= gcpTokenExpiry)) {
+    if (gcpAccessToken) {
+      if (gcpTokenExpiry && Date.now() < gcpTokenExpiry) return gcpAccessToken;
+      // If expiry unknown (0 or not set), still use the token — let API return 401 if expired
+      if (!gcpTokenExpiry) return gcpAccessToken;
       setGcpAccessToken(null);
     }
     if (serviceAccountJson) {
