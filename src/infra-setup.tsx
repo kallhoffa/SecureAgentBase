@@ -335,7 +335,17 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
   };
 
   const findOAuthClientId = async (token, projectId) => {
-    for (let attempt = 0; attempt < 3; attempt++) {
+    // Try to enable Identity Toolkit API first (needed for the config endpoint to work)
+    try {
+      await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/identitytoolkit.googleapis.com:enable`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+    } catch (e) {
+      console.warn('Could not enable Identity Toolkit API:', e);
+    }
+
+    for (let attempt = 0; attempt < 6; attempt++) {
       try {
         const configResp = await fetch(`https://identitytoolkit.googleapis.com/v2/projects/${projectId}/config`, {
           headers: { 'Authorization': `Bearer ${token}` }
@@ -346,9 +356,19 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
             console.log(`Found OAuth client via Identity Toolkit: ${config.client.web.oauthClientId}`);
             return config.client.web.oauthClientId;
           }
+          // Config exists but no OAuth client yet — try enabling sign-in methods
+          if (attempt === 0) {
+            await fetch(`https://identitytoolkit.googleapis.com/v2/projects/${projectId}/config`, {
+              method: 'PATCH',
+              headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                signIn: { email: { enabled: true, passwordRequired: true } }
+              })
+            });
+          }
         }
         if (configResp.status === 404 && attempt === 0) {
-          // Try initializing Identity Toolkit with email auth
+          // Config doesn't exist yet — try creating it via PATCH
           await fetch(`https://identitytoolkit.googleapis.com/v2/projects/${projectId}/config`, {
             method: 'PATCH',
             headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -360,7 +380,7 @@ const [discordDetecting, setDiscordDetecting] = useState(false);
       } catch (e) {
         console.warn('Identity Toolkit config fetch failed:', e);
       }
-      await new Promise(r => setTimeout(r, 2000));
+      await new Promise(r => setTimeout(r, 5000));
     }
     return null;
   };
