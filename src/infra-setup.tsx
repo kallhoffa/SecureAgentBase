@@ -4107,21 +4107,42 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                              )}
                            </button>
                          </div>
-                       ) : (
-                         <div className="text-xs text-yellow-700">
-                           No billing accounts found. Enable billing at{' '}
-                           <a href={`https://console.cloud.google.com/billing/linkedaccount?project=${projectId}`} target="_blank" rel="noopener noreferrer" className="underline font-semibold">Cloud Console</a>, then click{' '}
-                           <button
-                             type="button"
-                             onClick={async () => {
-                               await checkBillingStatus();
-                               await fetchBillingAccounts();
-                             }}
-                             className="underline font-semibold"
-                           >
-                             Re-check
-                           </button>
-                         </div>
+                        ) : (
+                          <div className="text-xs text-yellow-700 space-y-2">
+                            <p>No billing accounts found via API. You can enable billing at{' '}
+                              <a href={`https://console.cloud.google.com/billing/linkedaccount?project=${projectId}`} target="_blank" rel="noopener noreferrer" className="underline font-semibold">Cloud Console</a>, then click{' '}
+                              <button
+                                type="button"
+                                onClick={async () => {
+                                  await checkBillingStatus();
+                                  await fetchBillingAccounts();
+                                }}
+                                className="underline font-semibold"
+                              >
+                                Re-check
+                              </button>.
+                            </p>
+                            <p className="mt-2">
+                              Or paste your billing account ID manually (find it in Cloud Console → Billing):
+                            </p>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="text"
+                                value={selectedBillingAccount}
+                                onChange={(e) => setSelectedBillingAccount(e.target.value)}
+                                placeholder="billingAccounts/XXXXXX-XXXXXX-XXXXXX"
+                                className="flex-grow px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:border-blue-400"
+                              />
+                              <button
+                                type="button"
+                                onClick={linkBillingAccount}
+                                disabled={linkingBilling || !selectedBillingAccount}
+                                className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-400 text-white px-3 py-1.5 rounded-lg text-xs font-semibold"
+                              >
+                                {linkingBilling ? 'Linking...' : 'Link'}
+                              </button>
+                            </div>
+                          </div>
                        )}
                        <button
                          type="button"
