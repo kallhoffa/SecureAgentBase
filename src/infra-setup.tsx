@@ -1942,6 +1942,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         setVmIp(configData.vm_ip || '');
         setDiscordBotToken(configData.discord_bot_token || configData.discordBotToken || '');
         setDiscordGuildId(configData.discord_guild_id || configData.discordGuildId || '');
+        setDiscordBotAdded(!!configData.discord_bot_added);
         if (configData.firebase_staging) {
           setFirebaseConfigStaging(JSON.stringify(configData.firebase_staging, null, 2));
           setFirebaseStagingData(configData.firebase_staging);
@@ -2141,7 +2142,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       checkBillingStatus().catch(() => {});
       fetchBillingAccounts().catch(() => {});
     }
-  }, [expandedSteps.includes(7), isStepCompleted(6)]);
+  }, [expandedSteps, isStepCompleted(6), gcpAccessToken, projectId]);
 
   const handleFileUpload = async (event) => {
     const file = event.target.files?.[0];
@@ -2644,6 +2645,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
   const handleBotAdded = () => {
     setDiscordBotAdded(true);
+    saveConfig({ discord_bot_added: true });
     setExpandedSteps(prev => [...prev.filter(s => s !== 6), 7]);
   };
 
@@ -4045,7 +4047,31 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                     </label>
                     </div>
 
-                   {(billingEnabled === false || billingEnabled === null) && step4Status === 'idle' && (
+                    {step4Status === 'idle' && !gcpAccessToken && (
+                      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+                        <p className="text-yellow-800 font-semibold text-xs mb-1">⚠️ Google Cloud Disconnected</p>
+                        <p className="text-yellow-700 text-xs mb-3">
+                          Your Google Cloud session expired. Reconnect to check billing and enable APIs.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const token = await getAccessToken();
+                            if (token) {
+                              setGcpAccessToken(token);
+                              setGcpConfigLost(false);
+                              checkBillingStatus().catch(() => {});
+                              fetchBillingAccounts().catch(() => {});
+                            }
+                          }}
+                          className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm"
+                        >
+                          Reconnect Google Cloud
+                        </button>
+                      </div>
+                    )}
+
+                    {(billingEnabled === false || billingEnabled === null) && gcpAccessToken && step4Status === 'idle' && (
                      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
                        <p className="text-yellow-800 font-semibold text-xs mb-1">⚠️ Billing Required</p>
                        <p className="text-yellow-700 text-xs mb-3">
