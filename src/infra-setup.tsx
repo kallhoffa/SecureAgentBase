@@ -1459,6 +1459,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           setGcpAccessToken(response.access_token);
           setGcpTokenExpiry(Date.now() + (((response as any).expires_in || 3600) - 60) * 1000);
           setGcpConnected(true);
+          setGcpConfigLost(false);
           
           const projects = await fetchGcpProjects(response.access_token);
           
@@ -4055,15 +4056,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                         </p>
                         <button
                           type="button"
-                          onClick={async () => {
-                            const token = await getAccessToken();
-                            if (token) {
-                              setGcpAccessToken(token);
-                              setGcpConfigLost(false);
-                              checkBillingStatus().catch(() => {});
-                              fetchBillingAccounts().catch(() => {});
-                            }
-                          }}
+                          onClick={handleConnectGoogle}
                           className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm"
                         >
                           Reconnect Google Cloud
