@@ -944,59 +944,105 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   };
 
   const checkBillingStatus = async () => {
-    if (!projectId || !gcpAccessToken) return null;
-    try {
-      const response = await fetch(`https://cloudbilling.googleapis.com/v1/projects/${projectId}/billingInfo`, {
-        headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
-      });
-      if (response.ok) {
-        const data = await response.json();
-        const enabled = !!data.billingEnabled && !!data.billingAccountName;
-        setBillingEnabled(enabled);
-        return enabled;
-      }
-      if (response.status === 401 || response.status === 403) {
-        console.warn(`Billing API returned ${response.status} — insufficient OAuth scope or API not enabled. Treating as unknown.`);
-        setBillingEnabled(null);
+    if (!projectId) return null;
+
+    const tryToken = async (token) => {
+      if (!token) return null;
+      try {
+        const response = await fetch(`https://cloudbilling.googleapis.com/v1/projects/${projectId}/billingInfo`, {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+        if (response.ok) {
+          const data = await response.json();
+          const enabled = !!data.billingEnabled && !!data.billingAccountName;
+          setBillingEnabled(enabled);
+          return enabled;
+        }
+        if (response.status === 401 || response.status === 403) {
+          return 'forbidden';
+        }
+        await response.text().catch(() => {});
+      } catch {
         return null;
       }
-      await response.text().catch(() => {});
-      console.error(`Billing API error ${response.status} — see response body for details`);
-    } catch (e) {
-      console.error('Error checking billing:', e);
+      return false;
+    };
+
+    if (gcpAccessToken) {
+      const result = await tryToken(gcpAccessToken);
+      if (result !== 'forbidden') return result;
     }
-    setBillingEnabled(false);
-    return false;
+
+    // Fallback: try with SA token if user token lacked permissions
+    const saToken = await getServiceAccountToken().catch(() => null);
+    if (saToken) {
+      const result = await tryToken(saToken);
+      if (result !== 'forbidden') return result;
+    }
+
+    console.warn('Billing API returned 403 on both user and SA tokens — cannot determine billing status.');
+    setBillingEnabled(null);
+    return null;
   };
 
   const fetchBillingAccounts = async () => {
-    if (!gcpAccessToken) return [];
-    try {
+    const tryBillingAccountsApi = async (token) => {
+      if (!token) return null;
       const response = await fetch(`https://cloudbilling.googleapis.com/v1/billingAccounts`, {
-        headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
+        headers: { 'Authorization': `Bearer ${token}` }
       });
       if (response.ok) {
         const data = await response.json();
-        const accounts = data.billingAccounts || [];
+        return data.billingAccounts || [];
+      }
+      if (response.status === 401 || response.status === 403) return 'forbidden';
+      return [];
+    };
+
+    if (gcpAccessToken) {
+      const result = await tryBillingAccountsApi(gcpAccessToken);
+      if (Array.isArray(result)) {
+        const accounts = result;
         setBillingAccounts(accounts);
-        if (accounts.length > 0) {
-          setSelectedBillingAccount(accounts[0].name);
-        }
+        if (accounts.length > 0) setSelectedBillingAccount(accounts[0].name);
         return accounts;
       }
-      if (response.status === 401 || response.status === 403) {
-        console.warn(`Billing API returned ${response.status} — trying to discover billing accounts via project billingInfo...`);
-        // Fallback: iterate through user's GCP projects to find which one has billing linked
-        const accounts = await discoverBillingAccountsViaProjects();
-        if (accounts.length > 0) {
-          setBillingAccounts(accounts);
-          setSelectedBillingAccount(accounts[0].name);
-          return accounts;
-        }
-      }
-    } catch (e) {
-      console.error('Error fetching billing accounts:', e);
     }
+
+    // Fallback 1: try SA token on current project's billingInfo
+    const saToken = await getServiceAccountToken().catch(() => null);
+    if (saToken && projectId) {
+      try {
+        const billRes = await fetch(
+          `https://cloudbilling.googleapis.com/v1/projects/${projectId}/billingInfo`,
+          { headers: { 'Authorization': `Bearer ${saToken}` } }
+        );
+        if (billRes.ok) {
+          const billData = await billRes.json();
+          if (billData.billingAccountName && billData.billingEnabled) {
+            const shortName = billData.billingAccountName.split('/').pop();
+            const accounts = [{
+              name: billData.billingAccountName,
+              displayName: `Billing Account ${shortName} (linked)`
+            }];
+            setBillingAccounts(accounts);
+            setSelectedBillingAccount(accounts[0].name);
+            return accounts;
+          }
+        }
+      } catch { /* skip */ }
+    }
+
+    // Fallback 2: discover via user's projects
+    if (gcpAccessToken) {
+      const accounts = await discoverBillingAccountsViaProjects();
+      if (accounts.length > 0) {
+        setBillingAccounts(accounts);
+        setSelectedBillingAccount(accounts[0].name);
+        return accounts;
+      }
+    }
+
     return [];
   };
 
@@ -1006,65 +1052,113 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       const projectsRes = await fetch('https://cloudresourcemanager.googleapis.com/v1/projects', {
         headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
       });
-      if (!projectsRes.ok) return [];
+      if (!projectsRes.ok) {
+        // Fallback: try SA token on just the current project
+        const saToken = await getServiceAccountToken().catch(() => null);
+        if (saToken && projectId) {
+          return await tryDiscoverFromProjects([{ projectId }], saToken);
+        }
+        return [];
+      }
       const projectsData = await projectsRes.json();
       const projects = projectsData.projects || [];
-      
-      // Check billingInfo for each project
-      const billingSet = new Set();
-      const results = [];
-      for (const project of projects.slice(0, 20)) {
-        try {
-          const billRes = await fetch(
-            `https://cloudbilling.googleapis.com/v1/projects/${project.projectId}/billingInfo`,
-            { headers: { 'Authorization': `Bearer ${gcpAccessToken}` } }
-          );
-          if (billRes.ok) {
-            const billData = await billRes.json();
-            if (billData.billingAccountName && billData.billingEnabled && !billingSet.has(billData.billingAccountName)) {
-              billingSet.add(billData.billingAccountName);
-              const shortName = billData.billingAccountName.split('/').pop();
-              results.push({
-                name: billData.billingAccountName,
-                displayName: `Billing Account ${shortName}`
-              });
-            }
-          }
-        } catch { /* skip projects that error */ }
+
+      // Try user token first, SA token as fallback
+      const allTokens = [gcpAccessToken];
+      const saToken = await getServiceAccountToken().catch(() => null);
+      if (saToken && saToken !== gcpAccessToken) allTokens.push(saToken);
+
+      for (const token of allTokens) {
+        const results = await tryDiscoverFromProjects(projects.slice(0, 20), token);
+        if (results.length > 0) return results;
       }
-      return results;
+      return [];
     } catch (e) {
       console.error('Error discovering billing accounts:', e);
       return [];
     }
   };
 
+  const tryDiscoverFromProjects = async (projects, token) => {
+    if (!token) return [];
+    const billingSet = new Set();
+    const results = [];
+    for (const project of projects) {
+      try {
+        const billRes = await fetch(
+          `https://cloudbilling.googleapis.com/v1/projects/${project.projectId}/billingInfo`,
+          { headers: { 'Authorization': `Bearer ${token}` } }
+        );
+        if (billRes.ok) {
+          const billData = await billRes.json();
+          if (billData.billingAccountName && billData.billingEnabled && !billingSet.has(billData.billingAccountName)) {
+            billingSet.add(billData.billingAccountName);
+            const shortName = billData.billingAccountName.split('/').pop();
+            results.push({
+              name: billData.billingAccountName,
+              displayName: `Billing Account ${shortName}`
+            });
+          }
+        }
+      } catch { /* skip projects that error */ }
+    }
+    return results;
+  };
+
   const linkBillingAccount = async (accountName) => {
     const account = accountName || selectedBillingAccount;
-    if (!projectId || !gcpAccessToken || !account) return;
-    setLinkingBilling(true);
-    setError(null);
-    try {
+    if (!projectId || !account) return;
+
+    const tryLink = async (token) => {
+      if (!token) return 'no_token';
       const response = await fetch(`https://cloudbilling.googleapis.com/v1/projects/${projectId}/billingInfo`, {
         method: 'PUT',
         headers: {
-          'Authorization': `Bearer ${gcpAccessToken}`,
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({ billingAccountName: account })
       });
-      if (response.ok) {
-        setBillingLinkedSuccess(true);
-        setBillingEnabled(true);
-        addNotification('Billing account linked successfully!', 'success');
-      } else if (response.status === 401 || response.status === 403) {
-        await response.text().catch(() => {});
-        console.error(`Billing API ${response.status} — see response body for details`);
-        setError('Cannot link billing via API — insufficient permissions. Please link billing manually in the GCP Console.');
-      } else {
-        const err = await response.json();
-        setError(err.error?.message || 'Failed to link billing account');
+      if (response.ok) return 'ok';
+      if (response.status === 401 || response.status === 403) return 'forbidden';
+      const err = await response.json();
+      return err.error?.message || `HTTP ${response.status}`;
+    };
+
+    setLinkingBilling(true);
+    setError(null);
+    try {
+      if (gcpAccessToken) {
+        const result = await tryLink(gcpAccessToken);
+        if (result === 'ok') {
+          setBillingLinkedSuccess(true);
+          setBillingEnabled(true);
+          addNotification('Billing account linked successfully!', 'success');
+          return;
+        }
+        if (result !== 'forbidden' && result !== 'no_token') {
+          setError(result);
+          return;
+        }
       }
+
+      // Fallback: try with SA token
+      const saToken = await getServiceAccountToken().catch(() => null);
+      if (saToken) {
+        const result = await tryLink(saToken);
+        if (result === 'ok') {
+          setBillingLinkedSuccess(true);
+          setBillingEnabled(true);
+          addNotification('Billing account linked successfully!', 'success');
+          return;
+        }
+        if (result !== 'forbidden' && result !== 'no_token') {
+          setError(result);
+          return;
+        }
+      }
+
+      setError('Cannot link billing via API — insufficient permissions. Please link billing manually in the GCP Console, then click Refresh.');
     } catch (e) {
       console.error('Error linking billing account:', e);
       setError(e.message || 'Error linking billing account');
