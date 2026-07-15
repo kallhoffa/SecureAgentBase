@@ -20,7 +20,8 @@ interface Window {
         initTokenClient: (config: {
           client_id: string;
           scope: string;
-          callback: (response: { error?: string; access_token?: string }) => void;
+          prompt?: string;
+          callback: (response: { error?: string; access_token?: string; scope?: string }) => void;
         }) => { open(): void; requestAccessToken(): void };
       };
     };
@@ -1591,11 +1592,18 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     return googleClient.accounts.oauth2.initTokenClient({
       client_id: clientId,
       scope: 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/cloud-billing.readonly',
+      prompt: 'consent select_account',
       callback: async (response) => {
         if (response.error) {
           console.error('Google OAuth error:', response.error);
           setError('Failed to connect to Google');
         } else {
+          const grantedScopes = response.scope || '';
+          console.log('GCP OAuth granted scopes:', grantedScopes);
+          if (!grantedScopes.includes('cloud-platform') && !grantedScopes.includes('devstorage')) {
+            console.warn('cloud-platform scope not granted — token may be restricted');
+            setError('Google OAuth did not grant cloud-platform access. Try reconnecting and selecting an account with GCP billing access.');
+          }
           setGcpAccessToken(response.access_token);
           setGcpTokenExpiry(Date.now() + (((response as any).expires_in || 3600) - 60) * 1000);
           setGcpConnected(true);
