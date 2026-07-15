@@ -2135,6 +2135,14 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     console.log('Discord invite URL regenerated from saved token and client ID');
   }, [discordBotToken, discordClientId]);
 
+  // Check billing when Step 7 opens
+  useEffect(() => {
+    if (expandedSteps.includes(7) && isStepCompleted(6) && projectId && gcpAccessToken) {
+      checkBillingStatus().catch(() => {});
+      fetchBillingAccounts().catch(() => {});
+    }
+  }, [expandedSteps.includes(7), isStepCompleted(6)]);
+
   const handleFileUpload = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -4037,7 +4045,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                     </label>
                     </div>
 
-                   {billingEnabled === false && step4Status === 'idle' && (
+                   {(billingEnabled === false || billingEnabled === null) && step4Status === 'idle' && (
                      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
                        <p className="text-yellow-800 font-semibold text-xs mb-1">⚠️ Billing Required</p>
                        <p className="text-yellow-700 text-xs mb-3">
