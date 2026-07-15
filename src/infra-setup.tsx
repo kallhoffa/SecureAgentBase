@@ -985,12 +985,58 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         return accounts;
       }
       if (response.status === 401 || response.status === 403) {
-        console.warn(`Billing API returned ${response.status} — insufficient OAuth scope or API not enabled.`);
+        console.warn(`Billing API returned ${response.status} — trying to discover billing accounts via project billingInfo...`);
+        // Fallback: iterate through user's GCP projects to find which one has billing linked
+        const accounts = await discoverBillingAccountsViaProjects();
+        if (accounts.length > 0) {
+          setBillingAccounts(accounts);
+          setSelectedBillingAccount(accounts[0].name);
+          return accounts;
+        }
       }
     } catch (e) {
       console.error('Error fetching billing accounts:', e);
     }
     return [];
+  };
+
+  const discoverBillingAccountsViaProjects = async () => {
+    try {
+      // Get list of projects the user has access to
+      const projectsRes = await fetch('https://cloudresourcemanager.googleapis.com/v1/projects', {
+        headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
+      });
+      if (!projectsRes.ok) return [];
+      const projectsData = await projectsRes.json();
+      const projects = projectsData.projects || [];
+      
+      // Check billingInfo for each project
+      const billingSet = new Set();
+      const results = [];
+      for (const project of projects.slice(0, 20)) {
+        try {
+          const billRes = await fetch(
+            `https://cloudbilling.googleapis.com/v1/projects/${project.projectId}/billingInfo`,
+            { headers: { 'Authorization': `Bearer ${gcpAccessToken}` } }
+          );
+          if (billRes.ok) {
+            const billData = await billRes.json();
+            if (billData.billingAccountName && billData.billingEnabled && !billingSet.has(billData.billingAccountName)) {
+              billingSet.add(billData.billingAccountName);
+              const shortName = billData.billingAccountName.split('/').pop();
+              results.push({
+                name: billData.billingAccountName,
+                displayName: `Billing Account ${shortName}`
+              });
+            }
+          }
+        } catch { /* skip projects that error */ }
+      }
+      return results;
+    } catch (e) {
+      console.error('Error discovering billing accounts:', e);
+      return [];
+    }
   };
 
   const linkBillingAccount = async (accountName) => {
@@ -1597,7 +1643,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       { name: 'compute.googleapis.com', displayName: 'Compute Engine API' },
       { name: 'cloudresourcemanager.googleapis.com', displayName: 'Cloud Resource Manager API' },
       { name: 'serviceusage.googleapis.com', displayName: 'Service Usage API' },
-      { name: 'secretmanager.googleapis.com', displayName: 'Secret Manager API' }
+      { name: 'secretmanager.googleapis.com', displayName: 'Secret Manager API' },
+      { name: 'cloudbilling.googleapis.com', displayName: 'Cloud Billing API' }
     ];
 
     try {
@@ -4201,7 +4248,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                           const apis = [
                             { name: 'compute.googleapis.com', displayName: 'Compute Engine API' },
                             { name: 'cloudresourcemanager.googleapis.com', displayName: 'Cloud Resource Manager API' },
-                            { name: 'serviceusage.googleapis.com', displayName: 'Service Usage API' }
+                            { name: 'serviceusage.googleapis.com', displayName: 'Service Usage API' },
+                            { name: 'cloudbilling.googleapis.com', displayName: 'Cloud Billing API' }
                           ];
                           
                           for (const api of apis) {
@@ -4463,7 +4511,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                           const apis = [
                             { name: 'compute.googleapis.com', displayName: 'Compute Engine API' },
                             { name: 'cloudresourcemanager.googleapis.com', displayName: 'Cloud Resource Manager API' },
-                            { name: 'serviceusage.googleapis.com', displayName: 'Service Usage API' }
+                            { name: 'serviceusage.googleapis.com', displayName: 'Service Usage API' },
+                            { name: 'cloudbilling.googleapis.com', displayName: 'Cloud Billing API' }
                           ];
                           
                           for (const api of apis) {
