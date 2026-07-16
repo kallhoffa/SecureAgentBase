@@ -279,7 +279,7 @@ Both env vars are set in CI via GitHub Actions workflow variables.
 
 ---
 
-## Session Status (Jul 14, 2026)
+## Session Status (Jul 16, 2026)
 
 ### What was done
 - **All prior work preserved**: 320+ unit tests, 23+ e2e tests, guardrails system, admin panel, template mode, CI pipelines, startup script cleanup, wizard auto-configuration
@@ -297,6 +297,7 @@ Both env vars are set in CI via GitHub Actions workflow variables.
   - **Result**: Firebase API calls now authenticate directly as the SA (which has `firebase.admin`), bypassing IAM propagation delay and user token permission issues entirely
 - **SA creation race condition fixed**: `createDeployServiceAccount` (api.ts:226) when POST returned 409 but GET for existing SA also failed (race — SA creation not yet propagated), it crashed silently → now catches GET failure, waits 3s, retries POST creation
 - **SA IAM propagation delay fixed**: `grantFirebaseRoles` (api.ts:252) failed with "SA does not exist" when IAM policy was set before SA creation propagated → now retries up to 6x with 5s delays
+- **Billing API 403 handling improved** — Step 7 now polls the Cloud Billing API for up to 2 minutes after enablement and, if auto-listing is still blocked by GCP propagation, offers a manual billing account input fallback so users can continue without leaving the wizard.
 
 ### What needs to be done
 1. Push `main` to `origin` to trigger staging CI + deploy with all wizard fixes
@@ -304,11 +305,12 @@ Both env vars are set in CI via GitHub Actions workflow variables.
 3. Test wizard `addFirebase` now works (SA key auth instead of user token)
 4. Cut `v0.18.2` release for prod deploy
 5. Run full e2e with `E2E_FULL=true` once GCP pre-requisites are set up
-6. **Still failing: OAuth client ID null** — Step 5 (Identity Toolkit API) returns 404 even after enabling via Service Usage API. Root cause unclear: may need separate Firebase Authentication provisioning via Firebase API, or longer propagation. The OAuth discovery flow (`discoveryUrl` → `oauthClientId`) is a best-effort convenience and may require manual Firebase Auth config in console.
+6. **Still failing: OAuth client ID null** — Step 5 (Identity Toolkit API) may return 404 even after enabling via Service Usage API. The OAuth discovery flow is a best-effort convenience and may require manual Firebase Auth config in console.
 
 ### Relevant files
-- `src/infra-setup.tsx` — `signJwtAssertion()` (extracted JWT signing helper), `generateFirebaseSaToken()` (SA-based Firebase auth), `getServiceAccountToken()` refactored, `autoConfigureFirebaseProject()`/`handleCreateFirebaseProject()` now use SA token, `grantGcpRolesProgrammatically()` includes `roles/firebase.admin` for SA
-- `src/framework/infra-setup/api.ts` — `createDeployServiceAccount()` (retry on GET race), `grantFirebaseRoles()` (retry up to 6x on "does not exist" propagation delay)
+- `src/infra-setup.tsx` — wizard UI and GCP automation flows, including billing account detection and manual fallback
+- `src/framework/infra-setup/api.ts` — service account creation and IAM role grants
+- `WIZARD_DEV_NOTES.md` — internal wizard development notes (stripped from user projects)
 - `src/navigation-bar.tsx:39` — version badge uses `VITE_APP_VERSION`
 - `src/profile.tsx` — "Your Apps" block removed
 - `src/_tests_/profile.test.tsx` — test updated

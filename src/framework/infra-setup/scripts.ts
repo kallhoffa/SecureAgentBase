@@ -267,6 +267,7 @@ rm -rf src/framework/infra-setup/
 rm -rf src/admin/
 rm -rf tests/e2e/wizard.spec.js
 rm -rf src/_tests_/WizardSteps.test.jsx src/_tests_/create-app.test.tsx src/_tests_/StepHeader.test.jsx
+rm -f WIZARD_DEV_NOTES.md
 
 # Fix App.tsx: remove wizard/admin imports and routes
 if [ -f src/App.tsx ]; then

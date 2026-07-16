@@ -185,6 +185,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   const [billingChecking, setBillingChecking] = useState(false);
   const [billingAccounts, setBillingAccounts] = useState([]);
   const [selectedBillingAccount, setSelectedBillingAccount] = useState('');
+  const [manualBillingAccount, setManualBillingAccount] = useState('');
+  const [billingApiError, setBillingApiError] = useState(null);
   const [linkingBilling, setLinkingBilling] = useState(false);
   const [billingLinkedSuccess, setBillingLinkedSuccess] = useState(false);
 
@@ -946,7 +948,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   };
 
   const tryEnableBillingApi = async () => {
-    if (!projectId || !gcpAccessToken) return;
+    if (!projectId || !gcpAccessToken) return 'no_token';
     try {
       console.log('tryEnableBillingApi: enabling cloudbilling.googleapis.com');
       const resp = await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/cloudbilling.googleapis.com:enable`, {
@@ -985,7 +987,37 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         const errText = await checkResp.text().catch(() => '');
         console.log('tryEnableBillingApi: check state failed', checkResp.status, errText);
       }
-    } catch {
+
+      // Service Usage API can report ENABLED before the Cloud Billing backend honors it.
+      // Poll the real endpoint until it responds with something other than SERVICE_DISABLED.
+      const start = Date.now();
+      const maxWait = 120000; // 2 minutes
+      const delays = [2000, 4000, 8000, 15000, 30000, 30000, 30000];
+      for (const delay of delays) {
+        if (Date.now() - start > maxWait) break;
+        const testResp = await fetch('https://cloudbilling.googleapis.com/v1/billingAccounts', {
+          headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
+        });
+        if (testResp.ok) {
+          console.log('tryEnableBillingApi: billing API is usable');
+          return 'ready';
+        }
+        if (testResp.status === 403) {
+          const body = await testResp.text().catch(() => '');
+          if (body.includes('SERVICE_DISABLED')) {
+            console.log(`tryEnableBillingApi: still SERVICE_DISABLED, waiting ${delay}ms...`);
+            await new Promise(r => setTimeout(r, delay));
+            continue;
+          }
+        }
+        console.log('tryEnableBillingApi: billing API test failed with', testResp.status);
+        return 'error';
+      }
+      console.log('tryEnableBillingApi: billing API still not ready after waiting');
+      return 'service_disabled';
+    } catch (e) {
+      console.error('tryEnableBillingApi: exception', e);
+      return 'error';
     }
   };
 
@@ -1052,7 +1084,13 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   };
 
   const fetchBillingAccounts = async () => {
-    await tryEnableBillingApi();
+    setBillingApiError(null);
+    const enableStatus = await tryEnableBillingApi();
+    if (enableStatus === 'no_token') {
+      setBillingApiError('not_connected');
+      return [];
+    }
+
     const tryBillingAccountsApi = async (token) => {
       if (!token) return null;
       const response = await fetch(`https://cloudbilling.googleapis.com/v1/billingAccounts`, {
@@ -1075,7 +1113,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       if (Array.isArray(result)) {
         const accounts = result;
         setBillingAccounts(accounts);
-        if (accounts.length > 0) setSelectedBillingAccount(accounts[0].name);
+        if (accounts.length > 0) {
+          setSelectedBillingAccount(accounts[0].name);
+        } else {
+          setBillingApiError('no_accounts');
+        }
         return accounts;
       }
     }
@@ -1153,6 +1195,13 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       }
     }
 
+    if (enableStatus === 'service_disabled') {
+      setBillingApiError('service_disabled');
+    } else if (enableStatus === 'error') {
+      setBillingApiError('api_error');
+    } else {
+      setBillingApiError('no_accounts');
+    }
     return [];
   };
 
@@ -2446,8 +2495,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   // Check billing when Step 7 opens
   useEffect(() => {
     if (expandedSteps.includes(7) && isStepCompleted(6) && projectId && gcpAccessToken) {
-      checkBillingStatus().catch(() => {});
-      fetchBillingAccounts().catch(() => {});
+      setBillingChecking(true);
+      (async () => {
+        await checkBillingStatus();
+        await fetchBillingAccounts();
+      })().catch(() => {}).finally(() => setBillingChecking(false));
     }
   }, [expandedSteps, isStepCompleted(6), gcpAccessToken, projectId]);
 
@@ -3566,8 +3618,15 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                       <p className="text-yellow-700 text-xs mb-3">
                         GCP strictly requires an active billing account linked to the project to enable Compute Engine and create your VM. Please select your Google billing account below to link it programmatically.
                       </p>
-                      
-                      {billingAccounts.length > 0 ? (
+
+                      {billingChecking && (
+                        <p className="text-xs text-blue-600 mb-3 flex items-center gap-1">
+                          <span className="animate-spin text-sm">⟳</span>
+                          Detecting billing accounts from your Google Cloud profile...
+                        </p>
+                      )}
+
+                      {!billingChecking && billingAccounts.length > 0 && (
                         <div className="space-y-3">
                           <div className="flex items-center gap-2">
                             <label className="text-xs font-semibold text-gray-700">Billing Account:</label>
@@ -3599,17 +3658,61 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                             )}
                           </button>
                         </div>
-                      ) : (
+                      )}
+
+                      {!billingChecking && billingAccounts.length === 0 && billingApiError === 'service_disabled' && (
+                        <div className="space-y-3">
+                          <p className="text-xs text-yellow-700">
+                            The Cloud Billing API is enabled but still propagating across Google's infrastructure. This can take a few minutes. You can wait and retry, or paste your billing account name below to continue without waiting.
+                          </p>
+                          <div className="flex items-center gap-2">
+                            <label className="text-xs font-semibold text-gray-700">Billing Account:</label>
+                            <input
+                              type="text"
+                              value={manualBillingAccount}
+                              onChange={(e) => setManualBillingAccount(e.target.value)}
+                              placeholder="billingAccounts/012345-678901-234567"
+                              className="flex-grow px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:border-blue-400 text-gray-800 font-medium"
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => linkBillingAccount(manualBillingAccount)}
+                            disabled={linkingBilling || !manualBillingAccount}
+                            className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-400 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"
+                          >
+                            {linkingBilling ? (
+                              <>
+                                <span className="animate-spin">⟳</span>
+                                Linking Billing...
+                              </>
+                            ) : (
+                              <>
+                                Link Entered Billing Account
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      )}
+
+                      {!billingChecking && billingAccounts.length === 0 && billingApiError === 'no_accounts' && (
                         <div className="text-xs text-yellow-700">
                           No billing accounts found on your Google Cloud profile. Please click <a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener noreferrer" className="underline font-semibold text-yellow-800 hover:text-yellow-950">here to configure billing manually</a>, then click <strong>Re-check Billing</strong>.
                         </div>
                       )}
-                      
+
+                      {!billingChecking && billingAccounts.length === 0 && (billingApiError === 'api_error' || billingApiError === 'not_connected') && (
+                        <div className="text-xs text-yellow-700">
+                          Could not connect to Google Cloud billing APIs. Please reconnect your Google Cloud account in Step 2 and try again.
+                        </div>
+                      )}
+
                       <button
                         type="button"
                         onClick={async () => {
                           setBillingChecking(true);
                           await checkBillingStatus();
+                          await fetchBillingAccounts();
                           setBillingChecking(false);
                         }}
                         className="mt-3 text-xs text-yellow-800 underline hover:text-yellow-950 font-semibold block"
