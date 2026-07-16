@@ -955,8 +955,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       });
       if (resp.ok) {
         const op = await resp.json();
-        if (op.name) {
-          // Poll operation until done (up to 30s)
+        if (op.name && !op.name.includes('noop')) {
           for (let i = 0; i < 15; i++) {
             await new Promise(r => setTimeout(r, 2000));
             const opResp = await fetch(`https://serviceusage.googleapis.com/v1/${op.name}`, {
@@ -974,6 +973,17 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       } else {
         const errText = await resp.text().catch(() => '');
         console.log('tryEnableBillingApi: enable failed', resp.status, errText);
+      }
+      // Check if billing API is actually enabled now
+      const checkResp = await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/cloudbilling.googleapis.com`, {
+        headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
+      });
+      if (checkResp.ok) {
+        const svc = await checkResp.json();
+        console.log('tryEnableBillingApi: cloudbilling state:', svc.state);
+      } else {
+        const errText = await checkResp.text().catch(() => '');
+        console.log('tryEnableBillingApi: check state failed', checkResp.status, errText);
       }
     } catch {
     }
@@ -997,6 +1007,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           return enabled;
         }
         if (response.status === 401 || response.status === 403) {
+          const errBody = await response.text().catch(() => '');
+          if (errBody) console.log('billingInfo 403 body:', errBody.slice(0, 300));
           return 'forbidden';
         }
         await response.text().catch(() => {});
@@ -1050,7 +1062,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         const data = await response.json();
         return data.billingAccounts || [];
       }
-      if (response.status === 401 || response.status === 403) return 'forbidden';
+      if (response.status === 401 || response.status === 403) {
+        const errBody = await response.text().catch(() => '');
+        if (errBody) console.log('billingAccounts 403 body:', errBody.slice(0, 300));
+        return 'forbidden';
+      }
       return [];
     };
 
@@ -1110,6 +1126,10 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           const billRes = await fetch(`https://cloudbilling.googleapis.com/v1/projects/${projectId}/billingInfo`, {
             headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
           });
+          if (!billRes.ok) {
+            const errBody = await billRes.text().catch(() => '');
+            if (errBody) console.log(`fetchBillingAccounts: poll billingInfo 403 body (${delay}ms):`, errBody.slice(0, 300));
+          }
           if (billRes.ok) {
             const billData = await billRes.json();
             if (billData.billingAccountName && billData.billingEnabled) {
