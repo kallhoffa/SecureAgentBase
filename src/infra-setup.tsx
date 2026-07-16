@@ -1588,7 +1588,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       return null;
     }
 
-    const googleClient = (window as unknown as { google?: { accounts: { oauth2: { initTokenClient: (config: { client_id: string; scope: string; callback: (response: { error?: string; access_token?: string }) => void }) => { open(): void; requestAccessToken(): void } } } } }).google;
+    const googleClient = (window as unknown as { google?: { accounts: { oauth2: { initTokenClient: (config: { client_id: string; scope: string; prompt?: string; callback: (response: { error?: string; access_token?: string; scope?: string }) => void }) => { open(): void; requestAccessToken(): void } } } } }).google;
     if (!googleClient) return null;
     return googleClient.accounts.oauth2.initTokenClient({
       client_id: clientId,
