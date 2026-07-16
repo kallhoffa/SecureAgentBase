@@ -983,6 +983,16 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     }
 
     console.warn('Billing API returned 403 on both user and SA tokens — cannot determine billing status.');
+    
+    // Auto-fix: grant user billing role and retry once
+    if (gcpAccessToken && projectId && user?.email) {
+      const granted = await grantUserBillingRole();
+      if (granted) {
+        const result = await tryToken(gcpAccessToken);
+        if (result !== 'forbidden') return result;
+      }
+    }
+    
     setBillingEnabled(null);
     return null;
   };
@@ -1042,6 +1052,19 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         setBillingAccounts(accounts);
         setSelectedBillingAccount(accounts[0].name);
         return accounts;
+      }
+    }
+
+    // Fallback 3: grant user billing role and retry once
+    if (gcpAccessToken && projectId && user?.email) {
+      const granted = await grantUserBillingRole();
+      if (granted) {
+        const accounts = await discoverBillingAccountsViaProjects();
+        if (accounts.length > 0) {
+          setBillingAccounts(accounts);
+          setSelectedBillingAccount(accounts[0].name);
+          return accounts;
+        }
       }
     }
 
@@ -1271,6 +1294,30 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     }
   };
 
+  const grantUserBillingRole = async () => {
+    if (!gcpAccessToken || !projectId || !user?.email) return false;
+    try {
+      const policyResp = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${projectId}:getIamPolicy`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
+      });
+      if (!policyResp.ok) return false;
+      const policy = await policyResp.json();
+      const bindings = policy.bindings || [];
+      addMemberToBinding(bindings, 'roles/billing.projectManager', `user:${user.email}`);
+      const setResp = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${projectId}:setIamPolicy`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${gcpAccessToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ policy: { bindings, etag: policy.etag } })
+      });
+      if (setResp.ok) {
+        await new Promise(r => setTimeout(r, 10000));
+        return true;
+      }
+    } catch {
+    }
+    return false;
+  };
 
   const grantGcpRolesProgrammatically = async (token, gcpProjectId, saEmail, userEmail) => {
     const roles = [
@@ -1303,6 +1350,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
     if (userEmail) {
       addMemberToBinding(bindings, 'roles/firebase.admin', `user:${userEmail}`);
+      addMemberToBinding(bindings, 'roles/billing.projectManager', `user:${userEmail}`);
     }
 
     const setResp = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${gcpProjectId}:setIamPolicy`, {
