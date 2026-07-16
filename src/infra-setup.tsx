@@ -945,8 +945,44 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     return buf;
   };
 
+  const tryEnableBillingApi = async () => {
+    if (!projectId || !gcpAccessToken) return;
+    try {
+      console.log('tryEnableBillingApi: enabling cloudbilling.googleapis.com');
+      const resp = await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/cloudbilling.googleapis.com:enable`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
+      });
+      if (resp.ok) {
+        const op = await resp.json();
+        if (op.name) {
+          // Poll operation until done (up to 30s)
+          for (let i = 0; i < 15; i++) {
+            await new Promise(r => setTimeout(r, 2000));
+            const opResp = await fetch(`https://serviceusage.googleapis.com/v1/${op.name}`, {
+              headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
+            });
+            if (opResp.ok) {
+              const opData = await opResp.json();
+              if (opData.done) {
+                console.log('tryEnableBillingApi: operation completed');
+                break;
+              }
+            }
+          }
+        }
+      } else {
+        const errText = await resp.text().catch(() => '');
+        console.log('tryEnableBillingApi: enable failed', resp.status, errText);
+      }
+    } catch {
+    }
+  };
+
   const checkBillingStatus = async () => {
     if (!projectId) return null;
+
+    await tryEnableBillingApi();
 
     const tryToken = async (token) => {
       if (!token) return null;
@@ -984,15 +1020,18 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
     console.warn('Billing API returned 403 on both user and SA tokens — cannot determine billing status.');
     
-    // Auto-fix: grant user billing role and retry once
+    // Auto-fix: grant user billing role and poll with backoff
     if (gcpAccessToken && projectId && user?.email) {
       console.log('checkBillingStatus: trying grantUserBillingRole');
       const granted = await grantUserBillingRole();
       console.log('checkBillingStatus: grantUserBillingRole returned', granted);
       if (granted) {
-        const result = await tryToken(gcpAccessToken);
-        console.log('checkBillingStatus: retry result', result);
-        if (result !== 'forbidden') return result;
+        for (let delay of [2000, 4000, 8000, 15000, 30000]) {
+          await new Promise(r => setTimeout(r, delay));
+          const result = await tryToken(gcpAccessToken);
+          console.log(`checkBillingStatus: poll result after ${delay}ms:`, result);
+          if (result !== 'forbidden') return result;
+        }
       }
     }
     
@@ -1001,6 +1040,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   };
 
   const fetchBillingAccounts = async () => {
+    await tryEnableBillingApi();
     const tryBillingAccountsApi = async (token) => {
       if (!token) return null;
       const response = await fetch(`https://cloudbilling.googleapis.com/v1/billingAccounts`, {
@@ -1058,12 +1098,31 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       }
     }
 
-    // Fallback 3: grant user billing role and retry once
+    // Fallback 3: grant user billing role and retry with backoff
     if (gcpAccessToken && projectId && user?.email) {
       console.log('fetchBillingAccounts: trying grantUserBillingRole');
       const granted = await grantUserBillingRole();
       console.log('fetchBillingAccounts: grantUserBillingRole returned', granted);
       if (granted) {
+        // Poll billingInfo on current project with exponential backoff
+        for (let delay of [2000, 4000, 8000, 15000, 30000]) {
+          await new Promise(r => setTimeout(r, delay));
+          const billRes = await fetch(`https://cloudbilling.googleapis.com/v1/projects/${projectId}/billingInfo`, {
+            headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
+          });
+          if (billRes.ok) {
+            const billData = await billRes.json();
+            if (billData.billingAccountName && billData.billingEnabled) {
+              const shortName = billData.billingAccountName.split('/').pop();
+              const accounts = [{ name: billData.billingAccountName, displayName: `Billing Account ${shortName} (linked)` }];
+              setBillingAccounts(accounts);
+              setSelectedBillingAccount(accounts[0].name);
+              console.log('fetchBillingAccounts: found billing account via polling');
+              return accounts;
+            }
+          }
+          console.log(`fetchBillingAccounts: polling billingInfo attempt failed (${delay}ms), retrying...`);
+        }
         const accounts = await discoverBillingAccountsViaProjects();
         console.log('fetchBillingAccounts: retry discovered', accounts.length, 'accounts');
         if (accounts.length > 0) {
@@ -1300,43 +1359,50 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     }
   };
 
-  const grantUserBillingRole = async () => {
+  const grantUserBillingRole = async (maxRetries = 5) => {
     if (!gcpAccessToken || !projectId || !user?.email) {
       console.log('grantUserBillingRole: missing deps', { hasToken: !!gcpAccessToken, projectId, hasEmail: !!user?.email });
       return false;
     }
-    try {
-      console.log('grantUserBillingRole: fetching IAM policy for', projectId);
-      const policyResp = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${projectId}:getIamPolicy`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
-      });
-      if (!policyResp.ok) {
-        const errText = await policyResp.text().catch(() => '');
-        console.log('grantUserBillingRole: getIamPolicy failed', policyResp.status, errText);
-        return false;
-      }
-      const policy = await policyResp.json();
-      const bindings = policy.bindings || [];
-      console.log('grantUserBillingRole: current bindings:', bindings.map(b => b.role));
-      addMemberToBinding(bindings, 'roles/billing.projectManager', `user:${user.email}`);
-      console.log('grantUserBillingRole: setting IAM policy');
-      const setResp = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${projectId}:setIamPolicy`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${gcpAccessToken}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ policy: { bindings, etag: policy.etag } })
-      });
-      if (setResp.ok) {
-        console.log('grantUserBillingRole: IAM policy set successfully, waiting 10s for propagation');
-        await new Promise(r => setTimeout(r, 10000));
-        console.log('grantUserBillingRole: propagation wait done, returning true');
-        return true;
-      } else {
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        console.log('grantUserBillingRole: fetching IAM policy for', projectId, '(attempt', attempt + 1, ')');
+        const policyResp = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${projectId}:getIamPolicy`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
+        });
+        if (!policyResp.ok) {
+          const errText = await policyResp.text().catch(() => '');
+          console.log('grantUserBillingRole: getIamPolicy failed', policyResp.status, errText);
+          return false;
+        }
+        const policy = await policyResp.json();
+        const bindings = policy.bindings || [];
+        console.log('grantUserBillingRole: current bindings:', bindings.map(b => b.role));
+        addMemberToBinding(bindings, 'roles/billing.projectManager', `user:${user.email}`);
+        console.log('grantUserBillingRole: setting IAM policy (attempt', attempt + 1, ')');
+        const setResp = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${projectId}:setIamPolicy`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${gcpAccessToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ policy: { bindings, etag: policy.etag } })
+        });
+        if (setResp.ok) {
+          console.log('grantUserBillingRole: IAM policy set successfully, waiting 10s for propagation');
+          await new Promise(r => setTimeout(r, 10000));
+          console.log('grantUserBillingRole: propagation wait done, returning true');
+          return true;
+        }
         const errText = await setResp.text().catch(() => '');
+        if (setResp.status === 409) {
+          console.log('grantUserBillingRole: ETag conflict, will retry in', 2 ** attempt, 's');
+          await new Promise(r => setTimeout(r, 2 ** attempt * 1000));
+          continue;
+        }
         console.log('grantUserBillingRole: setIamPolicy failed', setResp.status, errText);
+        return false;
+      } catch (e) {
+        console.log('grantUserBillingRole: exception', e);
       }
-    } catch (e) {
-      console.log('grantUserBillingRole: exception', e);
     }
     return false;
   };
