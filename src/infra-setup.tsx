@@ -986,9 +986,12 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     
     // Auto-fix: grant user billing role and retry once
     if (gcpAccessToken && projectId && user?.email) {
+      console.log('checkBillingStatus: trying grantUserBillingRole');
       const granted = await grantUserBillingRole();
+      console.log('checkBillingStatus: grantUserBillingRole returned', granted);
       if (granted) {
         const result = await tryToken(gcpAccessToken);
+        console.log('checkBillingStatus: retry result', result);
         if (result !== 'forbidden') return result;
       }
     }
@@ -1057,9 +1060,12 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
     // Fallback 3: grant user billing role and retry once
     if (gcpAccessToken && projectId && user?.email) {
+      console.log('fetchBillingAccounts: trying grantUserBillingRole');
       const granted = await grantUserBillingRole();
+      console.log('fetchBillingAccounts: grantUserBillingRole returned', granted);
       if (granted) {
         const accounts = await discoverBillingAccountsViaProjects();
+        console.log('fetchBillingAccounts: retry discovered', accounts.length, 'accounts');
         if (accounts.length > 0) {
           setBillingAccounts(accounts);
           setSelectedBillingAccount(accounts[0].name);
@@ -1295,26 +1301,42 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   };
 
   const grantUserBillingRole = async () => {
-    if (!gcpAccessToken || !projectId || !user?.email) return false;
+    if (!gcpAccessToken || !projectId || !user?.email) {
+      console.log('grantUserBillingRole: missing deps', { hasToken: !!gcpAccessToken, projectId, hasEmail: !!user?.email });
+      return false;
+    }
     try {
+      console.log('grantUserBillingRole: fetching IAM policy for', projectId);
       const policyResp = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${projectId}:getIamPolicy`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
       });
-      if (!policyResp.ok) return false;
+      if (!policyResp.ok) {
+        const errText = await policyResp.text().catch(() => '');
+        console.log('grantUserBillingRole: getIamPolicy failed', policyResp.status, errText);
+        return false;
+      }
       const policy = await policyResp.json();
       const bindings = policy.bindings || [];
+      console.log('grantUserBillingRole: current bindings:', bindings.map(b => b.role));
       addMemberToBinding(bindings, 'roles/billing.projectManager', `user:${user.email}`);
+      console.log('grantUserBillingRole: setting IAM policy');
       const setResp = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${projectId}:setIamPolicy`, {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${gcpAccessToken}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ policy: { bindings, etag: policy.etag } })
       });
       if (setResp.ok) {
+        console.log('grantUserBillingRole: IAM policy set successfully, waiting 10s for propagation');
         await new Promise(r => setTimeout(r, 10000));
+        console.log('grantUserBillingRole: propagation wait done, returning true');
         return true;
+      } else {
+        const errText = await setResp.text().catch(() => '');
+        console.log('grantUserBillingRole: setIamPolicy failed', setResp.status, errText);
       }
-    } catch {
+    } catch (e) {
+      console.log('grantUserBillingRole: exception', e);
     }
     return false;
   };
