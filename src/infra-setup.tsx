@@ -791,9 +791,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   };
 
   const getServiceAccountToken = async () => {
-    if (!serviceAccountJson) return null;
-
-    const saEmail = godSaEmail || serviceAccountJson.client_email;
+    const saEmail = godSaEmail || serviceAccountJson?.client_email;
 
     if (gcpAccessToken && saEmail) {
       try {
@@ -820,7 +818,10 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       }
     }
     
-    return signJwtAssertion(serviceAccountJson, 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/compute https://www.googleapis.com/auth/devstorage.full_control https://www.googleapis.com/auth/cloud-billing.readonly');
+    if (serviceAccountJson) {
+      return signJwtAssertion(serviceAccountJson, 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/compute https://www.googleapis.com/auth/devstorage.full_control https://www.googleapis.com/auth/cloud-billing.readonly');
+    }
+    return null;
   };
 
   const fetchVmLogs = async () => {
