@@ -4822,7 +4822,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                                  setStep4Status('complete');
                                  setStep4Message('VM created successfully!');
                                  setShowRecreateOptions(false);
-                                 expandNextStep(7);
+                                 expandNextStep(8);
                                  break;
                               } else {
                                 const err = await vmResponse.json();
@@ -5122,7 +5122,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                                  setStep4Status('complete');
                                  setStep4Message('VM created successfully!');
                                  setShowRecreateOptions(false);
-                                 expandNextStep(7);
+                                 expandNextStep(8);
                                  break;
                               } else {
                                 const err = await vmResponse.json();
