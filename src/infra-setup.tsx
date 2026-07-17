@@ -4662,17 +4662,23 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                             setStep4Message(`Enabling ${api.displayName}...`);
                             addStep4Log(`Enabling ${api.displayName}...`);
                             
+                            const enableToken = gcpAccessToken || token;
+                            if (!enableToken) {
+                              addStep4Log(`No token available to enable ${api.displayName}`);
+                              continue;
+                            }
+                            
                             try {
                               const response = await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/${api.name}:enable`, {
                                 method: 'POST',
                                 headers: {
-                                  'Authorization': `Bearer ${token}`,
+                                  'Authorization': `Bearer ${enableToken}`,
                                   'Content-Type': 'application/json'
                                 }
                               });
                               
                               if (response.ok) {
-                                addStep4Log(`${api.displayName} enabled`);
+                                addStep4Log(`${api.displayName} enable request accepted, waiting for activation...`);
                               } else {
                                 const errData = await response.json().catch(() => ({}));
                                 const errMsg = errData.error?.message || '';
@@ -4683,6 +4689,24 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                                   return;
                                 } else if (errMsg.includes('already') || errMsg.includes('enabled') || errMsg.includes('ALREADY')) {
                                   addStep4Log(`${api.displayName} already enabled`);
+                                } else if (errMsg.includes('permission') || errMsg.includes('PERMISSION_DENIED') || errMsg.includes('403')) {
+                                  addStep4Log(`Permission denied enabling ${api.displayName} with current token, trying user token...`);
+                                  if (enableToken !== gcpAccessToken && gcpAccessToken) {
+                                    const retryRes = await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/${api.name}:enable`, {
+                                      method: 'POST',
+                                      headers: {
+                                        'Authorization': `Bearer ${gcpAccessToken}`,
+                                        'Content-Type': 'application/json'
+                                      }
+                                    });
+                                    if (!retryRes.ok) {
+                                      addStep4Log(`Failed to enable ${api.displayName} with user token too`);
+                                    } else {
+                                      addStep4Log(`${api.displayName} enable request accepted with user token`);
+                                    }
+                                  } else {
+                                    addStep4Log(`Cannot enable ${api.displayName} - insufficient permissions`);
+                                  }
                                 } else {
                                   setError(`Failed to enable ${api.displayName}: ${errMsg || response.statusText} (${response.status})`);
                                   addStep4Log(`ERROR: ${errMsg}`);
@@ -4694,7 +4718,20 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                               addStep4Log(`Error enabling ${api.displayName}: ${e.message}`);
                             }
                             
-                            await new Promise(r => setTimeout(r, 1500));
+                            let activated = false;
+                            for (let i = 0; i < 10; i++) {
+                              await new Promise(r => setTimeout(r, 3000));
+                              const active = await checkApiStatus(api.name);
+                              if (active) {
+                                addStep4Log(`${api.displayName} is now active`);
+                                activated = true;
+                                break;
+                              }
+                              addStep4Log(`Waiting for ${api.displayName} to activate... (${i + 1}/10)`);
+                            }
+                            if (!activated && api.name === 'compute.googleapis.com') {
+                              addStep4Log('Compute Engine API did not activate yet, will attempt VM creation anyway');
+                            }
                           }
                           
                           setStep4Message('Creating VM...');
@@ -4925,17 +4962,23 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                             setStep4Message(`Enabling ${api.displayName}...`);
                             addStep4Log(`Enabling ${api.displayName}...`);
                             
+                            const enableToken = gcpAccessToken || token;
+                            if (!enableToken) {
+                              addStep4Log(`No token available to enable ${api.displayName}`);
+                              continue;
+                            }
+                            
                             try {
                               const response = await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/${api.name}:enable`, {
                                 method: 'POST',
                                 headers: {
-                                  'Authorization': `Bearer ${token}`,
+                                  'Authorization': `Bearer ${enableToken}`,
                                   'Content-Type': 'application/json'
                                 }
                               });
                               
                               if (response.ok) {
-                                addStep4Log(`${api.displayName} enabled`);
+                                addStep4Log(`${api.displayName} enable request accepted, waiting for activation...`);
                               } else {
                                 const errData = await response.json().catch(() => ({}));
                                 const errMsg = errData.error?.message || '';
@@ -4946,6 +4989,24 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                                   return;
                                 } else if (errMsg.includes('already') || errMsg.includes('enabled') || errMsg.includes('ALREADY')) {
                                   addStep4Log(`${api.displayName} already enabled`);
+                                } else if (errMsg.includes('permission') || errMsg.includes('PERMISSION_DENIED') || errMsg.includes('403')) {
+                                  addStep4Log(`Permission denied enabling ${api.displayName} with current token, trying user token...`);
+                                  if (enableToken !== gcpAccessToken && gcpAccessToken) {
+                                    const retryRes = await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/${api.name}:enable`, {
+                                      method: 'POST',
+                                      headers: {
+                                        'Authorization': `Bearer ${gcpAccessToken}`,
+                                        'Content-Type': 'application/json'
+                                      }
+                                    });
+                                    if (!retryRes.ok) {
+                                      addStep4Log(`Failed to enable ${api.displayName} with user token too`);
+                                    } else {
+                                      addStep4Log(`${api.displayName} enable request accepted with user token`);
+                                    }
+                                  } else {
+                                    addStep4Log(`Cannot enable ${api.displayName} - insufficient permissions`);
+                                  }
                                 } else {
                                   setError(`Failed to enable ${api.displayName}: ${errMsg || response.statusText} (${response.status})`);
                                   addStep4Log(`ERROR: ${errMsg}`);
@@ -4957,7 +5018,20 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                               addStep4Log(`Error enabling ${api.displayName}: ${e.message}`);
                             }
                             
-                            await new Promise(r => setTimeout(r, 1500));
+                            let activated = false;
+                            for (let i = 0; i < 10; i++) {
+                              await new Promise(r => setTimeout(r, 3000));
+                              const active = await checkApiStatus(api.name);
+                              if (active) {
+                                addStep4Log(`${api.displayName} is now active`);
+                                activated = true;
+                                break;
+                              }
+                              addStep4Log(`Waiting for ${api.displayName} to activate... (${i + 1}/10)`);
+                            }
+                            if (!activated && api.name === 'compute.googleapis.com') {
+                              addStep4Log('Compute Engine API did not activate yet, will attempt VM creation anyway');
+                            }
                           }
                           
                           setStep4Message('Creating VM...');
