@@ -842,7 +842,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       const instanceName = 'secureagent-manager';
       
       const response = await fetch(
-        `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances/${instanceName}/serialPort`,
+        `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances/${instanceName}/serialPort?port=1`,
         { headers: { 'Authorization': `Bearer ${token}` } }
       );
       
@@ -1957,7 +1957,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       { name: 'cloudresourcemanager.googleapis.com', displayName: 'Cloud Resource Manager API' },
       { name: 'serviceusage.googleapis.com', displayName: 'Service Usage API' },
       { name: 'secretmanager.googleapis.com', displayName: 'Secret Manager API' },
-      { name: 'cloudbilling.googleapis.com', displayName: 'Cloud Billing API' }
+      { name: 'cloudbilling.googleapis.com', displayName: 'Cloud Billing API' },
+      { name: 'iamcredentials.googleapis.com', displayName: 'IAM Service Account Credentials API' }
     ];
 
     try {
@@ -2412,7 +2413,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         const instanceName = 'secureagent-manager';
         
         const response = await fetch(
-          `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances/${instanceName}/serialPort`,
+          `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances/${instanceName}/serialPort?port=1`,
           { headers: { 'Authorization': `Bearer ${token}` } }
         );
         
@@ -4613,6 +4614,9 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                             return;
                           }
                           setStep4Status('enabling');
+                          setStep4Message('Clearing previous VM state...');
+                          addStep4Log('Clearing previous VM state...');
+                          setVmIp('');
                           setStep4Message('Checking billing status...');
                           addStep4Log('Starting VM creation process...');
 
@@ -4655,7 +4659,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                             { name: 'compute.googleapis.com', displayName: 'Compute Engine API' },
                             { name: 'cloudresourcemanager.googleapis.com', displayName: 'Cloud Resource Manager API' },
                             { name: 'serviceusage.googleapis.com', displayName: 'Service Usage API' },
-                            { name: 'cloudbilling.googleapis.com', displayName: 'Cloud Billing API' }
+                            { name: 'cloudbilling.googleapis.com', displayName: 'Cloud Billing API' },
+                            { name: 'iamcredentials.googleapis.com', displayName: 'IAM Service Account Credentials API' }
                           ];
                           
                           for (const api of apis) {
@@ -4955,7 +4960,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                             { name: 'compute.googleapis.com', displayName: 'Compute Engine API' },
                             { name: 'cloudresourcemanager.googleapis.com', displayName: 'Cloud Resource Manager API' },
                             { name: 'serviceusage.googleapis.com', displayName: 'Service Usage API' },
-                            { name: 'cloudbilling.googleapis.com', displayName: 'Cloud Billing API' }
+                            { name: 'cloudbilling.googleapis.com', displayName: 'Cloud Billing API' },
+                            { name: 'iamcredentials.googleapis.com', displayName: 'IAM Service Account Credentials API' }
                           ];
                           
                           for (const api of apis) {
