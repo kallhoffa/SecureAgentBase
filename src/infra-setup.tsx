@@ -1264,8 +1264,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     return results;
   };
 
-  const linkBillingAccount = async (accountName) => {
-    const account = accountName || selectedBillingAccount;
+  const linkBillingAccount = async (accountName = selectedBillingAccount) => {
+    const account = accountName || selectedBillingAccount || '';
     if (!projectId || !account) return;
 
     const tryLink = async (token) => {
@@ -3643,7 +3643,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                           </div>
                           <button
                             type="button"
-                            onClick={linkBillingAccount}
+                            onClick={() => linkBillingAccount()}
                             disabled={linkingBilling}
                             className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-400 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"
                           >
@@ -3783,7 +3783,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                           </div>
                           <button
                             type="button"
-                            onClick={linkBillingAccount}
+                            onClick={() => linkBillingAccount()}
                             disabled={linkingBilling}
                             className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-400 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"
                           >
@@ -4496,7 +4496,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                            </div>
                            <button
                              type="button"
-                             onClick={linkBillingAccount}
+                             onClick={() => linkBillingAccount()}
                              disabled={linkingBilling}
                              className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-400 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"
                            >
@@ -4538,7 +4538,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                               />
                               <button
                                 type="button"
-                                onClick={linkBillingAccount}
+                                onClick={() => linkBillingAccount()}
                                 disabled={linkingBilling || !selectedBillingAccount}
                                 className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-400 text-white px-3 py-1.5 rounded-lg text-xs font-semibold"
                               >
