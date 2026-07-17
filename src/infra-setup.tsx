@@ -1714,9 +1714,10 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     if (step === 2) return !!serviceAccountJson;
     if (step === 3) return step3Complete;
     if (step === 4) return !!(firebaseStagingData?.projectId && firebaseProductionData?.projectId);
-    if (step === 5) return !!githubPat;
-    if (step === 6) return discordBotAdded; // Step 6: Discord Bot
-    if (step === 7) return !!vmIp; // Step 7: Create VM
+    if (step === 5) return billingEnabled === true; // Step 5: Billing (NEW)
+    if (step === 6) return !!githubPat; // Step 6: GitHub Auth (was 5)
+    if (step === 7) return discordBotAdded;
+    if (step === 8) return !!vmIp;
     return false;
   };
 
@@ -1728,6 +1729,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     if (step === 5) return !isStepCompleted(4);
     if (step === 6) return !isStepCompleted(5);
     if (step === 7) return !isStepCompleted(6);
+    if (step === 8) return !isStepCompleted(7);
     return false;
   };
 
@@ -1739,6 +1741,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     if (step === 5) return isStepCompleted(4) && !isStepCompleted(5);
     if (step === 6) return isStepCompleted(5) && !isStepCompleted(6);
     if (step === 7) return isStepCompleted(6) && !isStepCompleted(7);
+    if (step === 8) return isStepCompleted(7) && !isStepCompleted(8);
     return !isStepCompleted(step);
   };
 
@@ -1749,6 +1752,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     return false;
   };
 
+  const [showNewProjectForm, setShowNewProjectForm] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [creatingProject, setCreatingProject] = useState(false);
   const [enablingApis, setEnablingApis] = useState(false);
@@ -1864,11 +1868,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         const existingProject = listData.projects?.find(p => p.projectId === projectIdVal);
         if (existingProject) {
           setProjectId(projectIdVal);
-          setStep2Complete(true);
+          setStep3Complete(true);
           setBillingChecking(true);
           await checkBillingStatus();
           setBillingChecking(false);
-          expandNextStep(2);
+          expandNextStep(3);
           setNewProjectName('');
           setCreatingProject(false);
           return;
@@ -1910,11 +1914,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         }
       }
       
-      setStep2Complete(true);
+      setStep3Complete(true);
       setBillingChecking(true);
       await checkBillingStatus();
       setBillingChecking(false);
-      expandNextStep(2);
+      expandNextStep(3);
       setNewProjectName('');
     } catch (err) {
       console.error('Error creating project:', err);
@@ -2329,8 +2333,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           setStep3Complete(true);
         }
         
-        if (configData.vm_ip && !expandedSteps.includes(7)) {
-          setExpandedSteps(prev => [...prev, 7]);
+        if (configData.vm_ip && !expandedSteps.includes(8)) {
+          setExpandedSteps(prev => [...prev, 8]);
         }
 
         if (configData.gcp_project_id && !configData.gcp_access_token) {
@@ -2493,16 +2497,16 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     console.log('Discord invite URL regenerated from saved token and client ID');
   }, [discordBotToken, discordClientId]);
 
-  // Check billing when Step 7 opens
+  // Check billing when Step 5 (Billing) opens
   useEffect(() => {
-    if (expandedSteps.includes(7) && isStepCompleted(6) && projectId && gcpAccessToken) {
+    if (expandedSteps.includes(5) && isStepCompleted(4) && projectId && gcpAccessToken) {
       setBillingChecking(true);
       (async () => {
         await checkBillingStatus();
         await fetchBillingAccounts();
       })().catch(() => {}).finally(() => setBillingChecking(false));
     }
-  }, [expandedSteps, isStepCompleted(6), gcpAccessToken, projectId]);
+  }, [expandedSteps, isStepCompleted(4), gcpAccessToken, projectId]);
 
   const handleFileUpload = async (event) => {
     const file = event.target.files?.[0];
@@ -3006,7 +3010,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   const handleBotAdded = () => {
     setDiscordBotAdded(true);
     saveConfig({ discord_bot_added: true });
-    setExpandedSteps(prev => [...prev.filter(s => s !== 6), 7]);
+    setExpandedSteps(prev => [...prev.filter(s => s !== 7), 8]);
   };
 
   const pendingConfig = !user && loadFromLocalStorage();
@@ -3590,8 +3594,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                         </p>
                       )}
                       {billingEnabled === false && (
-                        <p className="text-xs text-red-600 mt-2 font-medium">
-                          ⚠️ Billing is disabled on this project. Click "Link Billing" or link one manually.
+                        <p className="text-xs text-yellow-700 mt-2 font-medium">
+                          ⚠️ Billing is not linked yet. Configure it in Step 5 before creating your VM.
                         </p>
                       )}
                       {billingEnabled === true && (
@@ -3613,116 +3617,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                     </button>
                   </div>
                   
-                  {billingEnabled === false && (
-                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-                      <p className="text-yellow-800 font-semibold text-xs mb-1">⚠️ Link Billing Account</p>
-                      <p className="text-yellow-700 text-xs mb-3">
-                        GCP strictly requires an active billing account linked to the project to enable Compute Engine and create your VM. Please select your Google billing account below to link it programmatically.
-                      </p>
-
-                      {billingChecking && (
-                        <p className="text-xs text-blue-600 mb-3 flex items-center gap-1">
-                          <span className="animate-spin text-sm">⟳</span>
-                          Detecting billing accounts from your Google Cloud profile...
-                        </p>
-                      )}
-
-                      {!billingChecking && billingAccounts.length > 0 && (
-                        <div className="space-y-3">
-                          <div className="flex items-center gap-2">
-                            <label className="text-xs font-semibold text-gray-700">Billing Account:</label>
-                            <select
-                              value={selectedBillingAccount}
-                              onChange={(e) => setSelectedBillingAccount(e.target.value)}
-                              className="flex-grow px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:border-blue-400 text-gray-800 font-medium"
-                            >
-                              {billingAccounts.map(acc => (
-                                <option key={acc.name} value={acc.name}>{acc.displayName}</option>
-                              ))}
-                            </select>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => linkBillingAccount()}
-                            disabled={linkingBilling}
-                            className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-400 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"
-                          >
-                            {linkingBilling ? (
-                              <>
-                                <span className="animate-spin">⟳</span>
-                                Linking Billing...
-                              </>
-                            ) : (
-                              <>
-                                Link Selected Billing Account
-                              </>
-                            )}
-                          </button>
-                        </div>
-                      )}
-
-                      {!billingChecking && billingAccounts.length === 0 && billingApiError === 'service_disabled' && (
-                        <div className="space-y-3">
-                          <p className="text-xs text-yellow-700">
-                            The Cloud Billing API is enabled but still propagating across Google's infrastructure. This can take a few minutes. You can wait and retry, or paste your billing account name below to continue without waiting.
-                          </p>
-                          <div className="flex items-center gap-2">
-                            <label className="text-xs font-semibold text-gray-700">Billing Account:</label>
-                            <input
-                              type="text"
-                              value={manualBillingAccount}
-                              onChange={(e) => setManualBillingAccount(e.target.value)}
-                              placeholder="billingAccounts/012345-678901-234567"
-                              className="flex-grow px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:border-blue-400 text-gray-800 font-medium"
-                            />
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => linkBillingAccount(manualBillingAccount)}
-                            disabled={linkingBilling || !manualBillingAccount}
-                            className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-400 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"
-                          >
-                            {linkingBilling ? (
-                              <>
-                                <span className="animate-spin">⟳</span>
-                                Linking Billing...
-                              </>
-                            ) : (
-                              <>
-                                Link Entered Billing Account
-                              </>
-                            )}
-                          </button>
-                        </div>
-                      )}
-
-                      {!billingChecking && billingAccounts.length === 0 && billingApiError === 'no_accounts' && (
-                        <div className="text-xs text-yellow-700">
-                          No billing accounts found on your Google Cloud profile. Please click <a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener noreferrer" className="underline font-semibold text-yellow-800 hover:text-yellow-950">here to configure billing manually</a>, then click <strong>Re-check Billing</strong>.
-                        </div>
-                      )}
-
-                      {!billingChecking && billingAccounts.length === 0 && (billingApiError === 'api_error' || billingApiError === 'not_connected') && (
-                        <div className="text-xs text-yellow-700">
-                          Could not connect to Google Cloud billing APIs. Please reconnect your Google Cloud account in Step 2 and try again.
-                        </div>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          setBillingChecking(true);
-                          await checkBillingStatus();
-                          await fetchBillingAccounts();
-                          setBillingChecking(false);
-                        }}
-                        className="mt-3 text-xs text-yellow-800 underline hover:text-yellow-950 font-semibold block"
-                      >
-                        Re-check Billing Status
-                      </button>
-                    </div>
-                  )}
-
                   <button
                     type="button"
                     onClick={async () => {
@@ -3761,83 +3655,73 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                     )}
                   </div>
 
-                  {billingEnabled === false && (
-                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
-                      <p className="text-yellow-800 font-semibold text-xs mb-1">⚠️ Link Billing Account</p>
-                      <p className="text-yellow-700 text-xs mb-3">
-                        GCP strictly requires an active billing account linked to the project to enable Compute Engine and create your VM. Please select your Google billing account below to link it programmatically.
-                      </p>
-                      {billingAccounts.length > 0 ? (
-                        <div className="space-y-3">
-                          <div className="flex items-center gap-2">
-                            <label className="text-xs font-semibold text-gray-700">Billing Account:</label>
-                            <select
-                              value={selectedBillingAccount}
-                              onChange={(e) => setSelectedBillingAccount(e.target.value)}
-                              className="flex-grow px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:border-blue-400 text-gray-800 font-medium"
-                            >
-                              {billingAccounts.map(acc => (
-                                <option key={acc.name} value={acc.name}>{acc.displayName}</option>
-                              ))}
-                            </select>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => linkBillingAccount()}
-                            disabled={linkingBilling}
-                            className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-400 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"
-                          >
-                            {linkingBilling ? (
-                              <>
-                                <span className="animate-spin">⟳</span>
-                                Linking Billing...
-                              </>
-                            ) : (
-                              <>Link Selected Billing Account</>
-                            )}
-                          </button>
-                        </div>
-                      ) : (
-                        <div className="text-xs text-yellow-700">
-                          No billing accounts found on your Google Cloud profile. Please click <a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener noreferrer" className="underline font-semibold text-yellow-800 hover:text-yellow-950">here to configure billing manually</a>, then click <strong>Re-check Billing</strong>.
-                        </div>
-                      )}
+                  <div className="mb-4">
+                    {!showNewProjectForm ? (
                       <button
                         type="button"
-                        onClick={async () => {
-                          setBillingChecking(true);
-                          await checkBillingStatus();
-                          setBillingChecking(false);
-                        }}
-                        className="mt-3 text-xs text-yellow-800 underline hover:text-yellow-950 font-semibold block"
+                        onClick={() => setShowNewProjectForm(true)}
+                        className="text-blue-600 hover:text-blue-700 text-sm font-medium flex items-center gap-1"
                       >
-                        Re-check Billing Status
+                        <span className="text-lg leading-none">+</span> Create New GCP Project
                       </button>
+                    ) : (
+                      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                        <div className="flex items-center justify-between mb-3">
+                          <p className="text-sm font-semibold text-gray-700">Create a new GCP project</p>
+                          <button
+                            type="button"
+                            onClick={() => setShowNewProjectForm(false)}
+                            className="text-gray-400 hover:text-gray-600 text-xs"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                        {!gcpAccessToken ? (
+                          <div className="text-xs text-yellow-700">
+                            Connect your Google Cloud account in Step 2 to create projects programmatically.
+                          </div>
+                        ) : (
+                          <>
+                            <label className="block text-xs font-medium text-gray-700 mb-1">Project Name:</label>
+                            <div className="flex gap-2">
+                              <input
+                                type="text"
+                                value={newProjectName}
+                                onChange={(e) => setNewProjectName(e.target.value)}
+                                placeholder="My App"
+                                className="flex-grow px-3 py-2 border-2 border-gray-200 rounded-lg text-sm focus:outline-none focus:border-blue-400"
+                              />
+                              <button
+                                type="button"
+                                onClick={createGcpProject}
+                                disabled={creatingProject || !newProjectName.trim()}
+                                className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg text-sm whitespace-nowrap"
+                              >
+                                {creatingProject ? 'Creating...' : 'Create Project'}
+                              </button>
+                            </div>
+                            <p className="text-xs text-gray-500 mt-1">
+                              A project ID will be auto-generated from the name.
+                            </p>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {billingEnabled === false && (
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+                      <p className="text-yellow-800 font-semibold text-xs mb-1">⚠️ Billing Not Linked</p>
+                      <p className="text-yellow-700 text-xs">
+                        Billing configuration is now handled in Step 5. You can continue to Firebase setup and come back to link billing later.
+                      </p>
                     </div>
                   )}
 
                   <button
                     onClick={async () => {
                       if (projectId.trim()) {
-                        setBillingChecking(true);
                         setError(null);
-                        let billingStatus = null;
-                        try {
-                          billingStatus = await checkBillingStatus();
-                          if (billingStatus === false) {
-                            await fetchBillingAccounts();
-                          }
-                        } catch (err) {
-                          console.error('Error checking billing during Step 3:', err);
-                        } finally {
-                          setBillingChecking(false);
-                        }
-
-                        if (billingStatus === false) {
-                          setError('Billing is disabled on this project. Please link a billing account before continuing.');
-                          return;
-                        }
-
                         setStep3Complete(true);
                         await saveConfig({});
                         setExpandedSteps(prev => [...prev.filter(s => s !== 3), 4]);
@@ -3845,7 +3729,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                         setError('Please enter a GCP project ID');
                       }
                     }}
-                    disabled={!projectId.trim() || billingChecking || linkingBilling}
+                    disabled={!projectId.trim()}
                     className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg"
                   >
                     Continue
@@ -4015,8 +3899,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         </div>
 
         <div className="space-y-2">
-          <StepHeader stepNumber={5} title="Step 5: GitHub Auth" icon={<svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>} isComplete={isStepCompleted(5)} isActive={isStepActive(5)} isLocked={isStepLocked(5)} info="Create a GitHub Personal Access Token for the VM to authenticate with GitHub." onEdit={() => editStep(5)} expandedSteps={expandedSteps} toggleStep={toggleStep} />
-          
+          <StepHeader stepNumber={5} title="Step 5: Billing Account" icon={<svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4v-6h16v6zm0-10H4V6h16v2z"/></svg>} isComplete={isStepCompleted(5)} isActive={isStepActive(5)} isLocked={isStepLocked(5)} info="Link a Google Cloud billing account to your project so Compute Engine can provision your VM." onEdit={() => editStep(5)} expandedSteps={expandedSteps} toggleStep={toggleStep} />
+
           {expandedSteps.includes(5) && !isStepCompleted(4) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
               Complete Step 4 first to unlock this step.
@@ -4025,7 +3909,166 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
           {expandedSteps.includes(5) && isStepCompleted(4) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {(isStepCompleted(5) && !expandedSteps.includes(5)) ? (
+              {isStepCompleted(5) ? (
+                <div className="space-y-4">
+                  <div className="bg-green-50 border border-green-200 text-green-800 p-4 rounded-lg flex items-center justify-between">
+                    <div>
+                      <p className="font-semibold text-sm flex items-center gap-1">
+                        <Check size={18} className="text-green-600" />
+                        Billing Account Linked
+                      </p>
+                      <p className="text-xs text-green-700 mt-1">
+                        Project ID: <code className="bg-green-100 px-1 font-mono rounded">{projectId}</code>
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setBillingChecking(true);
+                        await checkBillingStatus();
+                        await fetchBillingAccounts();
+                        setBillingChecking(false);
+                      }}
+                      className="text-xs text-blue-600 hover:text-blue-800 underline font-semibold"
+                    >
+                      Re-check
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setExpandedSteps(prev => [...prev.filter(s => s !== 5), 6]);
+                    }}
+                    className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold"
+                  >
+                    Continue to Next Step
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  <p className="text-sm text-gray-600">
+                    GCP requires an active billing account linked to your project to enable Compute Engine and create your VM. Select your Google Cloud billing account below to link it programmatically.
+                  </p>
+
+                  {billingChecking && (
+                    <p className="text-xs text-blue-600 flex items-center gap-1">
+                      <span className="animate-spin text-sm">⟳</span>
+                      Detecting billing accounts from your Google Cloud profile...
+                    </p>
+                  )}
+
+                  {!billingChecking && billingAccounts.length > 0 && (
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs font-semibold text-gray-700">Billing Account:</label>
+                        <select
+                          value={selectedBillingAccount}
+                          onChange={(e) => setSelectedBillingAccount(e.target.value)}
+                          className="flex-grow px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:border-blue-400 text-gray-800 font-medium"
+                        >
+                          {billingAccounts.map(acc => (
+                            <option key={acc.name} value={acc.name}>{acc.displayName}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => linkBillingAccount()}
+                        disabled={linkingBilling}
+                        className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-400 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"
+                      >
+                        {linkingBilling ? (
+                          <>
+                            <span className="animate-spin">⟳</span>
+                            Linking Billing...
+                          </>
+                        ) : (
+                          <>
+                            Link Selected Billing Account
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
+
+                  {!billingChecking && billingAccounts.length === 0 && billingApiError === 'service_disabled' && (
+                    <div className="space-y-3">
+                      <p className="text-xs text-yellow-700">
+                        The Cloud Billing API is enabled but still propagating across Google's infrastructure. This can take a few minutes. You can wait and retry, or paste your billing account name below to continue without waiting.
+                      </p>
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs font-semibold text-gray-700">Billing Account:</label>
+                        <input
+                          type="text"
+                          value={manualBillingAccount}
+                          onChange={(e) => setManualBillingAccount(e.target.value)}
+                          placeholder="billingAccounts/012345-678901-234567"
+                          className="flex-grow px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:border-blue-400 text-gray-800 font-medium"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => linkBillingAccount(manualBillingAccount)}
+                        disabled={linkingBilling || !manualBillingAccount}
+                        className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-400 text-white px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5"
+                      >
+                        {linkingBilling ? (
+                          <>
+                            <span className="animate-spin">⟳</span>
+                            Linking Billing...
+                          </>
+                        ) : (
+                          <>
+                            Link Entered Billing Account
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
+
+                  {!billingChecking && billingAccounts.length === 0 && billingApiError === 'no_accounts' && (
+                    <div className="text-xs text-yellow-700">
+                      No billing accounts found on your Google Cloud profile. Please click <a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener noreferrer" className="underline font-semibold text-yellow-800 hover:text-yellow-950">here to configure billing manually</a>, then click <strong>Re-check Billing</strong>.
+                    </div>
+                  )}
+
+                  {!billingChecking && billingAccounts.length === 0 && (billingApiError === 'api_error' || billingApiError === 'not_connected') && (
+                    <div className="text-xs text-yellow-700">
+                      Could not connect to Google Cloud billing APIs. Please reconnect your Google Cloud account in Step 2 and try again.
+                    </div>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setBillingChecking(true);
+                      await checkBillingStatus();
+                      await fetchBillingAccounts();
+                      setBillingChecking(false);
+                    }}
+                    className="mt-3 text-xs text-yellow-800 underline hover:text-yellow-950 font-semibold block"
+                  >
+                    Re-check Billing Status
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Step 6: GitHub Auth */}
+        <div className="space-y-2">
+          <StepHeader stepNumber={6} title="Step 6: GitHub Auth" icon={<svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>} isComplete={isStepCompleted(6)} isActive={isStepActive(6)} isLocked={isStepLocked(6)} info="Create a GitHub Personal Access Token for the VM to authenticate with GitHub." onEdit={() => editStep(6)} expandedSteps={expandedSteps} toggleStep={toggleStep} />
+
+          {expandedSteps.includes(6) && !isStepCompleted(5) && (
+            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
+              Complete Step 5 first to unlock this step.
+            </div>
+          )}
+
+          {expandedSteps.includes(6) && isStepCompleted(5) && (
+            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
+              {(isStepCompleted(6) && !expandedSteps.includes(6)) ? (
                 <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
                   <Check size={20} />
                   <span className="font-medium">GitHub auth configured</span>
@@ -4128,7 +4171,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                             github_repo: actualRepoName,
                           });
                           setGithubVarUploaded(true);
-                          setExpandedSteps(prev => [...prev.filter(s => s !== 5), 6]);
+    setExpandedSteps(prev => [...prev.filter(s => s !== 7), 8]);
                         } catch (err) {
                           setError('GitHub setup failed: ' + err.message);
                         }
@@ -4163,7 +4206,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                         Staging SA: {gcpSaStagingEmail} | Prod SA: {gcpSaProductionEmail}
                       </p>
                       <p className="text-green-600 text-xs mt-1">
-                        GitHub variables will be uploaded to your repo automatically when the VM is created in Step 7.
+                        GitHub variables will be uploaded to your repo automatically when the VM is created in Step 8.
                       </p>
                     </div>
                   )}
@@ -4180,19 +4223,19 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           )}
         </div>
 
-        {/* Step 6: Discord Bot */}
+        {/* Step 7: Discord Bot */}
         <div className="space-y-2">
-          <StepHeader stepNumber={6} title="Step 6: Discord Bot" icon={<Bot className="text-blue-600" size={24} />} isComplete={isStepCompleted(6)} isActive={isStepActive(6)} isLocked={isStepLocked(6)} info="Configure your Discord bot token and server. The VM will use this to interact with Discord." onEdit={() => editStep(6)} expandedSteps={expandedSteps} toggleStep={toggleStep} />
-          
-          {expandedSteps.includes(6) && !isStepCompleted(5) && (
+          <StepHeader stepNumber={7} title="Step 7: Discord Bot" icon={<Bot className="text-blue-600" size={24} />} isComplete={isStepCompleted(7)} isActive={isStepActive(7)} isLocked={isStepLocked(7)} info="Configure your Discord bot token and server. The VM will use this to interact with Discord." onEdit={() => editStep(7)} expandedSteps={expandedSteps} toggleStep={toggleStep} />
+
+          {expandedSteps.includes(7) && !isStepCompleted(6) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
-              Complete Step 5 first to unlock this step.
+              Complete Step 6 first to unlock this step.
             </div>
           )}
 
-          {expandedSteps.includes(6) && isStepCompleted(5) && (
+          {expandedSteps.includes(7) && isStepCompleted(6) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {(isStepCompleted(6) && !expandedSteps.includes(6)) ? (
+              {(isStepCompleted(7) && !expandedSteps.includes(7)) ? (
                 <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
                   <Check size={20} />
                   <span className="font-medium">Discord bot configured</span>
@@ -4310,19 +4353,19 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           )}
         </div>
 
-        {/* Step 7: Create VM */}
+        {/* Step 8: Create VM */}
         <div className="space-y-2">
-          <StepHeader stepNumber={7} title="Step 7: Create VM" icon={<Server className="text-blue-600" size={24} />} isComplete={isStepCompleted(7)} isActive={isStepActive(7)} isLocked={isStepLocked(7)} info="Create a GCP VM that will fork SecureAgentBase, set up GitHub Actions, download Kimaki, and configure your Discord bot." onEdit={() => editStep(7)} expandedSteps={expandedSteps} toggleStep={toggleStep} />
+          <StepHeader stepNumber={8} title="Step 8: Create VM" icon={<Server className="text-blue-600" size={24} />} isComplete={isStepCompleted(8)} isActive={isStepActive(8)} isLocked={isStepLocked(8)} info="Create a GCP VM that will fork SecureAgentBase, set up GitHub Actions, download Kimaki, and configure your Discord bot." onEdit={() => editStep(8)} expandedSteps={expandedSteps} toggleStep={toggleStep} />
 
-          {expandedSteps.includes(7) && !isStepCompleted(6) && (
+          {expandedSteps.includes(8) && !isStepCompleted(7) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
-              Complete Step 6 first to unlock this step.
+              Complete Step 7 first to unlock this step.
             </div>
           )}
 
-          {expandedSteps.includes(7) && isStepCompleted(6) && (
+          {expandedSteps.includes(8) && isStepCompleted(7) && (
              <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-               {isStepCompleted(7) && !showRecreateOptions ? (
+               {isStepCompleted(8) && !showRecreateOptions ? (
                  <div className="space-y-4">
                    <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
                      <Check size={20} />
