@@ -266,27 +266,27 @@ rm -rf src/infra-setup.tsx src/create-app.tsx
 rm -rf src/framework/infra-setup/
 rm -rf src/admin/
 rm -rf tests/e2e/wizard.spec.js
-rm -rf src/_tests_/WizardSteps.test.jsx src/_tests_/create-app.test.tsx src/_tests_/StepHeader.test.jsx
+rm -rf src/_tests_/WizardSteps.test.jsx src/_tests_/create-app.test.tsx src/_tests_/StepHeader.test.jsx src/_tests_/api.test.ts src/_tests_/crypto.test.ts src/_tests_/scripts.test.ts
 rm -f WIZARD_DEV_NOTES.md
 
 # Fix App.tsx: remove wizard/admin imports and routes
 if [ -f src/App.tsx ]; then
   # Remove import lines for InfraSetup, CreateApp, AdminPanel
-  sed -i "/import InfraSetup from '.\/infra-setup';/d" src/App.tsx
-  sed -i "/import CreateApp from '.\/create-app';/d" src/App.tsx
-  sed -i "/import AdminPanel from '.\/admin\/AdminPanel';/d" src/App.tsx
+  sed -i "/import InfraSetup from '.\\/infra-setup';/d" src/App.tsx
+  sed -i "/import CreateApp from '.\\/create-app';/d" src/App.tsx
+  sed -i "/import AdminPanel from '.\\/admin\\/AdminPanel';/d" src/App.tsx
   # Remove Route elements for /infra-setup, /create-app, /admin/*
-  sed -i '/<Route path="\/infra-setup".*\/>/d' src/App.tsx
-  sed -i '/<Route path="\/create-app".*\/>/d' src/App.tsx
-  sed -i '/<Route path="\/admin/d' src/App.tsx
+  sed -i '/<Route path="\\/infra-setup".*\\/>/d' src/App.tsx
+  sed -i '/<Route path="\\/create-app".*\\/>/d' src/App.tsx
+  sed -i '/<Route path="\\/admin/d' src/App.tsx
   echo "App.tsx cleaned of wizard/admin references"
 fi
 
 # Fix navigation-bar.tsx: remove admin link and useIsAdmin import
 if [ -f src/navigation-bar.tsx ]; then
-  sed -i "/import { useIsAdmin } from '.\/admin\/useIsAdmin';/d" src/navigation-bar.tsx
+  sed -i "/import { useIsAdmin } from '.\\/admin\\/useIsAdmin';/d" src/navigation-bar.tsx
   sed -i "/const { isAdmin } = useIsAdmin(db);/d" src/navigation-bar.tsx
-  sed -i '/{isAdmin &&/,/\/admin">Admin<\/Link><\/>}/d' src/navigation-bar.tsx
+  sed -i '/{isAdmin &&/,/\\/admin">Admin<\\/Link><\\/>}/d' src/navigation-bar.tsx
   echo "navigation-bar.tsx cleaned of admin references"
 fi
 
