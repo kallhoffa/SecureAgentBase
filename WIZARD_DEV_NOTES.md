@@ -2,9 +2,13 @@
 
 This file is for the SecureAgentBase wizard development team. It is stripped out when the template is cloned into a user project, so it can contain internal debugging notes, propagation quirks, and implementation details that should not appear in user-facing documentation.
 
-## GCP Cloud Billing API propagation quirk
+## GCP Cloud Billing API consumer-project mismatch (the real root cause)
 
-Enabling `cloudbilling.googleapis.com` via the Service Usage API can report `state: ENABLED` while the Cloud Billing API backend still rejects every request with `403 SERVICE_DISABLED`. This is not an OAuth scope or IAM issue: the same token works for Cloud Resource Manager and Service Usage, and service-account tokens fail identically. The fix is to wait longer after enablement (60–120s) or provide a manual fallback so users can paste their billing account name.
+The `403 SERVICE_DISABLED` error from `cloudbilling.googleapis.com` references the OAuth client's own project as the **consumer**, not the wizard's target project. Enabling the API on the target project via Service Usage flips that project to `ENABLED`, but billing API calls are still billed to the OAuth client's project — which never had the API enabled — so it stays `SERVICE_DISABLED` indefinitely (this is NOT propagation; it persists for days).
+
+The fix is the `x-goog-user-project` header: send it on every `cloudbilling.googleapis.com` request, set to the target project ID. This overrides the consumer project so the service-enabled check runs against the project where we actually enabled the API.
+
+Reference: https://cloud.google.com/apis/docs/system-parameters#specifying_a_project_for_billing_and_quota
 
 ## OAuth scope alone does not guarantee Cloud Billing API access
 

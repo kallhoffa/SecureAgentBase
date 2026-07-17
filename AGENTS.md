@@ -297,7 +297,7 @@ Both env vars are set in CI via GitHub Actions workflow variables.
   - **Result**: Firebase API calls now authenticate directly as the SA (which has `firebase.admin`), bypassing IAM propagation delay and user token permission issues entirely
 - **SA creation race condition fixed**: `createDeployServiceAccount` (api.ts:226) when POST returned 409 but GET for existing SA also failed (race — SA creation not yet propagated), it crashed silently → now catches GET failure, waits 3s, retries POST creation
 - **SA IAM propagation delay fixed**: `grantFirebaseRoles` (api.ts:252) failed with "SA does not exist" when IAM policy was set before SA creation propagated → now retries up to 6x with 5s delays
-- **Billing API 403 handling improved** — Step 7 now polls the Cloud Billing API for up to 2 minutes after enablement and, if auto-listing is still blocked by GCP propagation, offers a manual billing account input fallback so users can continue without leaving the wizard.
+- **Billing API 403 fixed** — Root cause: the Cloud Billing API's service-enabled check runs against the OAuth client's own project (the consumer), not the wizard's target project. `tryEnableBillingApi` enabled the API on the target project, but the billing backend kept seeing the consumer project as `SERVICE_DISABLED` forever. Fix: all `cloudbilling.googleapis.com` requests now send the `x-goog-user-project` header set to the target project, overriding the consumer to the project where the API is actually enabled. Also added a polling loop (up to 2 min) and a manual billing account input fallback for propagation edge cases.
 
 ### What needs to be done
 1. Push `main` to `origin` to trigger staging CI + deploy with all wizard fixes
