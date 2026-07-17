@@ -996,7 +996,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       for (const delay of delays) {
         if (Date.now() - start > maxWait) break;
         const testResp = await fetch('https://cloudbilling.googleapis.com/v1/billingAccounts', {
-          headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
+          headers: { 'Authorization': `Bearer ${gcpAccessToken}`, 'x-goog-user-project': projectId }
         });
         if (testResp.ok) {
           console.log('tryEnableBillingApi: billing API is usable');
@@ -1030,7 +1030,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       if (!token) return null;
       try {
         const response = await fetch(`https://cloudbilling.googleapis.com/v1/projects/${projectId}/billingInfo`, {
-          headers: { 'Authorization': `Bearer ${token}` }
+          headers: { 'Authorization': `Bearer ${token}`, 'x-goog-user-project': projectId }
         });
         if (response.ok) {
           const data = await response.json();
@@ -1094,7 +1094,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     const tryBillingAccountsApi = async (token) => {
       if (!token) return null;
       const response = await fetch(`https://cloudbilling.googleapis.com/v1/billingAccounts`, {
-        headers: { 'Authorization': `Bearer ${token}` }
+        headers: { 'Authorization': `Bearer ${token}`, 'x-goog-user-project': projectId }
       });
       if (response.ok) {
         const data = await response.json();
@@ -1128,7 +1128,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       try {
         const billRes = await fetch(
           `https://cloudbilling.googleapis.com/v1/projects/${projectId}/billingInfo`,
-          { headers: { 'Authorization': `Bearer ${saToken}` } }
+          { headers: { 'Authorization': `Bearer ${saToken}`, 'x-goog-user-project': projectId } }
         );
         if (billRes.ok) {
           const billData = await billRes.json();
@@ -1166,7 +1166,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         for (let delay of [2000, 4000, 8000, 15000, 30000]) {
           await new Promise(r => setTimeout(r, delay));
           const billRes = await fetch(`https://cloudbilling.googleapis.com/v1/projects/${projectId}/billingInfo`, {
-            headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
+            headers: { 'Authorization': `Bearer ${gcpAccessToken}`, 'x-goog-user-project': projectId }
           });
           if (!billRes.ok) {
             const errBody = await billRes.text().catch(() => '');
@@ -1246,7 +1246,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       try {
         const billRes = await fetch(
           `https://cloudbilling.googleapis.com/v1/projects/${project.projectId}/billingInfo`,
-          { headers: { 'Authorization': `Bearer ${token}` } }
+          { headers: { 'Authorization': `Bearer ${token}`, 'x-goog-user-project': project.projectId } }
         );
         if (billRes.ok) {
           const billData = await billRes.json();
@@ -1274,7 +1274,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         method: 'PUT',
         headers: {
           'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'x-goog-user-project': projectId
         },
         body: JSON.stringify({ billingAccountName: account })
       });
