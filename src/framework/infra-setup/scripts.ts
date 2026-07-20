@@ -279,6 +279,8 @@ if [ -f src/App.tsx ]; then
   sed -i '/<Route path="\\/infra-setup".*\\/>/d' src/App.tsx
   sed -i '/<Route path="\\/create-app".*\\/>/d' src/App.tsx
   sed -i '/<Route path="\\/admin/d' src/App.tsx
+  # Clean up orphaned {isAppMode && ()} blocks left behind after Route deletion
+  perl -i -0pe 's/\\{isAppMode && \\(\\s*\\n\\s*\\)\\}//gs' src/App.tsx
   echo "App.tsx cleaned of wizard/admin references"
 fi
 
@@ -286,7 +288,8 @@ fi
 if [ -f src/navigation-bar.tsx ]; then
   sed -i "/import { useIsAdmin } from '.\\/admin\\/useIsAdmin';/d" src/navigation-bar.tsx
   sed -i "/const { isAdmin } = useIsAdmin(db);/d" src/navigation-bar.tsx
-  sed -i '/{isAdmin &&/,/\\/admin">Admin<\\/Link><\\/>}/d' src/navigation-bar.tsx
+  # Delete from {isAdmin && to the next closing )} on its own line
+  sed -i '/{isAdmin &&/,/^[[:space:]]*)}/d' src/navigation-bar.tsx
   echo "navigation-bar.tsx cleaned of admin references"
 fi
 
