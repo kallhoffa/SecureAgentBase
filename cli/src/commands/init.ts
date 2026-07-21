@@ -20,7 +20,21 @@ import { loadConfig, saveConfig, clearConfig } from '../utils/config.js';
 import { heading, info, success, warn, error, kv } from '../utils/output.js';
 import { CLIError } from '../utils/errors.js';
 
-export async function runInit(args: { saKey?: string }): Promise<void> {
+export interface InitArgs {
+  saKey?: string;
+  projectId?: string;
+  autoSa?: boolean;
+  firebase?: boolean;
+  billingAccount?: string;
+  githubPat?: string;
+  repoName?: string;
+  discordToken?: string;
+  discordGuild?: string;
+  vmZone?: string;
+  yes?: boolean;
+}
+
+export async function runInit(args: InitArgs): Promise<void> {
   heading('SecureAgentBase Init');
 
   // Auth
@@ -31,25 +45,37 @@ export async function runInit(args: { saKey?: string }): Promise<void> {
   const config = loadConfig();
 
   // Step 1: Select or create GCP project
-  await stepProject(auth, config);
+  await stepProject(auth, config, args);
 
   // Step 2: Create/configure service account
-  await stepServiceAccount(auth, config);
+  await stepServiceAccount(auth, config, args);
 
   // Step 3: Set up Firebase projects
-  await stepFirebase(auth, config);
+  if (args.firebase !== false) {
+    await stepFirebase(auth, config, args);
+  } else {
+    info('Skipping Firebase setup (--no-firebase)');
+  }
 
   // Step 4: Link billing
-  await stepBilling(auth, config);
+  await stepBilling(auth, config, args);
 
   // Step 5: GitHub + OIDC
-  await stepGitHub(auth, config);
+  if (args.githubPat) {
+    await stepGitHub(auth, config, args);
+  } else {
+    info('Skipping GitHub setup (no --github-pat provided)');
+  }
 
   // Step 6: Discord bot
-  await stepDiscord(config);
+  if (args.discordToken) {
+    await stepDiscord(config, args);
+  } else {
+    info('Skipping Discord setup (no --discord-token provided)');
+  }
 
   // Step 7: Create VM
-  await stepCreateVm(auth, config);
+  await stepCreateVm(auth, config, args);
 
   saveConfig(config);
   success('SecureAgentBase deployment complete!');
@@ -57,8 +83,16 @@ export async function runInit(args: { saKey?: string }): Promise<void> {
   kv('GitHub Repo', config.githubRepo || 'unknown');
 }
 
-async function stepProject(auth: AuthClient, config: any): Promise<void> {
+async function stepProject(auth: AuthClient, config: any, args: InitArgs): Promise<void> {
   heading('Step 1: GCP Project');
+
+  if (args.projectId) {
+    config.gcpProjectId = args.projectId;
+    info(`Using project: ${config.gcpProjectId}`);
+    saveConfig(config);
+    success(`Project: ${config.gcpProjectId}`);
+    return;
+  }
 
   const projects = await listProjects(auth);
   const projectChoices = projects.map((p: any) => ({
@@ -82,7 +116,6 @@ async function stepProject(auth: AuthClient, config: any): Promise<void> {
     ]);
     info(`Creating project ${projectId}...`);
     await createProject(auth, projectId, displayName);
-    // Wait for propagation
     for (let i = 0; i < 10; i++) {
       const p = await getProject(auth, projectId);
       if (p) break;
@@ -98,8 +131,39 @@ async function stepProject(auth: AuthClient, config: any): Promise<void> {
   success(`Project: ${config.gcpProjectId}`);
 }
 
-async function stepServiceAccount(auth: AuthClient, config: any): Promise<void> {
+async function stepServiceAccount(auth: AuthClient, config: any, args: InitArgs): Promise<void> {
   heading('Step 2: Service Account');
+
+  if (args.autoSa) {
+    // Auto-create SA (no user interaction)
+    const projectId = config.gcpProjectId!;
+    const accountId = 'secureagent-manager';
+
+    info('Creating service account...');
+    const { email } = await createServiceAccount(auth, projectId, accountId, 'SecureAgent Manager');
+    config.saEmail = email;
+    info(`SA created: ${email}`);
+
+    const roles = [
+      'roles/compute.admin',
+      'roles/iam.serviceAccountUser',
+      'roles/iam.serviceAccountTokenCreator',
+      'roles/billing.projectManager',
+      'roles/serviceusage.serviceUsageAdmin',
+      'roles/iam.workloadIdentityPoolAdmin',
+      'roles/iam.securityAdmin',
+      'roles/firebase.admin',
+    ];
+
+    for (const role of roles) {
+      await grantRole(auth, `projects/${projectId}`, `serviceAccount:${email}`, role);
+      info(`  Granted ${role}`);
+    }
+
+    saveConfig(config);
+    success('Service account configured');
+    return;
+  }
 
   const { choice } = await inquirer.prompt([
     {
@@ -153,7 +217,7 @@ async function stepServiceAccount(auth: AuthClient, config: any): Promise<void> 
   success('Service account configured');
 }
 
-async function stepFirebase(auth: AuthClient, config: any): Promise<void> {
+async function stepFirebase(auth: AuthClient, config: any, _args: InitArgs): Promise<void> {
   heading('Step 3: Firebase Setup');
 
   const projectId = config.gcpProjectId!;
@@ -175,10 +239,17 @@ async function stepFirebase(auth: AuthClient, config: any): Promise<void> {
   saveConfig(config);
 }
 
-async function stepBilling(auth: AuthClient, config: any): Promise<void> {
+async function stepBilling(auth: AuthClient, config: any, args: InitArgs): Promise<void> {
   heading('Step 4: Billing Account');
 
   const projectId = config.gcpProjectId!;
+
+  if (args.billingAccount) {
+    info(`Linking billing account: ${args.billingAccount}`);
+    await linkBillingAccount(auth, projectId, args.billingAccount);
+    success(`Linked billing account: ${args.billingAccount}`);
+    return;
+  }
 
   if (await isBillingEnabled(auth, projectId)) {
     info('Billing already enabled');
@@ -214,10 +285,12 @@ async function stepBilling(auth: AuthClient, config: any): Promise<void> {
   }
 }
 
-async function stepGitHub(auth: AuthClient, config: any): Promise<void> {
+async function stepGitHub(auth: AuthClient, config: any, args: InitArgs): Promise<void> {
   heading('Step 5: GitHub + OIDC Setup');
 
-  if (!config.githubPat) {
+  if (args.githubPat) {
+    config.githubPat = args.githubPat;
+  } else if (!config.githubPat) {
     const { pat } = await inquirer.prompt([
       {
         type: 'password',
@@ -232,14 +305,14 @@ async function stepGitHub(auth: AuthClient, config: any): Promise<void> {
   const userInfo = await validatePat(config.githubPat);
   info(`GitHub user: ${userInfo.login}`);
 
-  const { repoName } = await inquirer.prompt([
+  const repoName = args.repoName || (await inquirer.prompt([
     {
       type: 'input',
       name: 'repoName',
       message: 'GitHub repo name to create:',
       default: `SecureAgentBase-${crypto.randomBytes(3).toString('hex')}`,
     },
-  ]);
+  ])).repoName;
 
   const repoFull = `${userInfo.login}/${repoName}`;
   info(`Ensuring repo: ${repoFull}`);
@@ -287,10 +360,13 @@ async function stepGitHub(auth: AuthClient, config: any): Promise<void> {
   success(`GitHub repo ready: ${repoFull}`);
 }
 
-async function stepDiscord(config: any): Promise<void> {
+async function stepDiscord(config: any, args: InitArgs): Promise<void> {
   heading('Step 6: Discord Bot');
 
-  if (!config.discordBotToken) {
+  if (args.discordToken) {
+    config.discordBotToken = args.discordToken;
+    config.discordGuildId = args.discordGuild || '';
+  } else if (!config.discordBotToken) {
     const { botToken } = await inquirer.prompt([
       {
         type: 'password',
@@ -302,6 +378,10 @@ async function stepDiscord(config: any): Promise<void> {
     config.discordBotToken = botToken;
   }
 
+  if (args.discordGuild) {
+    config.discordGuildId = args.discordGuild;
+  }
+
   // Decode client ID from token
   const decoded = Buffer.from(config.discordBotToken.split('.')[0], 'base64').toString();
   const clientIdMatch = decoded.match(/"(?:id|client_id)"\s*:\s*"(\d+)"/);
@@ -309,24 +389,26 @@ async function stepDiscord(config: any): Promise<void> {
     info(`Bot Client ID: ${clientIdMatch[1]}`);
   }
 
-  const inviteUrl = `https://discord.com/oauth2/authorize?client_id=${Buffer.from(config.discordBotToken.split('.')[0], 'base64').toString().match(/"(\d+)"/)?.[1] || 'UNKNOWN'}&permissions=8&integration_type=0&scope=bot%20applications.commands`;
+  if (!config.discordGuildId) {
+    const inviteUrl = `https://discord.com/oauth2/authorize?client_id=${Buffer.from(config.discordBotToken.split('.')[0], 'base64').toString().match(/"(\d+)"/)?.[1] || 'UNKNOWN'}&permissions=8&integration_type=0&scope=bot%20applications.commands`;
 
-  warn(`Invite your bot to a server: ${inviteUrl}`);
+    warn(`Invite your bot to a server: ${inviteUrl}`);
 
-  const { guildId } = await inquirer.prompt([
-    {
-      type: 'input',
-      name: 'guildId',
-      message: 'Discord Guild (Server) ID after inviting the bot:',
-    },
-  ]);
-  config.discordGuildId = guildId;
+    const { guildId } = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'guildId',
+        message: 'Discord Guild (Server) ID after inviting the bot:',
+      },
+    ]);
+    config.discordGuildId = guildId;
+  }
 
   saveConfig(config);
   success('Discord bot configured');
 }
 
-async function stepCreateVm(auth: AuthClient, config: any): Promise<void> {
+async function stepCreateVm(auth: AuthClient, config: any, args: InitArgs): Promise<void> {
   heading('Step 7: Create VM');
 
   const projectId = config.gcpProjectId!;
@@ -358,7 +440,7 @@ async function stepCreateVm(auth: AuthClient, config: any): Promise<void> {
   // Add startup script (embedded as base64 in the script itself for simplicity)
   metadata.startup_script_bin = Buffer.from('#!/bin/bash\nset +e\nexport HOME=/root\necho "SecureAgentBase VM initialized"', 'utf-8').toString('base64');
 
-  const zones = [
+  const zones = args.vmZone ? [args.vmZone] : [
     'us-central1-a', 'us-central1-b', 'us-central1-c',
     'us-east1-b', 'us-east1-c',
     'europe-west1-b', 'europe-west1-c',

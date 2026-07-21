@@ -12,6 +12,7 @@ concurrency:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    needs: build-cli
     environment: staging
     permissions:
       id-token: write
@@ -109,6 +110,18 @@ jobs:
           E2E_FIREBASE_API_KEY: ${{ vars.FIREBASE_API_KEY_STAGING }}
           E2E_TEST_EMAIL: e2e@agentbase-staging.iam.gserviceaccount.com
           E2E_TEST_PASSWORD: ${{ secrets.E2E_TEST_PASSWORD }}
+
+      - name: Download CLI artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: secureagentbase-cli
+
+      - name: Run CLI E2E Tests
+        run: node tests/e2e/cli.spec.mjs
+        env:
+          CLI_PACKAGE: ${{ github.workspace }}/secureagentbase-0.1.0.tgz
+          GCP_PROJECT_ID: ${{ vars.E2E_GCP_PROJECT_ID }}
+          SKIP_CLEANUP: ${{ vars.E2E_FULL != 'true' && 'true' || '' }}
 
       - name: Upload logs on failure
         if: failure()

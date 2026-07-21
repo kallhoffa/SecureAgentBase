@@ -17,11 +17,33 @@ program
 
 program
   .command('init')
-  .description('Run the interactive setup wizard')
+  .description('Run the setup wizard')
   .option('--sa-key <path>', 'Path to a service account JSON key')
+  .option('--project-id <id>', 'GCP project ID (skips project selection)')
+  .option('--auto-sa', 'Create service account automatically (skips SA prompt)')
+  .option('--no-firebase', 'Skip Firebase setup')
+  .option('--billing-account <id>', 'Billing account ID (skips billing prompt)')
+  .option('--github-pat <token>', 'GitHub PAT (skips PAT prompt)')
+  .option('--repo-name <name>', 'GitHub repo name (requires --github-pat)')
+  .option('--discord-token <token>', 'Discord bot token')
+  .option('--discord-guild <id>', 'Discord guild ID')
+  .option('--vm-zone <zone>', 'VM zone (default: us-central1-a)')
+  .option('-y, --yes', 'Skip all confirmations (non-interactive mode)')
   .action(async (opts) => {
     try {
-      await runInit({ saKey: opts.saKey });
+      await runInit({
+        saKey: opts.saKey,
+        projectId: opts.projectId,
+        autoSa: opts.autoSa,
+        firebase: opts.firebase !== false,
+        billingAccount: opts.billingAccount,
+        githubPat: opts.githubPat,
+        repoName: opts.repoName,
+        discordToken: opts.discordToken,
+        discordGuild: opts.discordGuild,
+        vmZone: opts.vmZone || 'us-central1-a',
+        yes: opts.yes,
+      });
     } catch (err) {
       handleError(err);
     }
