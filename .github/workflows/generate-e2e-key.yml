@@ -1,0 +1,47 @@
+name: Generate E2E SA Key
+on:
+  workflow_dispatch:
+    inputs:
+      project_id:
+        description: 'GCP project ID containing e2e-test-runner SA'
+        required: true
+        default: 'agentbase-test-staging'
+
+jobs:
+  generate-key:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    environment: staging
+    steps:
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_SA_STAGING }}
+
+      - name: Create e2e SA key
+        id: create-key
+        run: |
+          PROJECT="${{ github.event.inputs.project_id }}"
+          gcloud iam service-accounts add-iam-policy-binding \
+            "e2e-test-runner@${PROJECT}.iam.gserviceaccount.com" \
+            --member="serviceAccount:${{ vars.GCP_SA_STAGING }}" \
+            --role="roles/iam.serviceAccountTokenCreator" \
+            --project "${PROJECT}" 2>/dev/null || true
+          TOKEN=$(gcloud auth print-access-token \
+            --impersonate-service-account="e2e-test-runner@${PROJECT}.iam.gserviceaccount.com")
+          curl -s -X POST \
+            "https://iam.googleapis.com/v1/projects/${PROJECT}/serviceAccounts/e2e-test-runner@${PROJECT}.iam.gserviceaccount.com/keys" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -o /tmp/sa-key-response.json
+          jq -r '.privateKeyData' /tmp/sa-key-response.json | base64 -d > /tmp/sa-key.json
+          echo "key_path=/tmp/sa-key.json" >> "$GITHUB_OUTPUT"
+
+      - name: Upload SA key as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-sa-key
+          path: ${{ steps.create-key.outputs.key_path }}
