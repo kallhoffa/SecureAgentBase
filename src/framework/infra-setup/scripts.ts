@@ -265,6 +265,7 @@ echo "Cleaning up wizard-specific files..."
 rm -rf src/infra-setup.tsx src/create-app.tsx
 rm -rf src/framework/infra-setup/
 rm -rf src/admin/
+rm -rf cli/
 rm -rf tests/e2e/wizard.spec.js
 rm -rf src/_tests_/WizardSteps.test.jsx src/_tests_/create-app.test.tsx src/_tests_/StepHeader.test.jsx src/_tests_/api.test.ts src/_tests_/crypto.test.ts src/_tests_/scripts.test.ts
 rm -f WIZARD_DEV_NOTES.md

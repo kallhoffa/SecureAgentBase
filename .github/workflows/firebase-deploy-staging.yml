@@ -114,3 +114,33 @@ jobs:
         if: failure()
         run: |
           echo "## Staging Deployment or Tests Failed" >> $GITHUB_STEP_SUMMARY
+
+  build-cli:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install CLI dependencies
+        run: cd cli && npm ci
+
+      - name: Build CLI
+        run: cd cli && npm run build
+
+      - name: Check TypeScript
+        run: cd cli && npx tsc --noEmit
+
+      - name: Package CLI
+        run: cd cli && npm pack
+
+      - name: Upload CLI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: secureagentbase-cli
+          path: cli/secureagentbase-*.tgz

@@ -17,7 +17,9 @@
     "e2e:ci": "playwright test --config=playwright.ci.config.js",
     "e2e:smoke": "playwright test tests/e2e/smoke.spec.js",
     "e2e:smoke:ci": "playwright test tests/e2e/smoke.spec.js --config=playwright.ci.config.js",
-    "setup": "node scripts/setup.js"
+    "setup": "node scripts/setup.js",
+    "cli:build": "cd cli && npm install && npm run build",
+    "cli:package": "cd cli && npm pack"
   },
   "dependencies": {
     "@sentry/react": "^10.40.0",
