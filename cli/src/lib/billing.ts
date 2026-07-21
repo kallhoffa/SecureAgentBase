@@ -10,6 +10,7 @@ export async function fetchBillingAccounts(
     headers: {
       'Authorization': `Bearer ${token}`,
       'Content-Type': 'application/json',
+      'x-goog-user-project': projectId,
     },
   });
 

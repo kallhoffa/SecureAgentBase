@@ -27,8 +27,11 @@ jobs:
           PROJECT="${{ github.event.inputs.project_id }}"
           DEPLOY_SA="firebase-deploy-staging@agentbase-staging.iam.gserviceaccount.com"
 
-          echo "Enabling IAM API..."
+          echo "Enabling APIs..."
           gcloud services enable iam.googleapis.com --project "${PROJECT}"
+          gcloud services enable cloudbilling.googleapis.com --project "${PROJECT}"
+          gcloud services enable compute.googleapis.com --project "${PROJECT}"
+          gcloud services enable cloudresourcemanager.googleapis.com --project "${PROJECT}"
 
           echo "Granting iam.serviceAccountAdmin to deploy SA..."
           gcloud projects add-iam-policy-binding "${PROJECT}" \
