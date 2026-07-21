@@ -116,29 +116,20 @@ jobs:
         with:
           name: secureagentbase-cli
 
-      - name: Grant tokenCreator role on e2e SA (if needed)
-        run: |
-          TARGET_SA="e2e-test-runner@${{ vars.E2E_GCP_PROJECT_ID }}.iam.gserviceaccount.com"
-          MEMBER="serviceAccount:${{ vars.GCP_SA_STAGING }}"
-          gcloud iam service-accounts add-iam-policy-binding "$TARGET_SA" \
-            --member="$MEMBER" \
-            --role="roles/iam.serviceAccountTokenCreator" \
-            --project "${{ vars.E2E_GCP_PROJECT_ID }}" 2>&1 || echo "IAM binding already exists or not needed"
-
       - name: Generate e2e SA key for CLI tests
         run: |
-          TOKEN=$(gcloud auth print-access-token \
-            --impersonate-service-account="e2e-test-runner@${{ vars.E2E_GCP_PROJECT_ID }}.iam.gserviceaccount.com")
-          if [ -z "$TOKEN" ]; then
-            echo "ERROR: Failed to impersonate e2e-test-runner SA"
+          if [ -n "${{ secrets.E2E_SA_KEY }}" ]; then
+            echo "${{ secrets.E2E_SA_KEY }}" | base64 -d > /tmp/sa-key.json
+          elif [ -f /tmp/e2e-sa-key/sa-key.json ]; then
+            cp /tmp/e2e-sa-key/sa-key.json /tmp/sa-key.json
+          else
+            echo "ERROR: No E2E_SA_KEY secret set and no pre-downloaded key found."
+            echo "Run the generate-e2e-key workflow via:"
+            echo "  gh workflow run generate-e2e-key.yml -f project_id=${{ vars.E2E_GCP_PROJECT_ID }}"
+            echo "Then set the key as a secret:"
+            echo "  gh secret set E2E_SA_KEY < key-base64.txt"
             exit 1
           fi
-          curl -sf -X POST \
-            "https://iam.googleapis.com/v1/projects/${{ vars.E2E_GCP_PROJECT_ID }}/serviceAccounts/e2e-test-runner@${{ vars.E2E_GCP_PROJECT_ID }}.iam.gserviceaccount.com/keys" \
-            -H "Authorization: Bearer $TOKEN" \
-            -H "Content-Type: application/json" \
-            -o /tmp/sa-key-response.json
-          jq -r '.privateKeyData' /tmp/sa-key-response.json | base64 -d > /tmp/sa-key.json
 
       - name: Run CLI E2E Tests
         run: node tests/e2e/cli.spec.mjs

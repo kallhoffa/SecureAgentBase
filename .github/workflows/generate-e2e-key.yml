@@ -26,13 +26,20 @@ jobs:
         run: |
           gcloud services enable iam.googleapis.com --project "${{ github.event.inputs.project_id }}"
 
+      - name: Grant e2e-runner SA keyAdmin on itself
+        run: |
+          SA="e2e-test-runner@${{ github.event.inputs.project_id }}.iam.gserviceaccount.com"
+          gcloud iam service-accounts add-iam-policy-binding "$SA" \
+            --member="serviceAccount:${SA}" \
+            --role="roles/iam.serviceAccountKeyAdmin" \
+            --project "${{ github.event.inputs.project_id }}" || true
+
       - name: Create e2e SA key
         id: create-key
         run: |
           gcloud iam service-accounts keys create /tmp/sa-key.json \
             --iam-account="e2e-test-runner@${{ github.event.inputs.project_id }}.iam.gserviceaccount.com"
           echo "key_path=/tmp/sa-key.json" >> "$GITHUB_OUTPUT"
-          echo "SA key created successfully"
 
       - name: Upload SA key as artifact
         uses: actions/upload-artifact@v4
