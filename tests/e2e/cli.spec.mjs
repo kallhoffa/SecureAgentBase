@@ -2,10 +2,10 @@
  * CLI E2E tests
  *
  * Uses the packaged CLI (secureagentbase-*.tgz) installed from the CI artifact.
+ * Authenticates via ADC (GOOGLE_APPLICATION_CREDENTIALS set by WIF in CI).
  * Requires env vars:
  *   CLI_PACKAGE    - path to the .tgz package (set by CI)
  *   GCP_PROJECT_ID - project to test against (agentbase-test-staging)
- *   SA_KEY_PATH    - path to service account key file for e2e-test-runner
  *   SKIP_CLEANUP   - set to "true" to keep created resources for debugging
  */
 
@@ -69,14 +69,6 @@ async function main() {
     process.exit(failed > 0 ? 1 : 0);
   }
 
-  if (!process.env.SA_KEY_PATH || !existsSync(process.env.SA_KEY_PATH)) {
-    console.log(`${SKIP} CLI_E2E: SA_KEY_PATH not set or file missing, skipping`);
-    skipped++;
-    console.log(`\nResults: ${passed} passed, ${failed} failed, ${skipped} skipped`);
-    process.exit(failed > 0 ? 1 : 0);
-  }
-  const saKeyPath = resolve(process.env.SA_KEY_PATH);
-
   // Install CLI from package in a temp directory
   const tmpDir = mkdtempSync(join(tmpdir(), 'cli-e2e-'));
   const homeDir = join(tmpDir, 'home');
@@ -138,7 +130,6 @@ async function main() {
       '--project-id', projectId,
       '--auto-sa',
       '--no-firebase',
-      '--sa-key', saKeyPath,
     ], { env: envBase, timeout: 180_000 });
 
     if (r.exitCode === 0) {
@@ -162,7 +153,7 @@ async function main() {
   // Test 4: Destroy (cleanup)
   if (!skipCleanup) {
     console.log('Test 4: destroy — cleanup');
-    r = run(cliBin, ['destroy', '-y', '--sa-key', saKeyPath], { env: envBase, timeout: 60_000 });
+    r = run(cliBin, ['destroy', '-y'], { env: envBase, timeout: 60_000 });
     console.log(`  ${r.stdout}`);
     assert(true, 'destroy ran');
 

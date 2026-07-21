@@ -116,27 +116,11 @@ jobs:
         with:
           name: secureagentbase-cli
 
-      - name: Generate e2e SA key for CLI tests
-        run: |
-          if [ -n "${{ secrets.E2E_SA_KEY }}" ]; then
-            echo "${{ secrets.E2E_SA_KEY }}" | base64 -d > /tmp/sa-key.json
-          elif [ -f /tmp/e2e-sa-key/sa-key.json ]; then
-            cp /tmp/e2e-sa-key/sa-key.json /tmp/sa-key.json
-          else
-            echo "ERROR: No E2E_SA_KEY secret set and no pre-downloaded key found."
-            echo "Run the generate-e2e-key workflow via:"
-            echo "  gh workflow run generate-e2e-key.yml -f project_id=${{ vars.E2E_GCP_PROJECT_ID }}"
-            echo "Then set the key as a secret:"
-            echo "  gh secret set E2E_SA_KEY < key-base64.txt"
-            exit 1
-          fi
-
       - name: Run CLI E2E Tests
         run: node tests/e2e/cli.spec.mjs
         env:
           CLI_PACKAGE: ${{ github.workspace }}/secureagentbase-0.1.0.tgz
           GCP_PROJECT_ID: ${{ vars.E2E_GCP_PROJECT_ID }}
-          SA_KEY_PATH: /tmp/sa-key.json
           SKIP_CLEANUP: ${{ vars.E2E_FULL != 'true' && 'true' || '' }}
 
       - name: Upload logs on failure
