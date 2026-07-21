@@ -28,6 +28,7 @@ program
   .option('--discord-token <token>', 'Discord bot token')
   .option('--discord-guild <id>', 'Discord guild ID')
   .option('--vm-zone <zone>', 'VM zone (default: us-central1-a)')
+  .option('--no-vm', 'Skip VM creation')
   .option('-y, --yes', 'Skip all confirmations (non-interactive mode)')
   .action(async (opts) => {
     try {
@@ -43,6 +44,7 @@ program
         discordGuild: opts.discordGuild,
         vmZone: opts.vmZone || 'us-central1-a',
         yes: opts.yes,
+        vm: opts.vm,
       });
     } catch (err) {
       handleError(err);

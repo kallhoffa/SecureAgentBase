@@ -130,6 +130,7 @@ async function main() {
       '--project-id', projectId,
       '--auto-sa',
       '--no-firebase',
+      '--no-vm',
     ], { env: envBase, timeout: 180_000 });
 
     if (r.exitCode === 0) {

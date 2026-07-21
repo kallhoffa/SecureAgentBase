@@ -32,6 +32,7 @@ export interface InitArgs {
   discordGuild?: string;
   vmZone?: string;
   yes?: boolean;
+  vm?: boolean;
 }
 
 export async function runInit(args: InitArgs): Promise<void> {
@@ -75,7 +76,11 @@ export async function runInit(args: InitArgs): Promise<void> {
   }
 
   // Step 7: Create VM
-  await stepCreateVm(auth, config, args);
+  if (args.vm === false) {
+    info('Skipping VM creation (--no-vm)');
+  } else {
+    await stepCreateVm(auth, config, args);
+  }
 
   saveConfig(config);
   success('SecureAgentBase deployment complete!');
