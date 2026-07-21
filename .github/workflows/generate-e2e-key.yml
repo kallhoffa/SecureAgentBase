@@ -61,7 +61,19 @@ jobs:
           echo "Granting serviceUsageConsumer to deploy SA..."
           gcloud projects add-iam-policy-binding "${PROJECT}" \
             --member="serviceAccount:${DEPLOY_SA}" \
-            --role="roles/serviceusage.serviceUsageConsumer" \
+            --role="roles/serviceusage.serviceUsageAdmin" \
+            --condition=None 2>&1 || true
+
+          echo "Granting compute admin to deploy SA..."
+          gcloud projects add-iam-policy-binding "${PROJECT}" \
+            --member="serviceAccount:${DEPLOY_SA}" \
+            --role="roles/compute.admin" \
+            --condition=None 2>&1 || true
+
+          echo "Granting firebase admin to deploy SA..."
+          gcloud projects add-iam-policy-binding "${PROJECT}" \
+            --member="serviceAccount:${DEPLOY_SA}" \
+            --role="roles/firebase.admin" \
             --condition=None 2>&1 || true
 
       - name: Create e2e SA key
