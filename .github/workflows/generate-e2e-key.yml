@@ -49,6 +49,12 @@ jobs:
             --role="roles/iam.serviceAccountTokenCreator" \
             --project "${PROJECT}" 2>&1 || true
 
+          echo "Granting projectIamAdmin to deploy SA..."
+          gcloud projects add-iam-policy-binding "${PROJECT}" \
+            --member="serviceAccount:${DEPLOY_SA}" \
+            --role="roles/resourcemanager.projectIamAdmin" \
+            --condition=None 2>&1 || true
+
       - name: Create e2e SA key
         id: create-key
         run: |
