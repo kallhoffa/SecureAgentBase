@@ -118,15 +118,14 @@ jobs:
 
       - name: Generate e2e SA key for CLI tests
         run: |
-          KEY=$(gcloud iam service-accounts keys create - \
-            --iam-account="e2e-test-runner@${{ vars.E2E_GCP_PROJECT_ID }}.iam.gserviceaccount.com" \
-            --project="${{ vars.E2E_GCP_PROJECT_ID }}" 2>/dev/null)
-          echo "E2E_SA_KEY<<EOF" >> $GITHUB_ENV
-          echo "$KEY" >> $GITHUB_ENV
-          echo "EOF" >> $GITHUB_ENV
-
-      - name: Write SA key to file
-        run: echo "$E2E_SA_KEY" > /tmp/sa-key.json
+          TOKEN=$(gcloud auth print-access-token \
+            --impersonate-service-account="e2e-test-runner@${{ vars.E2E_GCP_PROJECT_ID }}.iam.gserviceaccount.com" 2>/dev/null)
+          curl -s -X POST \
+            "https://iam.googleapis.com/v1/projects/${{ vars.E2E_GCP_PROJECT_ID }}/serviceAccounts/e2e-test-runner@${{ vars.E2E_GCP_PROJECT_ID }}.iam.gserviceaccount.com/keys" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -o /tmp/sa-key-response.json
+          jq -r '.privateKeyData' /tmp/sa-key-response.json | base64 -d > /tmp/sa-key.json
 
       - name: Run CLI E2E Tests
         run: node tests/e2e/cli.spec.mjs
