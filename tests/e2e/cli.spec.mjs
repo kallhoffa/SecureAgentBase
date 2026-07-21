@@ -5,9 +5,8 @@
  * Requires env vars:
  *   CLI_PACKAGE    - path to the .tgz package (set by CI)
  *   GCP_PROJECT_ID - project to test against (agentbase-test-staging)
+ *   SA_KEY_PATH    - path to service account key file for e2e-test-runner
  *   SKIP_CLEANUP   - set to "true" to keep created resources for debugging
- *
- * Relies on GOOGLE_APPLICATION_CREDENTIALS being set (WIF auth from CI).
  */
 
 import { execSync, spawnSync } from 'node:child_process';
@@ -70,12 +69,13 @@ async function main() {
     process.exit(failed > 0 ? 1 : 0);
   }
 
-  if (!process.env.GOOGLE_APPLICATION_CREDENTIALS && !process.env.GOOGLE_GHA_CREDS_PATH) {
-    console.log(`${SKIP} CLI_E2E: No GCP credentials available, skipping`);
+  if (!process.env.SA_KEY_PATH || !existsSync(process.env.SA_KEY_PATH)) {
+    console.log(`${SKIP} CLI_E2E: SA_KEY_PATH not set or file missing, skipping`);
     skipped++;
     console.log(`\nResults: ${passed} passed, ${failed} failed, ${skipped} skipped`);
     process.exit(failed > 0 ? 1 : 0);
   }
+  const saKeyPath = resolve(process.env.SA_KEY_PATH);
 
   // Install CLI from package in a temp directory
   const tmpDir = mkdtempSync(join(tmpdir(), 'cli-e2e-'));
@@ -118,30 +118,28 @@ async function main() {
 
   console.log(`  CLI installed at ${cliBin}\n`);
 
+  const envBase = {
+    HOME: homeDir,
+    PATH: `${npmBin}:${process.env.PATH}`,
+    XDG_CONFIG_HOME: join(homeDir, '.config'),
+  };
+
   // Test 1: Status (no config yet)
   console.log('Test 1: status — no config');
-  let r = run(cliBin, ['status'], {
-    env: { HOME: homeDir, PATH: `${npmBin}:${process.env.PATH}`, XDG_CONFIG_HOME: join(homeDir, '.config') },
-  });
+  let r = run(cliBin, ['status'], { env: envBase });
   assert(r.exitCode === 0, 'status exits with 0');
   assert(r.stdout.includes('No deployment found') || r.stdout.includes('SecureAgentBase Status'), 'status shows no deployment');
 
   // Test 2: Init with --project-id and --auto-sa (non-interactive headless)
   console.log('Test 2: init — minimal headless');
   {
-    // Before running init, destroy any existing 'secureagent-manager' SA from previous runs
-    const saEmail = `secureagent-manager@${projectId}.iam.gserviceaccount.com`;
-    r = run('gcloud', ['iam', 'service-accounts', 'delete', saEmail, '--project', projectId, '--quiet'], {
-      timeout: 30_000,
-    });
-
-    const env = {
-      HOME: homeDir,
-      PATH: `${npmBin}:${process.env.PATH}`,
-      XDG_CONFIG_HOME: join(homeDir, '.config'),
-    };
-
-    r = run(cliBin, ['init', '--project-id', projectId, '--auto-sa', '--no-firebase'], { env, timeout: 180_000 });
+    r = run(cliBin, [
+      'init',
+      '--project-id', projectId,
+      '--auto-sa',
+      '--no-firebase',
+      '--sa-key', saKeyPath,
+    ], { env: envBase, timeout: 180_000 });
 
     if (r.exitCode === 0) {
       assert(true, 'init completes successfully');
@@ -156,9 +154,7 @@ async function main() {
 
   // Test 3: Status after init
   console.log('Test 3: status — after init');
-  r = run(cliBin, ['status'], {
-    env: { HOME: homeDir, PATH: `${npmBin}:${process.env.PATH}`, XDG_CONFIG_HOME: join(homeDir, '.config') },
-  });
+  r = run(cliBin, ['status'], { env: envBase });
   assert(r.exitCode === 0, 'status exits with 0');
   assert(r.stdout.includes(projectId), 'status shows project ID');
   assert(r.stdout.includes('secureagent-manager'), 'status shows service account');
@@ -166,19 +162,13 @@ async function main() {
   // Test 4: Destroy (cleanup)
   if (!skipCleanup) {
     console.log('Test 4: destroy — cleanup');
-    r = run(cliBin, ['destroy', '-y'], {
-      env: { HOME: homeDir, PATH: `${npmBin}:${process.env.PATH}`, XDG_CONFIG_HOME: join(homeDir, '.config') },
-      timeout: 60_000,
-    });
-    // Destroy may fail if no VM exists, that's OK
+    r = run(cliBin, ['destroy', '-y', '--sa-key', saKeyPath], { env: envBase, timeout: 60_000 });
     console.log(`  ${r.stdout}`);
     assert(true, 'destroy ran');
 
     // Test 5: Status after destroy
     console.log('Test 5: status — after destroy');
-    r = run(cliBin, ['status'], {
-      env: { HOME: homeDir, PATH: `${npmBin}:${process.env.PATH}`, XDG_CONFIG_HOME: join(homeDir, '.config') },
-    });
+    r = run(cliBin, ['status'], { env: envBase });
     assert(r.stdout.includes('No deployment found'), 'status shows no deployment after destroy');
   } else {
     console.log(`  ${SKIP} destroy (SKIP_CLEANUP=true)`);

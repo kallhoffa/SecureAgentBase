@@ -116,11 +116,24 @@ jobs:
         with:
           name: secureagentbase-cli
 
+      - name: Generate e2e SA key for CLI tests
+        run: |
+          KEY=$(gcloud iam service-accounts keys create - \
+            --iam-account="e2e-test-runner@${{ vars.E2E_GCP_PROJECT_ID }}.iam.gserviceaccount.com" \
+            --project="${{ vars.E2E_GCP_PROJECT_ID }}" 2>/dev/null)
+          echo "E2E_SA_KEY<<EOF" >> $GITHUB_ENV
+          echo "$KEY" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
+
+      - name: Write SA key to file
+        run: echo "$E2E_SA_KEY" > /tmp/sa-key.json
+
       - name: Run CLI E2E Tests
         run: node tests/e2e/cli.spec.mjs
         env:
           CLI_PACKAGE: ${{ github.workspace }}/secureagentbase-0.1.0.tgz
           GCP_PROJECT_ID: ${{ vars.E2E_GCP_PROJECT_ID }}
+          SA_KEY_PATH: /tmp/sa-key.json
           SKIP_CLEANUP: ${{ vars.E2E_FULL != 'true' && 'true' || '' }}
 
       - name: Upload logs on failure
