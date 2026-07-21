@@ -22,17 +22,32 @@ jobs:
           service_account: e2e-test-runner@${{ github.event.inputs.project_id }}.iam.gserviceaccount.com
           project_id: ${{ github.event.inputs.project_id }}
 
-      - name: Enable IAM API in e2e project
+      - name: Enable APIs and grant roles
         run: |
-          gcloud services enable iam.googleapis.com --project "${{ github.event.inputs.project_id }}"
+          PROJECT="${{ github.event.inputs.project_id }}"
+          DEPLOY_SA="firebase-deploy-staging@agentbase-staging.iam.gserviceaccount.com"
 
-      - name: Grant e2e-runner SA keyAdmin on itself
-        run: |
-          SA="e2e-test-runner@${{ github.event.inputs.project_id }}.iam.gserviceaccount.com"
-          gcloud iam service-accounts add-iam-policy-binding "$SA" \
-            --member="serviceAccount:${SA}" \
+          echo "Enabling IAM API..."
+          gcloud services enable iam.googleapis.com --project "${PROJECT}"
+
+          echo "Granting iam.serviceAccountAdmin to deploy SA..."
+          gcloud projects add-iam-policy-binding "${PROJECT}" \
+            --member="serviceAccount:${DEPLOY_SA}" \
+            --role="roles/iam.serviceAccountAdmin" \
+            --condition=None 2>&1 || true
+
+          echo "Granting iam.serviceAccountKeyAdmin to deploy SA..."
+          gcloud projects add-iam-policy-binding "${PROJECT}" \
+            --member="serviceAccount:${DEPLOY_SA}" \
             --role="roles/iam.serviceAccountKeyAdmin" \
-            --project "${{ github.event.inputs.project_id }}" || true
+            --condition=None 2>&1 || true
+
+          echo "Granting tokenCreator to deploy SA..."
+          SA="e2e-test-runner@${PROJECT}.iam.gserviceaccount.com"
+          gcloud iam service-accounts add-iam-policy-binding "$SA" \
+            --member="serviceAccount:${DEPLOY_SA}" \
+            --role="roles/iam.serviceAccountTokenCreator" \
+            --project "${PROJECT}" 2>&1 || true
 
       - name: Create e2e SA key
         id: create-key
