@@ -3,7 +3,6 @@ import { test, expect } from '@playwright/test';
 const TEST_URL = process.env.TEST_URL || 'http://localhost:3000';
 
 // Test credentials (must match a real Firebase Auth user in the staging project)
-// Created via Firebase Auth REST API at the start of CI
 const E2E_USER = {
   email: process.env.E2E_TEST_EMAIL || 'e2e@agentbase-staging.iam.gserviceaccount.com',
   password: process.env.E2E_TEST_PASSWORD || '',
@@ -22,7 +21,6 @@ const MOCK_SA_JSON = JSON.stringify({
 });
 
 // GCP access token: generated in CI via gcloud auth print-access-token (WIF impersonation)
-// 1-hour ephemeral token, never stored as a key
 const E2E_GCP_TOKEN = process.env.E2E_GCP_TOKEN || '';
 
 const E2E_GCP_PROJECT_ID = process.env.E2E_GCP_PROJECT_ID || '';
@@ -32,15 +30,43 @@ const REAL_FIREBASE_STAGING = process.env.E2E_FIREBASE_STAGING_B64
   ? JSON.parse(Buffer.from(process.env.E2E_FIREBASE_STAGING_B64, 'base64').toString())
   : null;
 
+// Helper: sign in via Firebase Auth REST API + UI login form
+const signIn = async (page) => {
+  // Create test Firebase user if needed
+  if (process.env.E2E_FIREBASE_API_KEY) {
+    const url = `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${process.env.E2E_FIREBASE_API_KEY}`;
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: E2E_USER.email,
+        password: E2E_USER.password,
+        returnSecureToken: true,
+      }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json();
+      if (err.error?.message !== 'EMAIL_EXISTS') {
+        throw new Error(`Failed to create Firebase user: ${err.error?.message}`);
+      }
+    }
+  }
+
+  await page.goto(`${TEST_URL}/login`);
+  await page.waitForLoadState('networkidle');
+  await page.fill('input[type="email"]', E2E_USER.email);
+  await page.fill('input[type="password"]', E2E_USER.password);
+  await page.click('button[type="submit"]');
+  await page.waitForURL((url) => !url.pathname.includes('/login'), { timeout: 15000 });
+};
+
 // Helper: navigate to wizard with e2e credentials injected
 const navigateWithE2E = async (page, extraParams = {}) => {
   const params = new URLSearchParams();
 
   // Inject SA key JSON as __e2e_sa (base64-encoded JSON string)
-  // The wizard parses this to set serviceAccountJson, godSaEmail, projectId
   if (process.env.E2E_SA_KEY) {
     try {
-      // E2E_SA_KEY might be raw JSON or base64-encoded JSON
       let saJson;
       const trimmed = process.env.E2E_SA_KEY.trim();
       if (trimmed.startsWith('{')) {
@@ -48,7 +74,6 @@ const navigateWithE2E = async (page, extraParams = {}) => {
       } else {
         saJson = Buffer.from(trimmed, 'base64').toString('utf-8');
       }
-      // Validate it parses and has private_key
       const parsed = JSON.parse(saJson);
       if (parsed.private_key) {
         params.set('__e2e_sa', Buffer.from(saJson).toString('base64'));
@@ -60,7 +85,7 @@ const navigateWithE2E = async (page, extraParams = {}) => {
     }
   }
 
-  // Inject GCP access token via sessionStorage (not URL param — avoids address bar leakage)
+  // Inject GCP access token via sessionStorage
   if (E2E_GCP_TOKEN) {
     await page.addInitScript((token) => {
       sessionStorage.setItem('__e2e_token', token);
@@ -71,8 +96,7 @@ const navigateWithE2E = async (page, extraParams = {}) => {
     params.set('__e2e_project_id', E2E_GCP_PROJECT_ID);
   }
 
-  // Auto-construct minimal Firebase configs from project IDs if not explicitly provided.
-  // Step 4 completion requires both firebaseStagingData?.projectId AND firebaseProductionData?.projectId.
+  // Auto-construct minimal Firebase configs from project IDs
   const stagingProjectId = process.env.E2E_FIREBASE_STAGING_PROJECT_ID || E2E_GCP_PROJECT_ID;
   const productionProjectId = process.env.E2E_FIREBASE_PRODUCTION_PROJECT_ID || E2E_GCP_PROJECT_ID;
 
@@ -114,59 +138,27 @@ const navigateWithE2E = async (page, extraParams = {}) => {
   await page.waitForLoadState('networkidle');
 };
 
-const createFirebaseUser = async () => {
-  if (!process.env.E2E_FIREBASE_API_KEY) {
-    console.warn('E2E_FIREBASE_API_KEY not set, skipping Firebase user creation');
-    return;
-  }
-  const url = `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${process.env.E2E_FIREBASE_API_KEY}`;
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      email: E2E_USER.email,
-      password: E2E_USER.password,
-      returnSecureToken: true,
-    }),
-  });
-  if (!resp.ok) {
-    const err = await resp.json();
-    // User may already exist, that's OK
-    if (err.error?.message !== 'EMAIL_EXISTS') {
-      throw new Error(`Failed to create Firebase user: ${err.error?.message}`);
-    }
-  }
-};
-
-// Helper: get auth headers for API calls using the test user
-const getTestUserToken = async () => {
-  if (!process.env.E2E_FIREBASE_API_KEY) return null;
-  const url = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${process.env.E2E_FIREBASE_API_KEY}`;
-  const resp = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      email: E2E_USER.email,
-      password: E2E_USER.password,
-      returnSecureToken: true,
-    }),
-  });
-  if (!resp.ok) return null;
-  const data = await resp.json();
-  return data.idToken;
-};
-
 test.describe('Wizard E2E Regression', () => {
 
-  // ---------- Non-auth tests (app mode only) ----------
-  test.describe('Unauthenticated UI', () => {
-    test.beforeEach(async () => {
+  // ---------- Auth redirect tests (app mode only) ----------
+  test.describe('Auth Redirect', () => {
+    test('redirects unauthenticated user to login', async ({ page }) => {
       test.skip(process.env.E2E_APP_MODE !== 'true', 'Wizard route only available in app mode');
+      await page.goto(`${TEST_URL}/infra-setup`);
+      await expect(page).toHaveURL(new RegExp('/login'), { timeout: 10000 });
+    });
+  });
+
+  // ---------- Authenticated UI tests (app mode only) ----------
+  test.describe('Authenticated UI', () => {
+    test.beforeEach(async ({ page }) => {
+      test.skip(process.env.E2E_APP_MODE !== 'true', 'Wizard route only available in app mode');
+      await signIn(page);
     });
 
     test('page loads with correct heading', async ({ page }) => {
       await page.goto(`${TEST_URL}/infra-setup`);
-      await expect(page.getByText('Infrastructure Setup')).toBeVisible();
+      await expect(page.getByText('Infrastructure Setup')).toBeVisible({ timeout: 10000 });
       await expect(
         page.getByText('Configure GCP, GitHub, and Discord for autonomous deployments')
       ).toBeVisible();
@@ -185,17 +177,14 @@ test.describe('Wizard E2E Regression', () => {
         'Step 8: Create VM',
       ];
       for (const step of steps) {
-        await expect(page.getByText(step)).toBeVisible();
+        await expect(page.getByText(step)).toBeVisible({ timeout: 10000 });
       }
-    });
-
-    test('shows sign in prompt when not authenticated', async ({ page }) => {
-      await page.goto(`${TEST_URL}/infra-setup`);
-      await expect(page.getByText('Please sign in to continue.')).toBeVisible();
     });
 
     test('SA key textarea validates JSON', async ({ page }) => {
       await page.goto(`${TEST_URL}/infra-setup`);
+      await page.getByText('Step 2: Service Account').first().click();
+      await page.waitForTimeout(500);
       const textarea = page.getByPlaceholder(/service_account/);
       await expect(textarea).toBeVisible();
 
@@ -213,7 +202,7 @@ test.describe('Wizard E2E Regression', () => {
     test('locked steps show correct message', async ({ page }) => {
       await page.goto(`${TEST_URL}/infra-setup`);
       const lockMsg = page.getByText('Complete previous step first');
-      await expect(lockMsg.first()).toBeVisible();
+      await expect(lockMsg.first()).toBeVisible({ timeout: 10000 });
     });
 
     test('back to home link works', async ({ page }) => {
@@ -239,25 +228,11 @@ test.describe('Wizard E2E Regression', () => {
         'Wizard route only available in app mode');
     });
 
-    // Skip if no real credentials
-    test.beforeAll(async () => {
-      if (!E2E_GCP_TOKEN || !process.env.E2E_FIREBASE_API_KEY) {
-        console.warn('Skipping full wizard flow: missing E2E_GCP_TOKEN or E2E_FIREBASE_API_KEY');
-      }
-    });
-
     test('completes all wizard steps via e2e injection', async ({ page }) => {
       test.skip(!E2E_GCP_TOKEN || !process.env.E2E_FIREBASE_API_KEY,
         'E2E_GCP_TOKEN and E2E_FIREBASE_API_KEY required');
 
-      // Create test Firebase user if needed
-      await createFirebaseUser();
-      await page.goto(`${TEST_URL}/login`);
-      await page.waitForLoadState('networkidle');
-      await page.fill('input[type="email"]', E2E_USER.email);
-      await page.fill('input[type="password"]', E2E_USER.password);
-      await page.click('button[type="submit"]');
-      await page.waitForURL((url) => !url.pathname.includes('/login'), { timeout: 15000 }).catch(() => {});
+      await signIn(page);
 
       // Navigate to wizard with e2e creds
       await navigateWithE2E(page);
@@ -266,7 +241,7 @@ test.describe('Wizard E2E Regression', () => {
       await expect(page.getByText('Service account configured')).toBeVisible({ timeout: 15000 });
       await expect(page.getByText(E2E_GCP_PROJECT_ID || 'e2e-test-project')).toBeVisible({ timeout: 5000 });
 
-      // Steps 5-8 should be unlocked (Step 4 needs Firebase auto-configure first)
+      // Steps 5-8 should be unlocked
       await expect(page.getByText('Step 5: Billing Account')).toBeVisible();
       await expect(page.getByText('Step 6: GitHub Auth')).toBeVisible();
       await expect(page.getByText('Step 7: Discord Bot')).toBeVisible();
@@ -281,14 +256,7 @@ test.describe('Wizard E2E Regression', () => {
 
       test.setTimeout(600000); // 10 minutes for full VM provision + deploy
 
-      // Sign in
-      await createFirebaseUser();
-      await page.goto(`${TEST_URL}/login`);
-      await page.waitForLoadState('networkidle');
-      await page.fill('input[type="email"]', E2E_USER.email);
-      await page.fill('input[type="password"]', E2E_USER.password);
-      await page.click('button[type="submit"]');
-      await page.waitForURL((url) => !url.pathname.includes('/login'), { timeout: 15000 }).catch(() => {});
+      await signIn(page);
 
       // Navigate to wizard with e2e creds
       await navigateWithE2E(page);
@@ -314,7 +282,7 @@ test.describe('Wizard E2E Regression', () => {
       // Wait for Discord bot online indicator
       await expect(page.getByText('Discord bot online')).toBeVisible({ timeout: 120000 });
 
-      // Wait for staging deploy indicator (may take longer for CI to run)
+      // Wait for staging deploy indicator
       await expect(page.getByText('Staging site deployed')).toBeVisible({ timeout: 600000 });
 
       // Final verification: all three success indicators shown
@@ -372,17 +340,13 @@ test.describe('Wizard E2E Regression', () => {
       test.skip(!E2E_GCP_TOKEN || !process.env.E2E_FIREBASE_API_KEY,
         'E2E_GCP_TOKEN and E2E_FIREBASE_API_KEY required');
 
-      await page.goto(`${TEST_URL}/login`);
-      await page.waitForLoadState('networkidle');
-      await page.fill('input[type="email"]', E2E_USER.email);
-      await page.fill('input[type="password"]', E2E_USER.password);
-      await page.click('button[type="submit"]');
+      await signIn(page);
 
-      await page.goto(`${TEST_URL}/setup`);
+      await page.goto(`${TEST_URL}/infra-setup`);
       await page.waitForLoadState('networkidle');
 
       await page.getByText('Step 2: Service Account').first().click();
-      await page.waitForTimeout(300);
+      await page.waitForTimeout(500);
 
       const textarea = page.getByPlaceholder(/service_account/);
       await expect(textarea).toBeVisible();
