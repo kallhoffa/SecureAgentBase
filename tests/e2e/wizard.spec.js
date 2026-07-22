@@ -70,8 +70,24 @@ const navigateWithE2E = async (page, extraParams = {}) => {
   if (E2E_GCP_PROJECT_ID) {
     params.set('__e2e_project_id', E2E_GCP_PROJECT_ID);
   }
+
+  // Auto-construct minimal Firebase configs from project IDs if not explicitly provided.
+  // Step 4 completion requires both firebaseStagingData?.projectId AND firebaseProductionData?.projectId.
+  const stagingProjectId = process.env.E2E_FIREBASE_STAGING_PROJECT_ID || E2E_GCP_PROJECT_ID;
+  const productionProjectId = process.env.E2E_FIREBASE_PRODUCTION_PROJECT_ID || E2E_GCP_PROJECT_ID;
+
   if (REAL_FIREBASE_STAGING) {
     params.set('__e2e_firebase_staging', Buffer.from(JSON.stringify(REAL_FIREBASE_STAGING)).toString('base64'));
+  } else if (stagingProjectId) {
+    const minimalStaging = { projectId: stagingProjectId };
+    params.set('__e2e_firebase_staging', Buffer.from(JSON.stringify(minimalStaging)).toString('base64'));
+  }
+
+  if (process.env.E2E_FIREBASE_PRODUCTION) {
+    params.set('__e2e_firebase_production', Buffer.from(process.env.E2E_FIREBASE_PRODUCTION).toString('base64'));
+  } else if (productionProjectId) {
+    const minimalProduction = { projectId: productionProjectId };
+    params.set('__e2e_firebase_production', Buffer.from(JSON.stringify(minimalProduction)).toString('base64'));
   }
   if (process.env.E2E_GITHUB_PAT) {
     params.set('__e2e_github_pat', Buffer.from(process.env.E2E_GITHUB_PAT).toString('base64'));
@@ -307,6 +323,49 @@ test.describe('Wizard E2E Regression', () => {
       await expect(page.getByText('Staging site deployed')).toBeVisible();
 
       console.log('Full wizard e2e test passed: VM created, bot online, staging deployed');
+    });
+
+    test('tears down VM after full flow', async () => {
+      test.skip(process.env.E2E_FULL !== 'true',
+        'E2E_FULL=true required — tears down VM created by previous test');
+      test.skip(!E2E_GCP_TOKEN, 'E2E_GCP_TOKEN required for teardown');
+
+      const projectId = E2E_GCP_PROJECT_ID;
+      const instanceName = 'secureagent-manager';
+      const zones = ['us-east1-b', 'us-central1-b', 'us-central1-c', 'us-west1-a', 'us-west1-b', 'us-east1-c', 'us-east1-d', 'europe-west1-d', 'asia-east1-a'];
+
+      console.log(`Teardown: searching for VM "${instanceName}" across ${zones.length} zones...`);
+
+      let deletedCount = 0;
+      for (const zone of zones) {
+        try {
+          const checkResp = await fetch(
+            `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances/${instanceName}`,
+            { headers: { Authorization: `Bearer ${E2E_GCP_TOKEN}` } }
+          );
+          if (checkResp.ok) {
+            console.log(`Teardown: found VM in ${zone}, deleting...`);
+            const deleteResp = await fetch(
+              `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances/${instanceName}`,
+              { method: 'DELETE', headers: { Authorization: `Bearer ${E2E_GCP_TOKEN}` } }
+            );
+            if (deleteResp.ok || deleteResp.status === 204) {
+              console.log(`Teardown: VM deletion initiated in ${zone}`);
+              deletedCount++;
+            } else {
+              console.warn(`Teardown: DELETE returned ${deleteResp.status} in ${zone}`);
+            }
+          }
+        } catch (e) {
+          // Instance not found in this zone, continue
+        }
+      }
+
+      if (deletedCount === 0) {
+        console.log('Teardown: no VM found to delete (may have been cleaned up already)');
+      } else {
+        console.log(`Teardown: initiated deletion of ${deletedCount} VM instance(s)`);
+      }
     });
 
     test('SA JSON upload flow works end-to-end', async ({ page }) => {
