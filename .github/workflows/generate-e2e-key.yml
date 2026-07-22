@@ -76,6 +76,34 @@ jobs:
             --role="roles/firebase.admin" \
             --condition=None 2>&1 || true
 
+          echo ""
+          echo "=== Granting wizard-required roles to e2e-runner SA ==="
+          E2E_SA="e2e-test-runner@${PROJECT}.iam.gserviceaccount.com"
+
+          echo "Granting iam.serviceAccountUser to e2e-runner SA..."
+          gcloud projects add-iam-policy-binding "${PROJECT}" \
+            --member="serviceAccount:${E2E_SA}" \
+            --role="roles/iam.serviceAccountUser" \
+            --condition=None 2>&1 || true
+
+          echo "Granting iam.serviceAccountTokenCreator to e2e-runner SA..."
+          gcloud projects add-iam-policy-binding "${PROJECT}" \
+            --member="serviceAccount:${E2E_SA}" \
+            --role="roles/iam.serviceAccountTokenCreator" \
+            --condition=None 2>&1 || true
+
+          echo "Granting billing.projectManager to e2e-runner SA..."
+          gcloud projects add-iam-policy-binding "${PROJECT}" \
+            --member="serviceAccount:${E2E_SA}" \
+            --role="roles/billing.projectManager" \
+            --condition=None 2>&1 || true
+
+          echo "Granting iam.workloadIdentityPoolAdmin to e2e-runner SA..."
+          gcloud projects add-iam-policy-binding "${PROJECT}" \
+            --member="serviceAccount:${E2E_SA}" \
+            --role="roles/iam.workloadIdentityPoolAdmin" \
+            --condition=None 2>&1 || true
+
       - name: Create e2e SA key
         id: create-key
         run: |

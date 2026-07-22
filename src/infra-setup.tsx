@@ -2158,6 +2158,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     const e2eGithubPat = read('__e2e_github_pat');
     const e2eDiscordToken = read('__e2e_discord_token');
     const e2eDiscordGuild = read('__e2e_discord_guild');
+    const e2eDiscordBotAdded = read('__e2e_discord_bot_added');
+    const e2eBillingEnabled = read('__e2e_billing_enabled');
 
     if (e2eSA) {
       try {
@@ -2223,8 +2225,28 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         console.warn('E2E: Failed to decode __e2e_discord_guild:', e);
       }
     }
+    if (e2eDiscordBotAdded) {
+      try {
+        const val = atob(e2eDiscordBotAdded);
+        if (val === 'true' || val === '1') {
+          setDiscordBotAdded(true);
+        }
+      } catch (e) {
+        console.warn('E2E: Failed to decode __e2e_discord_bot_added:', e);
+      }
+    }
+    if (e2eBillingEnabled) {
+      try {
+        const val = atob(e2eBillingEnabled);
+        if (val === 'true' || val === '1') {
+          setBillingEnabled(true);
+        }
+      } catch (e) {
+        console.warn('E2E: Failed to decode __e2e_billing_enabled:', e);
+      }
+    }
 
-    if (e2eSA || e2eToken || e2eFirebaseStaging || e2eFirebaseProd || e2eGithubPat || e2eDiscordToken || e2eDiscordGuild) {
+    if (e2eSA || e2eToken || e2eFirebaseStaging || e2eFirebaseProd || e2eGithubPat || e2eDiscordToken || e2eDiscordGuild || e2eDiscordBotAdded || e2eBillingEnabled) {
       console.log('E2E mode active: credentials injected from URL params');
     }
   }, []);

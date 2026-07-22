@@ -36,6 +36,30 @@ const REAL_FIREBASE_STAGING = process.env.E2E_FIREBASE_STAGING_B64
 const navigateWithE2E = async (page, extraParams = {}) => {
   const params = new URLSearchParams();
 
+  // Inject SA key JSON as __e2e_sa (base64-encoded JSON string)
+  // The wizard parses this to set serviceAccountJson, godSaEmail, projectId
+  if (process.env.E2E_SA_KEY) {
+    try {
+      // E2E_SA_KEY might be raw JSON or base64-encoded JSON
+      let saJson;
+      const trimmed = process.env.E2E_SA_KEY.trim();
+      if (trimmed.startsWith('{')) {
+        saJson = trimmed;
+      } else {
+        saJson = Buffer.from(trimmed, 'base64').toString('utf-8');
+      }
+      // Validate it parses and has private_key
+      const parsed = JSON.parse(saJson);
+      if (parsed.private_key) {
+        params.set('__e2e_sa', Buffer.from(saJson).toString('base64'));
+      } else {
+        console.warn('E2E_SA_KEY parsed but missing private_key field');
+      }
+    } catch (e) {
+      console.warn('E2E_SA_KEY is not valid JSON:', e.message);
+    }
+  }
+
   // Inject GCP access token via sessionStorage (not URL param — avoids address bar leakage)
   if (E2E_GCP_TOKEN) {
     await page.addInitScript((token) => {
@@ -57,6 +81,12 @@ const navigateWithE2E = async (page, extraParams = {}) => {
   }
   if (process.env.E2E_DISCORD_GUILD) {
     params.set('__e2e_discord_guild', Buffer.from(process.env.E2E_DISCORD_GUILD).toString('base64'));
+  }
+  if (process.env.E2E_DISCORD_BOT_ADDED === 'true') {
+    params.set('__e2e_discord_bot_added', Buffer.from('true').toString('base64'));
+  }
+  if (process.env.E2E_BILLING_ENABLED === 'true') {
+    params.set('__e2e_billing_enabled', Buffer.from('true').toString('base64'));
   }
 
   for (const [key, val] of Object.entries(extraParams)) {
@@ -126,16 +156,17 @@ test.describe('Wizard E2E Regression', () => {
       ).toBeVisible();
     });
 
-    test('shows all 7 step headers', async ({ page }) => {
+    test('shows all 8 step headers', async ({ page }) => {
       await page.goto(`${TEST_URL}/infra-setup`);
       const steps = [
         'Step 1: Account',
         'Step 2: Service Account',
         'Step 3: GCP Project',
         'Step 4: Firebase Setup',
-        'Step 5: GitHub Auth',
-        'Step 6: Discord Bot',
-        'Step 7: Create VM',
+        'Step 5: Billing Account',
+        'Step 6: GitHub Auth',
+        'Step 7: Discord Bot',
+        'Step 8: Create VM',
       ];
       for (const step of steps) {
         await expect(page.getByText(step)).toBeVisible();
@@ -215,23 +246,17 @@ test.describe('Wizard E2E Regression', () => {
       // Navigate to wizard with e2e creds
       await navigateWithE2E(page);
 
-      // Verify steps auto-complete from injected creds
+      // Verify steps auto-complete from injected creds (SA key completes Steps 1-3)
       await expect(page.getByText('Service account configured')).toBeVisible({ timeout: 15000 });
+      await expect(page.getByText(E2E_GCP_PROJECT_ID || 'e2e-test-project')).toBeVisible({ timeout: 5000 });
 
-      // Step 4-7 should be unlocked and show completed state
-      await expect(page.getByText('Step 4: Firebase Setup')).toBeVisible();
-      await expect(page.getByText('Step 5: GitHub Auth')).toBeVisible();
-      await expect(page.getByText('Step 6: Discord Bot')).toBeVisible();
-      await expect(page.getByText('Step 7: Create VM')).toBeVisible();
+      // Steps 5-8 should be unlocked (Step 4 needs Firebase auto-configure first)
+      await expect(page.getByText('Step 5: Billing Account')).toBeVisible();
+      await expect(page.getByText('Step 6: GitHub Auth')).toBeVisible();
+      await expect(page.getByText('Step 7: Discord Bot')).toBeVisible();
+      await expect(page.getByText('Step 8: Create VM')).toBeVisible();
 
-      // Verify Create VM button is enabled (all prereqs met)
-      await page.getByText('Step 7: Create VM').first().click();
-      await page.waitForTimeout(500);
-      const createBtn = page.getByRole('button', { name: /Enable APIs & Create VM/i });
-      await expect(createBtn).toBeVisible({ timeout: 5000 });
-      await expect(createBtn).toBeEnabled();
-
-      console.log('Wizard e2e injection test passed: all steps pre-filled, Create VM enabled');
+      console.log('Wizard e2e injection test passed: Steps 1-3 pre-filled, Steps 5-8 unlocked');
     });
 
     test('creates VM and verifies success indicators', async ({ page }) => {
@@ -252,12 +277,12 @@ test.describe('Wizard E2E Regression', () => {
       // Navigate to wizard with e2e creds
       await navigateWithE2E(page);
 
-      // Wait for steps to auto-complete
+      // Wait for steps to auto-complete (SA key fills Steps 1-3)
       await expect(page.getByText('Service account configured')).toBeVisible({ timeout: 15000 });
       await page.waitForTimeout(1000);
 
-      // Go to step 7 and create VM
-      await page.getByText('Step 7: Create VM').first().click();
+      // Go to Step 8: Create VM and click create
+      await page.getByText('Step 8: Create VM').first().click();
       await page.waitForTimeout(500);
 
       const createBtn = page.getByRole('button', { name: /Enable APIs & Create VM/i });
