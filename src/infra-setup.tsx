@@ -2470,7 +2470,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           }
         }
       } catch (e) {
-        // Silently fail - will retry on next poll
+        console.error('VM log polling error:', e);
       }
     };
     
@@ -2907,6 +2907,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       { key: 'firebase_staging_config', value: firebaseStagingData ? JSON.stringify(firebaseStagingData) : '' },
       { key: 'firebase_production_config', value: firebaseProductionData ? JSON.stringify(firebaseProductionData) : '' },
       { key: 'vite_app_name', value: projectName || 'MyApp' },
+      { key: 'serial-port-enable', value: 'TRUE' },
+      { key: 'enable-oslogin', value: 'false' },
     ];
     return { items };
   };
