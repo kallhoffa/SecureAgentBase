@@ -53,11 +53,19 @@ const signIn = async (page) => {
   }
 
   await page.goto(`${TEST_URL}/login`);
-  await page.waitForLoadState('networkidle');
+  await page.waitForLoadState('domcontentloaded');
   await page.fill('input[type="email"]', E2E_USER.email);
   await page.fill('input[type="password"]', E2E_USER.password);
   await page.click('button[type="submit"]');
   await page.waitForURL((url) => !url.pathname.includes('/login'), { timeout: 15000 });
+};
+
+// Helper: navigate to wizard and wait for auth to resolve
+const goToWizard = async (page) => {
+  await page.goto(`${TEST_URL}/infra-setup`);
+  await page.waitForLoadState('domcontentloaded');
+  // Wait for Firebase Auth to resolve — Step 1 shows "Signed in as" when ready
+  await expect(page.getByText(/Signed in as/).first()).toBeVisible({ timeout: 15000 });
 };
 
 // Helper: navigate to wizard with e2e credentials injected
@@ -135,7 +143,9 @@ const navigateWithE2E = async (page, extraParams = {}) => {
 
   const qs = params.toString();
   await page.goto(`${TEST_URL}/infra-setup${qs ? '?' + qs : ''}`);
-  await page.waitForLoadState('networkidle');
+  await page.waitForLoadState('domcontentloaded');
+  // Wait for Firebase Auth to resolve
+  await expect(page.getByText(/Signed in as/).first()).toBeVisible({ timeout: 15000 });
 };
 
 test.describe('Wizard E2E Regression', () => {
@@ -157,7 +167,7 @@ test.describe('Wizard E2E Regression', () => {
     });
 
     test('page loads with correct heading', async ({ page }) => {
-      await page.goto(`${TEST_URL}/infra-setup`);
+      await goToWizard(page);
       await expect(page.getByText('Infrastructure Setup')).toBeVisible({ timeout: 10000 });
       await expect(
         page.getByText('Configure GCP, GitHub, and Discord for autonomous deployments')
@@ -165,7 +175,7 @@ test.describe('Wizard E2E Regression', () => {
     });
 
     test('shows all 8 step headers', async ({ page }) => {
-      await page.goto(`${TEST_URL}/infra-setup`);
+      await goToWizard(page);
       const steps = [
         'Step 1: Account',
         'Step 2: Service Account',
@@ -182,11 +192,15 @@ test.describe('Wizard E2E Regression', () => {
     });
 
     test('SA key textarea validates JSON', async ({ page }) => {
-      await page.goto(`${TEST_URL}/infra-setup`);
+      await goToWizard(page);
+
+      // Step 2 should not be locked after sign-in (Step 1 = !!user, which is true)
+      // Click the Step 2 header to expand it
       await page.getByText('Step 2: Service Account').first().click();
       await page.waitForTimeout(500);
+
       const textarea = page.getByPlaceholder(/service_account/);
-      await expect(textarea).toBeVisible();
+      await expect(textarea).toBeVisible({ timeout: 10000 });
 
       // Invalid JSON
       await textarea.fill('not valid json');
@@ -200,23 +214,22 @@ test.describe('Wizard E2E Regression', () => {
     });
 
     test('locked steps show correct message', async ({ page }) => {
-      await page.goto(`${TEST_URL}/infra-setup`);
+      await goToWizard(page);
       const lockMsg = page.getByText('Complete previous step first');
       await expect(lockMsg.first()).toBeVisible({ timeout: 10000 });
     });
 
     test('back to home link works', async ({ page }) => {
-      await page.goto(`${TEST_URL}/infra-setup`);
+      await goToWizard(page);
       await page.getByText('Back to Home').click();
       await expect(page).toHaveURL(TEST_URL + '/');
     });
 
     test('preview link opens in new tab', async ({ page }) => {
-      await page.goto(`${TEST_URL}/infra-setup`);
-      const previewLink = page.getByText(/Preview deployed template/);
+      await goToWizard(page);
+      const previewLink = page.getByRole('link', { name: /Preview deployed template/ });
       await expect(previewLink).toBeVisible();
-      const linkElement = previewLink.locator('..');
-      const target = await linkElement.getAttribute('target');
+      const target = await previewLink.getAttribute('target');
       expect(target).toBe('_blank');
     });
   });
@@ -342,14 +355,13 @@ test.describe('Wizard E2E Regression', () => {
 
       await signIn(page);
 
-      await page.goto(`${TEST_URL}/infra-setup`);
-      await page.waitForLoadState('networkidle');
+      await goToWizard(page);
 
       await page.getByText('Step 2: Service Account').first().click();
       await page.waitForTimeout(500);
 
       const textarea = page.getByPlaceholder(/service_account/);
-      await expect(textarea).toBeVisible();
+      await expect(textarea).toBeVisible({ timeout: 10000 });
 
       const testSaJson = JSON.stringify({
         type: 'service_account',

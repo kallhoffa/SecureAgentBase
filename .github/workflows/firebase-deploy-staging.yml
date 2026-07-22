@@ -102,12 +102,11 @@ jobs:
             -d '{"signIn":{"email":{"enabled":true,"passwordRequired":true}}}')
           echo "Enable auth response: ${RESP}"
 
-          echo "=== Creating/updating test user ==="
+          echo "=== Creating test user via public signUp API ==="
           RESP=$(curl -s -X POST \
-            "https://identitytoolkit.googleapis.com/v2/projects/${PROJECT}/defaultUser?key=${{ vars.FIREBASE_API_KEY_STAGING }}" \
-            -H "Authorization: Bearer ${TOKEN}" \
+            "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${{ vars.FIREBASE_API_KEY_STAGING }}" \
             -H "Content-Type: application/json" \
-            -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\",\"emailVerified\":true}")
+            -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\",\"returnSecureToken\":true}")
           echo "Create user response: ${RESP}"
 
       - name: Generate e2e GCP token via impersonation
