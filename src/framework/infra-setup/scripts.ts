@@ -467,10 +467,11 @@ REGISTER_EOF
 
 systemctl daemon-reload
 systemctl enable kimaki-register.service
-systemctl start kimaki-register.service
 
 echo "=== Kimaki installation complete! ==="
 echo "Service status:"
 systemctl status kimaki.service --no-pager || true
+
+systemctl start kimaki-register.service &
 `;
 };
