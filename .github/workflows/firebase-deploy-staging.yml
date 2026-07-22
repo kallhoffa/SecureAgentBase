@@ -87,6 +87,29 @@ jobs:
         env:
           TEST_URL: https://${{ vars.FIREBASE_PROJECT_ID_STAGING }}.web.app
 
+      - name: Enable Firebase Auth and create test user
+        run: |
+          TOKEN=$(gcloud auth print-access-token 2>/dev/null)
+          PROJECT=${{ vars.FIREBASE_PROJECT_ID_STAGING }}
+          EMAIL="e2e@${PROJECT}.iam.gserviceaccount.com"
+          PASSWORD="${{ secrets.E2E_TEST_PASSWORD }}"
+
+          echo "=== Enabling email/password auth for ${PROJECT} ==="
+          RESP=$(curl -s -X PATCH \
+            "https://identitytoolkit.googleapis.com/v2/projects/${PROJECT}/config?updateMask=signIn.email.enabled,signIn.email.passwordRequired" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d '{"signIn":{"email":{"enabled":true,"passwordRequired":true}}}')
+          echo "Enable auth response: ${RESP}"
+
+          echo "=== Creating/updating test user ==="
+          RESP=$(curl -s -X POST \
+            "https://identitytoolkit.googleapis.com/v2/projects/${PROJECT}/defaultUser?key=${{ vars.FIREBASE_API_KEY_STAGING }}" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\",\"emailVerified\":true}")
+          echo "Create user response: ${RESP}"
+
       - name: Generate e2e GCP token via impersonation
         id: gen-e2e-token
         run: |
