@@ -4851,6 +4851,9 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                                  setStep4Status('complete');
                                  setStep4Message('VM created successfully!');
                                  setShowRecreateOptions(false);
+                                 setVmInitComplete(false);
+                                 setKimakiInstallUrl('');
+                                 setShowInitModal(true);
                                  expandNextStep(8);
                                  break;
                               } else {
@@ -5152,6 +5155,9 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                                  setStep4Status('complete');
                                  setStep4Message('VM created successfully!');
                                  setShowRecreateOptions(false);
+                                 setVmInitComplete(false);
+                                 setKimakiInstallUrl('');
+                                 setShowInitModal(true);
                                  expandNextStep(8);
                                  break;
                               } else {
