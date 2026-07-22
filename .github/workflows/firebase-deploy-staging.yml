@@ -101,7 +101,7 @@ jobs:
 
       - name: Run Full E2E Tests on Staging
         run: |
-          npx playwright test e2e --retries=2
+          npx playwright test --retries=2
         env:
           TEST_URL: https://${{ vars.FIREBASE_PROJECT_ID_STAGING }}.web.app
           E2E_GCP_TOKEN: ${{ steps.gen-e2e-token.outputs.token }}
