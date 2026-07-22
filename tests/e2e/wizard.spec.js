@@ -146,6 +146,11 @@ const navigateWithE2E = async (page, extraParams = {}) => {
   const qs = params.toString();
   await page.goto(`${TEST_URL}/infra-setup${qs ? '?' + qs : ''}`);
   await page.waitForLoadState('domcontentloaded');
+  // Firebase may briefly redirect to /login before auth state resolves
+  if (page.url().includes('/login')) {
+    await page.waitForURL((url) => !url.pathname.includes('/login'), { timeout: 20000 });
+    await page.waitForLoadState('domcontentloaded');
+  }
   // Wait for Firebase Auth to resolve
   await expect(page.getByText(/Signed in as/).first()).toBeVisible({ timeout: 15000 });
 };
@@ -202,12 +207,12 @@ test.describe('Wizard E2E Regression', () => {
 
       // Invalid JSON
       await textarea.fill('not valid json');
-      await page.getByRole('button', { name: 'Continue' }).click();
+      await page.getByRole('button', { name: 'Continue', exact: true }).click();
       await expect(page.getByText('Invalid JSON')).toBeVisible();
 
       // Valid JSON
       await textarea.fill(MOCK_SA_JSON);
-      await page.getByRole('button', { name: 'Continue' }).click();
+      await page.getByRole('button', { name: 'Continue', exact: true }).click();
       // After Continue, step 2 completes — verify the textarea is no longer shown
       // (step content collapses) and the step 3 content expands
       await expect(page.getByText('Step 3: GCP Project')).toBeVisible({ timeout: 5000 });
@@ -378,7 +383,7 @@ test.describe('Wizard E2E Regression', () => {
       });
 
       await textarea.fill(testSaJson);
-      await page.getByRole('button', { name: 'Continue' }).click();
+      await page.getByRole('button', { name: 'Continue', exact: true }).click();
       // After Continue, step 2 completes and step 3 expands
       await expect(page.getByText(E2E_GCP_PROJECT_ID || 'e2e-test-project')).toBeVisible({ timeout: 5000 });
     });
