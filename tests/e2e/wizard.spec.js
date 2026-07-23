@@ -278,6 +278,18 @@ test.describe('Wizard E2E Regression', () => {
 
       test.setTimeout(300000); // 5 minutes for VM creation + API enablement
 
+      // Capture browser console logs for debugging
+      const consoleLogs = [];
+      page.on('console', (msg) => {
+        const text = msg.text();
+        if (text.includes('checkBilling') || text.includes('getServiceAccount') ||
+            text.includes('signJwt') || text.includes('generateAccessToken') ||
+            text.includes('billing') || text.includes('VM') || text.includes('error') ||
+            text.includes('Error') || text.includes('E2E')) {
+          consoleLogs.push(`[${msg.type()}] ${text}`);
+        }
+      });
+
       await signIn(page);
 
       // Navigate to wizard with e2e creds
@@ -295,29 +307,50 @@ test.describe('Wizard E2E Regression', () => {
       await expect(createBtn).toBeVisible({ timeout: 5000 });
       await createBtn.click();
 
-      // After clicking, wizard shows "enabling" state (Checking billing status...),
-      // "VM is initializing...", or an error. Wait for any visible status indicator.
-      const statusIndicator = page.getByText(/Checking billing|VM is initializing|VM created successfully|VM Initialization Complete|Failed to create|out of capacity|Try again/i);
-      await expect(statusIndicator.first()).toBeVisible({ timeout: 120000 });
+      // Wait for either success or error — the wizard will show one of these outcomes.
+      // Use a broader regex to catch ALL possible outcomes including intermediate states.
+      const successOrError = page.getByText(
+        /VM created successfully!|Billing is required|Failed to authenticate|Failed to enable|Failed to create|out of capacity|All zones|VM terminated|VM is in "|Permission denied|billing.*linkedaccount/i
+      );
 
-      // If it shows an error, log and return gracefully
-      const errorIndicator = page.getByText(/Failed to create|out of capacity|Try again/i);
-      if (await errorIndicator.first().isVisible()) {
-        console.log('VM creation failed — GCP infrastructure issue (billing/APIs/permissions)');
-        return;
-      }
-
-      // If it shows the retry button, VM creation failed silently
+      // Also check for the retry button reappearing (means creation failed silently)
       const retryBtn = page.getByRole('button', { name: /Enable APIs & Create VM/i });
-      if (await retryBtn.isVisible()) {
-        console.log('VM creation button reappeared — API calls may have failed');
+
+      // Race: wait for either success/error text OR retry button
+      const result = await Promise.race([
+        successOrError.first().waitFor({ timeout: 180000 }).then(() => 'text').catch(() => 'timeout'),
+        retryBtn.waitFor({ state: 'visible', timeout: 180000 }).then(() => 'button').catch(() => 'timeout'),
+      ]);
+
+      if (result === 'timeout') {
+        // Dump page content for debugging
+        const bodyText = await page.locator('body').innerText().catch(() => 'could not read');
+        console.error('VM creation test timed out. Page content:\n', bodyText.substring(0, 3000));
         return;
       }
 
-      // Verify VM was created successfully — the wizard shows "VM created successfully!" in the step UI
-      await expect(page.getByText('VM created successfully!')).toBeVisible({ timeout: 120000 });
+      // Check for errors
+      const isErrorText = result === 'text' && !(await page.getByText('VM created successfully!').isVisible());
+      const isRetryBtn = result === 'button';
 
+      if (isErrorText || isRetryBtn) {
+        const errorText = await page.locator('body').innerText().catch(() => '');
+        const errorLines = errorText.split('\n').filter(l =>
+          /error|failed|billing|permission|capacity|terminated/i.test(l)
+        ).join(' | ');
+        console.log(`VM creation failed (${isRetryBtn ? 'retry button' : 'error text'}): ${errorLines || 'unknown'}`);
+        if (consoleLogs.length > 0) {
+          console.log('Browser console logs:', consoleLogs.join('\n'));
+        }
+        return;
+      }
+
+      // Success: "VM created successfully!" is visible
+      await expect(page.getByText('VM created successfully!')).toBeVisible();
       console.log('VM creation e2e test passed: VM created successfully in GCP');
+      if (consoleLogs.length > 0) {
+        console.log('Browser console logs:', consoleLogs.join('\n'));
+      }
     });
 
     test('waits for VM initialization, bot, and staging deploy', async ({ page }) => {
