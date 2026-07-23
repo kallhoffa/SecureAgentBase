@@ -307,47 +307,49 @@ test.describe('Wizard E2E Regression', () => {
       await expect(createBtn).toBeVisible({ timeout: 5000 });
       await createBtn.click();
 
-      // Wait for either success or error — the wizard will show one of these outcomes.
-      // Use a broader regex to catch ALL possible outcomes including intermediate states.
-      const successOrError = page.getByText(
-        /VM created successfully!|Billing is required|Failed to authenticate|Failed to enable|Failed to create|out of capacity|All zones|VM terminated|VM is in "|Permission denied|billing.*linkedaccount/i
-      );
+      // After clicking, the handler runs billing check → API enablement → VM creation.
+      // This can take 3-5 minutes total. We wait for one of these outcomes:
+      // 1. Init modal appears ("VM is initializing...") — VM created, startup script running
+      // 2. Error text appears — creation failed at some step
+      // 3. Retry button reappears — creation failed silently
 
-      // Also check for the retry button reappearing (means creation failed silently)
+      const initModal = page.getByText('VM is initializing...');
+      const errorText = page.getByText(
+        /Billing is required|Failed to authenticate|Failed to enable|Failed to create|out of capacity|All zones|VM terminated|VM is in "|Permission denied|billing.*linkedaccount/i
+      );
       const retryBtn = page.getByRole('button', { name: /Enable APIs & Create VM/i });
 
-      // Race: wait for either success/error text OR retry button
+      // Race: wait for init modal (success) OR error text OR retry button
       const result = await Promise.race([
-        successOrError.first().waitFor({ timeout: 180000 }).then(() => 'text').catch(() => 'timeout'),
-        retryBtn.waitFor({ state: 'visible', timeout: 180000 }).then(() => 'button').catch(() => 'timeout'),
+        initModal.waitFor({ timeout: 240000 }).then(() => 'modal').catch(() => 'timeout'),
+        errorText.first().waitFor({ timeout: 240000 }).then(() => 'error').catch(() => 'timeout'),
+        retryBtn.waitFor({ state: 'visible', timeout: 240000 }).then(() => 'button').catch(() => 'timeout'),
       ]);
 
       if (result === 'timeout') {
-        // Dump page content for debugging
         const bodyText = await page.locator('body').innerText().catch(() => 'could not read');
         console.error('VM creation test timed out. Page content:\n', bodyText.substring(0, 3000));
-        return;
-      }
-
-      // Check for errors
-      const isErrorText = result === 'text' && !(await page.getByText('VM created successfully!').isVisible());
-      const isRetryBtn = result === 'button';
-
-      if (isErrorText || isRetryBtn) {
-        const errorText = await page.locator('body').innerText().catch(() => '');
-        const errorLines = errorText.split('\n').filter(l =>
-          /error|failed|billing|permission|capacity|terminated/i.test(l)
-        ).join(' | ');
-        console.log(`VM creation failed (${isRetryBtn ? 'retry button' : 'error text'}): ${errorLines || 'unknown'}`);
         if (consoleLogs.length > 0) {
           console.log('Browser console logs:', consoleLogs.join('\n'));
         }
         return;
       }
 
-      // Success: "VM created successfully!" is visible
-      await expect(page.getByText('VM created successfully!')).toBeVisible();
-      console.log('VM creation e2e test passed: VM created successfully in GCP');
+      if (result === 'error' || result === 'button') {
+        const errorBody = await page.locator('body').innerText().catch(() => '');
+        const errorLines = errorBody.split('\n').filter(l =>
+          /error|failed|billing|permission|capacity|terminated/i.test(l)
+        ).join(' | ');
+        console.log(`VM creation failed (${result}): ${errorLines || 'unknown'}`);
+        if (consoleLogs.length > 0) {
+          console.log('Browser console logs:', consoleLogs.join('\n'));
+        }
+        return;
+      }
+
+      // Init modal appeared — VM was created successfully and startup script is running
+      await expect(initModal).toBeVisible();
+      console.log('VM creation e2e test passed: VM created, init modal visible, startup script running');
       if (consoleLogs.length > 0) {
         console.log('Browser console logs:', consoleLogs.join('\n'));
       }
