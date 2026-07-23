@@ -304,7 +304,7 @@ git commit -m "Initial commit of SecureAgentBase template"
 
 # Create GitHub repo and push
 if [ -n "$GITHUB_PAT" ]; then
-  echo "DEBUG: GITHUB_PAT is set (${#GITHUB_PAT} chars), authenticating..."
+  echo "DEBUG: GITHUB_PAT is set, authenticating..."
   echo $GITHUB_PAT | gh auth login --with-token
   echo "DEBUG: gh auth status:"; gh auth status 2>&1 || true
   
