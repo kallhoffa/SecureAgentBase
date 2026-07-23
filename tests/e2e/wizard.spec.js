@@ -106,9 +106,13 @@ const navigateWithE2E = async (page, extraParams = {}) => {
     params.set('__e2e_project_id', E2E_GCP_PROJECT_ID);
   }
 
-  // Auto-construct minimal Firebase configs from project IDs
-  const stagingProjectId = process.env.E2E_FIREBASE_STAGING_PROJECT_ID || E2E_GCP_PROJECT_ID;
-  const productionProjectId = process.env.E2E_FIREBASE_PRODUCTION_PROJECT_ID || E2E_GCP_PROJECT_ID;
+  // Auto-construct minimal Firebase configs from project IDs.
+  // Use E2E_GCP_PROJECT_ID as the staging project — that's where the VM
+  // is created and where its GitHub Actions should deploy Firebase hosting.
+  // E2E_FIREBASE_STAGING_PROJECT_ID is the CI pipeline's own staging site
+  // (agentbase-staging), which is separate from the test project.
+  const stagingProjectId = E2E_GCP_PROJECT_ID || process.env.E2E_FIREBASE_STAGING_PROJECT_ID;
+  const productionProjectId = E2E_GCP_PROJECT_ID || process.env.E2E_FIREBASE_PRODUCTION_PROJECT_ID;
 
   if (REAL_FIREBASE_STAGING) {
     params.set('__e2e_firebase_staging', Buffer.from(JSON.stringify(REAL_FIREBASE_STAGING)).toString('base64'));
@@ -375,7 +379,7 @@ test.describe('Wizard E2E Regression', () => {
       // so each deployment has a unique version marker in the nav bar.
       test.setTimeout(600000); // 10 minutes
 
-      const stagingProjectId = process.env.E2E_FIREBASE_STAGING_PROJECT_ID || E2E_GCP_PROJECT_ID;
+      const stagingProjectId = E2E_GCP_PROJECT_ID || process.env.E2E_FIREBASE_STAGING_PROJECT_ID;
       if (!stagingProjectId) {
         throw new Error('Staging deploy test requires E2E_FIREBASE_STAGING_PROJECT_ID or E2E_GCP_PROJECT_ID');
       }
