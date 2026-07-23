@@ -364,12 +364,16 @@ test.describe('Wizard E2E Regression', () => {
       // template after the VM runs its startup script, pushes to GitHub,
       // GitHub Actions builds, and Firebase hosting deploys.
       //
-      // We poll the staging URL directly from the test (not from the browser)
-      // because the serial port polling in the browser may not trigger
-      // vmInitComplete due to React useEffect closure issues.
+      // CRITICAL: The staging site may already have content from a previous
+      // deployment (the CI pipeline's own staging deploy). To avoid false
+      // positives, we:
+      //   1. Snapshot the current page content BEFORE the VM deploys
+      //   2. Poll until the content CHANGES (proving a new deployment landed)
+      //   3. Then verify the new content matches the expected template
       //
-      // The test FAILS if the expected content does not appear within the timeout.
-      test.setTimeout(600000); // 10 minutes — VM needs to boot, install, build, deploy
+      // The VM's GitHub Actions workflow sets VITE_APP_VERSION=${{ github.sha }},
+      // so each deployment has a unique version marker in the nav bar.
+      test.setTimeout(600000); // 10 minutes
 
       const stagingProjectId = process.env.E2E_FIREBASE_STAGING_PROJECT_ID || E2E_GCP_PROJECT_ID;
       if (!stagingProjectId) {
@@ -377,16 +381,24 @@ test.describe('Wizard E2E Regression', () => {
       }
 
       const stagingUrl = `https://${stagingProjectId}.web.app`;
-      console.log(`Staging deploy test: polling ${stagingUrl} for expected template content`);
 
-      // Expected content: the Dashboard template renders "Welcome to {appName}"
-      // where appName defaults to "Your App" in template mode or "SecureAgentBase" in app mode.
-      const expectedPatterns = [
-        /Welcome to/i,
-        /SecureAgentBase/i,
-        /Your App/i,
-      ];
+      // Step 1: Snapshot current content to detect when a NEW deployment lands
+      let baselineHtml = '';
+      let baselineVersion = '';
+      try {
+        const baseRes = await fetch(stagingUrl);
+        if (baseRes.ok) {
+          baselineHtml = await baseRes.text();
+          // Extract current VITE_APP_VERSION from nav bar (first 7 chars of SHA)
+          const versionMatch = baselineHtml.match(/v([0-9a-f]{7})/);
+          baselineVersion = versionMatch ? versionMatch[1] : '';
+          console.log(`Staging deploy test: baseline snapshot — version: ${baselineVersion || 'none'}, HTML length: ${baselineHtml.length}`);
+        }
+      } catch {
+        console.log('Staging deploy test: no existing deployment found (clean slate)');
+      }
 
+      // Step 2: Poll until content changes or new deployment appears
       const startTime = Date.now();
       const timeout = 600000; // 10 minutes
       const interval = 15000; // 15 seconds
@@ -403,18 +415,36 @@ test.describe('Wizard E2E Regression', () => {
 
           const html = await res.text();
 
+          // Check if content changed from baseline (new deployment landed)
+          const contentChanged = html !== baselineHtml;
+
           // Check for expected template content
-          const hasExpectedContent = expectedPatterns.some(p => p.test(html));
-          if (hasExpectedContent) {
-            console.log(`Staging deploy test: PASSED — template content found at ${stagingUrl} (${elapsed}s)`);
-            return; // Success
+          const hasWelcome = /Welcome to/i.test(html);
+          const hasApp = /SecureAgentBase|Your App/i.test(html);
+
+          // Extract new version
+          const versionMatch = html.match(/v([0-9a-f]{7})/);
+          const newVersion = versionMatch ? versionMatch[1] : '';
+
+          if (contentChanged && hasWelcome && hasApp) {
+            // Verify the version changed too (extra confidence)
+            if (baselineVersion && newVersion && newVersion !== baselineVersion) {
+              console.log(`Staging deploy test: PASSED — new deployment detected (${baselineVersion} → ${newVersion}, ${elapsed}s)`);
+            } else if (!baselineVersion) {
+              console.log(`Staging deploy test: PASSED — first deployment detected (version: ${newVersion}, ${elapsed}s)`);
+            } else {
+              console.log(`Staging deploy test: PASSED — content changed (version: ${newVersion}, ${elapsed}s)`);
+            }
+            return;
           }
 
-          // Site is reachable but doesn't have our content yet — might be showing
-          // a default Firebase page or a stale deployment
-          console.log(`Staging deploy test: site reachable but no template content yet (${elapsed}s, HTML length: ${html.length})`);
+          if (contentChanged) {
+            console.log(`Staging deploy test: content changed but no template found yet (${elapsed}s, new version: ${newVersion})`);
+          } else {
+            console.log(`Staging deploy test: no change yet (${elapsed}s, baseline version: ${baselineVersion})`);
+          }
         } catch (e) {
-          console.log(`Staging deploy test: not yet reachable — ${e.message} (${elapsed}s)`);
+          console.log(`Staging deploy test: error — ${e.message} (${elapsed}s)`);
         }
         await new Promise(r => setTimeout(r, interval));
       }
@@ -422,7 +452,8 @@ test.describe('Wizard E2E Regression', () => {
       // Timeout — fail the test
       const elapsed = Math.round((Date.now() - startTime) / 1000);
       throw new Error(
-        `Staging deploy test FAILED: expected template content did not appear at ${stagingUrl} within ${elapsed}s. ` +
+        `Staging deploy test FAILED: new deployment did not appear at ${stagingUrl} within ${elapsed}s. ` +
+        `Baseline version: ${baselineVersion || 'none'}. ` +
         `The VM may not have completed its startup script, GitHub Actions may have failed, ` +
         `or the Firebase hosting deploy may have failed.`
       );
