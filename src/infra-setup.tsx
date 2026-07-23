@@ -169,6 +169,9 @@ const [loading, setLoading] = useState(true);
   const [gcpClientIdStaging, setGcpClientIdStaging] = useState('');
   const [gcpClientIdProduction, setGcpClientIdProduction] = useState('');
   const [githubPat, setGithubPat] = useState('');
+  const [repoCollision, setRepoCollision] = useState<{ owner: string; name: string; fullName: string } | null>(null);
+  const [repoCollisionChoice, setRepoCollisionChoice] = useState<'override' | 'rename' | null>(null);
+  const [repoCollisionNewName, setRepoCollisionNewName] = useState('');
   const [discordBotTokenInput, setDiscordBotTokenInput] = useState('');
 const [discordGuildId, setDiscordGuildId] = useState('');
 const [discordDetecting, setDiscordDetecting] = useState(false);
@@ -2978,6 +2981,31 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     return null;
   };
 
+  const proceedWithOidcSetup = async (actualRepoName: string) => {
+    setGithubRepoName(actualRepoName);
+
+    const token = await getAccessToken();
+    if (!token) {
+      throw new Error('Google Cloud connection required. Click "Connect Google Cloud Account" above to get a token, then try again.');
+    }
+
+    const oidcData = await setupOidcInfrastructure(actualRepoName);
+    if (!oidcData) {
+      throw new Error('Google Cloud session expired. Click "Connect Google Cloud Account" in Step 4 to refresh, then try again.');
+    }
+
+    await saveConfig({
+      gcp_wif_provider: oidcData.wifProvider,
+      gcp_sa_staging: oidcData.saStaging,
+      gcp_sa_production: oidcData.saProduction,
+      github_repo: actualRepoName,
+    });
+    setGithubVarUploaded(true);
+    setRepoCollision(null);
+    setRepoCollisionChoice(null);
+    setExpandedSteps(prev => [...prev.filter(s => s !== 7), 8]);
+  };
+
   const handleCreateDiscordBot = async () => {
     if (!discordBotTokenInput.trim()) {
       setError('Please enter your Discord bot token');
@@ -4161,42 +4189,20 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                           const owner = userData.login;
                           const desiredRepoName = projectName || 'SecureAgentBase';
 
-                          // Check if repo already exists; append UUID suffix if taken
-                          let actualRepoName = `${owner}/${desiredRepoName}`;
+                          // Check if repo already exists
+                          const actualRepoName = `${owner}/${desiredRepoName}`;
                           try {
                             await githubApiFetch(githubPat, `/repos/${owner}/${desiredRepoName}`);
-                            // Repo exists — generate a short UUID suffix
-                            const uuid = Math.random().toString(36).substring(2, 8);
-                            actualRepoName = `${owner}/${desiredRepoName}-${uuid}`;
+                            // Repo exists — show collision warning, don't proceed
+                            setRepoCollision({ owner, name: desiredRepoName, fullName: actualRepoName });
+                            setRepoCollisionChoice(null);
+                            setRepoCollisionNewName('');
+                            return;
                           } catch (checkErr) {
                             // 404 = repo doesn't exist, use the original name
                           }
-                          setGithubRepoName(actualRepoName);
 
-                          // Check for GCP token before attempting OIDC setup
-                          const token = await getAccessToken();
-                          if (!token) {
-                            throw new Error('Google Cloud connection required. Click "Connect Google Cloud Account" above to get a token, then try again.');
-                          }
-
-                          // Set up OIDC infrastructure (WIF pool, provider, SAs)
-                          // Pass actualRepoName directly to avoid React state race
-                          const oidcData = await setupOidcInfrastructure(actualRepoName);
-                          if (!oidcData) {
-                            throw new Error('Google Cloud session expired. Click "Connect Google Cloud Account" in Step 4 to refresh, then try again.');
-                          }
-
-                          // GitHub variables are uploaded by the VM startup script
-                          // after the repo is created (the repo may not exist yet)
-                          // Persist OIDC values to Firestore so Step 7 works on reload
-                          await saveConfig({
-                            gcp_wif_provider: oidcData.wifProvider,
-                            gcp_sa_staging: oidcData.saStaging,
-                            gcp_sa_production: oidcData.saProduction,
-                            github_repo: actualRepoName,
-                          });
-                          setGithubVarUploaded(true);
-    setExpandedSteps(prev => [...prev.filter(s => s !== 7), 8]);
+                          await proceedWithOidcSetup(actualRepoName);
                         } catch (err) {
                           setError('GitHub setup failed: ' + err.message);
                         }
@@ -4209,6 +4215,95 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                   >
                     {oidcSetupStatus === 'creating' ? 'Setting up OIDC...' : 'Save & Setup OIDC Deployment'}
                   </button>
+
+                  {/* Repo collision warning */}
+                  {repoCollision && !repoCollisionChoice && (
+                    <div className="mt-4 p-4 bg-yellow-50 border border-yellow-300 rounded-lg space-y-3">
+                      <div className="flex items-start gap-2">
+                        <AlertTriangle size={18} className="text-yellow-600 mt-0.5 shrink-0" />
+                        <div>
+                          <p className="text-yellow-800 font-medium">Repository already exists</p>
+                          <p className="text-yellow-700 text-sm mt-1">
+                            A repository named <code className="bg-yellow-100 px-1 rounded">{repoCollision.fullName}</code> already exists on your GitHub account.
+                          </p>
+                        </div>
+                      </div>
+                      <p className="text-yellow-700 text-sm">Would you like to override the code in this repository, or use a different name?</p>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            setRepoCollisionChoice('override');
+                          }}
+                          className="bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium"
+                        >
+                          Override existing code
+                        </button>
+                        <button
+                          onClick={() => {
+                            setRepoCollisionChoice('rename');
+                          }}
+                          className="bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 px-3 py-1.5 rounded-lg text-sm font-medium"
+                        >
+                          Choose different name
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Repo collision: user chose to override */}
+                  {repoCollision && repoCollisionChoice === 'override' && (
+                    <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                      <p className="text-yellow-800 text-sm">
+                        The VM will overwrite the contents of <code className="bg-yellow-100 px-1 rounded">{repoCollision.fullName}</code> with the SecureAgentBase template.
+                      </p>
+                      <button
+                        onClick={async () => {
+                          setError(null);
+                          try {
+                            await proceedWithOidcSetup(repoCollision.fullName);
+                          } catch (err) {
+                            setError('GitHub setup failed: ' + err.message);
+                          }
+                        }}
+                        disabled={oidcSetupStatus === 'creating'}
+                        className="mt-2 bg-yellow-600 hover:bg-yellow-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium"
+                      >
+                        {oidcSetupStatus === 'creating' ? 'Setting up OIDC...' : 'Confirm override'}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Repo collision: user chose different name */}
+                  {repoCollision && repoCollisionChoice === 'rename' && (
+                    <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg space-y-2">
+                      <label className="block text-sm font-medium text-blue-800">Enter a new repository name:</label>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={repoCollisionNewName}
+                          onChange={(e) => setRepoCollisionNewName(e.target.value)}
+                          placeholder={`${repoCollision.name}-new`}
+                          className="flex-1 px-3 py-1.5 border border-blue-300 rounded-lg text-sm focus:outline-none focus:border-blue-500"
+                        />
+                        <button
+                          onClick={async () => {
+                            const newName = repoCollisionNewName.trim() || `${repoCollision.name}-new`;
+                            const fullName = `${repoCollision.owner}/${newName}`;
+                            setError(null);
+                            try {
+                              await proceedWithOidcSetup(fullName);
+                            } catch (err) {
+                              setError('GitHub setup failed: ' + err.message);
+                            }
+                          }}
+                          disabled={oidcSetupStatus === 'creating'}
+                          className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1.5 rounded-lg text-sm font-medium"
+                        >
+                          {oidcSetupStatus === 'creating' ? 'Setting up OIDC...' : 'Continue'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   
                   {oidcSetupStatus === 'creating' && (
                     <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
