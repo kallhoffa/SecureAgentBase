@@ -185,10 +185,10 @@ describe('getStartupScript', () => {
       expect(script).toContain('--public');
     });
 
-    it('sets Firebase project ID secrets', () => {
+    it('sets Firebase project ID variables', () => {
       const script = getStartupScript(false);
-      expect(script).toContain('gh secret set FIREBASE_STAGING_PROJECT_ID');
-      expect(script).toContain('gh secret set FIREBASE_PRODUCTION_PROJECT_ID');
+      expect(script).toContain('gh variable set FIREBASE_PROJECT_ID_STAGING');
+      expect(script).toContain('gh variable set FIREBASE_PROJECT_ID_PRODUCTION');
     });
 
     it('sets OIDC variables (GCP_WIF_PROVIDER, GCP_SA_*)', () => {
