@@ -304,12 +304,15 @@ git commit -m "Initial commit of SecureAgentBase template"
 
 # Create GitHub repo and push
 if [ -n "$GITHUB_PAT" ]; then
+  echo "DEBUG: GITHUB_PAT is set (${#GITHUB_PAT} chars), authenticating..."
   echo $GITHUB_PAT | gh auth login --with-token
+  echo "DEBUG: gh auth status:"; gh auth status 2>&1 || true
   
   # Create new repo or force-push if it already exists
   if gh repo view "\${REPO_OWNER}/\${REPO_NAME}" 2>/dev/null; then
     echo "Repo already exists, force-pushing fresh template..."
-    git remote set-url origin "https://\${REPO_OWNER}:$GITHUB_PAT@github.com/\${REPO_OWNER}/\${REPO_NAME}.git" || true
+    git remote remove origin 2>/dev/null || true
+    git remote add origin "https://\${REPO_OWNER}:$GITHUB_PAT@github.com/\${REPO_OWNER}/\${REPO_NAME}.git" || true
     git push -u origin main --force || echo "WARNING: Force push failed, continuing..."
   else
     gh repo create "$REPO_NAME" --public --source=. --push || { echo "Repo create failed!"; exit 1; }
@@ -319,8 +322,8 @@ if [ -n "$GITHUB_PAT" ]; then
   echo "DEBUG: Setting GitHub secrets and variables..."
 
   # Set Firebase project ID secrets (used by workflows)
-  gh secret set FIREBASE_STAGING_PROJECT_ID --body "$FIREBASE_STAGING" -R "\${REPO_OWNER}/\${REPO_NAME}" 2>/dev/null || echo "WARNING: Failed to set FIREBASE_STAGING_PROJECT_ID"
-  gh secret set FIREBASE_PRODUCTION_PROJECT_ID --body "$FIREBASE_PRODUCTION" -R "\${REPO_OWNER}/\${REPO_NAME}" 2>/dev/null || echo "WARNING: Failed to set FIREBASE_PRODUCTION_PROJECT_ID"
+  gh secret set FIREBASE_STAGING_PROJECT_ID --body "$FIREBASE_STAGING" -R "\${REPO_OWNER}/\${REPO_NAME}" 2>&1 || echo "WARNING: Failed to set FIREBASE_STAGING_PROJECT_ID"
+  gh secret set FIREBASE_PRODUCTION_PROJECT_ID --body "$FIREBASE_PRODUCTION" -R "\${REPO_OWNER}/\${REPO_NAME}" 2>&1 || echo "WARNING: Failed to set FIREBASE_PRODUCTION_PROJECT_ID"
 
   # Set OIDC variables (required by google-github-actions/auth)
   if [ -n "$GCP_WIF_PROVIDER" ]; then
