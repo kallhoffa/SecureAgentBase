@@ -360,48 +360,72 @@ test.describe('Wizard E2E Regression', () => {
         'E2E_FULL=true required — waits for startup script to deploy staging site');
       test.skip(!E2E_GCP_TOKEN, 'E2E_GCP_TOKEN required for staging deploy check');
 
-      // This test verifies the staging URL becomes reachable after the VM
-      // runs its startup script and deploys to Firebase hosting.
+      // This test verifies the staging URL serves the expected SecureAgentBase
+      // template after the VM runs its startup script, pushes to GitHub,
+      // GitHub Actions builds, and Firebase hosting deploys.
+      //
       // We poll the staging URL directly from the test (not from the browser)
       // because the serial port polling in the browser may not trigger
       // vmInitComplete due to React useEffect closure issues.
+      //
+      // The test FAILS if the expected content does not appear within the timeout.
       test.setTimeout(600000); // 10 minutes — VM needs to boot, install, build, deploy
 
       const stagingProjectId = process.env.E2E_FIREBASE_STAGING_PROJECT_ID || E2E_GCP_PROJECT_ID;
       if (!stagingProjectId) {
-        console.log('Staging deploy test skipped: no staging project ID available');
-        return;
+        throw new Error('Staging deploy test requires E2E_FIREBASE_STAGING_PROJECT_ID or E2E_GCP_PROJECT_ID');
       }
 
       const stagingUrl = `https://${stagingProjectId}.web.app`;
-      console.log(`Staging deploy test: polling ${stagingUrl}`);
+      console.log(`Staging deploy test: polling ${stagingUrl} for expected template content`);
 
-      // Poll every 30 seconds for up to 10 minutes
+      // Expected content: the Dashboard template renders "Welcome to {appName}"
+      // where appName defaults to "Your App" in template mode or "SecureAgentBase" in app mode.
+      const expectedPatterns = [
+        /Welcome to/i,
+        /SecureAgentBase/i,
+        /Your App/i,
+      ];
+
       const startTime = Date.now();
       const timeout = 600000; // 10 minutes
-      const interval = 30000; // 30 seconds
-      let deployed = false;
+      const interval = 15000; // 15 seconds
 
       while (Date.now() - startTime < timeout) {
+        const elapsed = Math.round((Date.now() - startTime) / 1000);
         try {
-          const res = await fetch(stagingUrl, { method: 'HEAD', mode: 'no-cors' });
-          // no-cors HEAD returns opaque (status 0) on success — that's fine
-          // If the fetch doesn't throw, the site is reachable
-          deployed = true;
-          console.log(`Staging deploy test: site is reachable at ${stagingUrl}`);
-          break;
-        } catch {
-          const elapsed = Math.round((Date.now() - startTime) / 1000);
-          console.log(`Staging deploy test: site not yet reachable (${elapsed}s elapsed)`);
-          await new Promise(r => setTimeout(r, interval));
+          const res = await fetch(stagingUrl);
+          if (!res.ok) {
+            console.log(`Staging deploy test: HTTP ${res.status} (${elapsed}s)`);
+            await new Promise(r => setTimeout(r, interval));
+            continue;
+          }
+
+          const html = await res.text();
+
+          // Check for expected template content
+          const hasExpectedContent = expectedPatterns.some(p => p.test(html));
+          if (hasExpectedContent) {
+            console.log(`Staging deploy test: PASSED — template content found at ${stagingUrl} (${elapsed}s)`);
+            return; // Success
+          }
+
+          // Site is reachable but doesn't have our content yet — might be showing
+          // a default Firebase page or a stale deployment
+          console.log(`Staging deploy test: site reachable but no template content yet (${elapsed}s, HTML length: ${html.length})`);
+        } catch (e) {
+          console.log(`Staging deploy test: not yet reachable — ${e.message} (${elapsed}s)`);
         }
+        await new Promise(r => setTimeout(r, interval));
       }
 
-      if (!deployed) {
-        console.log(`Staging deploy test: site did not become reachable within ${timeout / 1000}s`);
-        // Don't fail the test — the VM might still be installing dependencies
-        // This is informational only for now
-      }
+      // Timeout — fail the test
+      const elapsed = Math.round((Date.now() - startTime) / 1000);
+      throw new Error(
+        `Staging deploy test FAILED: expected template content did not appear at ${stagingUrl} within ${elapsed}s. ` +
+        `The VM may not have completed its startup script, GitHub Actions may have failed, ` +
+        `or the Firebase hosting deploy may have failed.`
+      );
     });
 
     test('tears down VM after full flow', async () => {
