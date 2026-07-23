@@ -108,10 +108,11 @@ describe('getStartupScript', () => {
       expect(script).toContain('REPO_NAME=$(echo "$GITHUB_REPO" | cut');
     });
 
-    it('falls back to kallhoffa/agentbase-<suffix> when no github_repo', () => {
+    it('falls back to kallhoffa/SecureAgentBase when no github_repo', () => {
       const script = getStartupScript(false);
       expect(script).toContain('REPO_OWNER="kallhoffa"');
-      expect(script).toContain('SUFFIX=$(echo $RANDOM | md5sum | head -c 6)');
+      expect(script).toContain('REPO_NAME="SecureAgentBase"');
+      expect(script).not.toContain('SUFFIX=$(echo $RANDOM');
     });
 
     it('fetches all 8 metadata attributes', () => {
