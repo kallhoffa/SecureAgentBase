@@ -393,21 +393,27 @@ test.describe('Wizard E2E Regression', () => {
       }
 
       const stagingUrl = `https://${stagingProjectId}.web.app`;
+      console.log(`Staging deploy test: polling ${stagingUrl}`);
 
       // Step 1: Snapshot current content to detect when a NEW deployment lands
       let baselineHtml = '';
       let baselineVersion = '';
       try {
         const baseRes = await fetch(stagingUrl);
+        console.log(`Staging deploy test: baseline fetch — HTTP ${baseRes.status}`);
         if (baseRes.ok) {
           baselineHtml = await baseRes.text();
           // Extract current VITE_APP_VERSION from nav bar (first 7 chars of SHA)
           const versionMatch = baselineHtml.match(/v([0-9a-f]{7})/);
           baselineVersion = versionMatch ? versionMatch[1] : '';
           console.log(`Staging deploy test: baseline snapshot — version: ${baselineVersion || 'none'}, HTML length: ${baselineHtml.length}`);
+          console.log(`Staging deploy test: baseline first 200 chars: ${baselineHtml.substring(0, 200)}`);
+        } else {
+          const body = await baseRes.text();
+          console.log(`Staging deploy test: baseline not OK — body (first 500): ${body.substring(0, 500)}`);
         }
-      } catch {
-        console.log('Staging deploy test: no existing deployment found (clean slate)');
+      } catch (e) {
+        console.log(`Staging deploy test: baseline fetch error — ${e.message}`);
       }
 
       // Step 2: Poll until content changes or new deployment appears
@@ -420,7 +426,8 @@ test.describe('Wizard E2E Regression', () => {
         try {
           const res = await fetch(stagingUrl);
           if (!res.ok) {
-            console.log(`Staging deploy test: HTTP ${res.status} (${elapsed}s)`);
+            const errBody = await res.text().catch(() => '(no body)');
+            console.log(`Staging deploy test: HTTP ${res.status} (${elapsed}s) — body: ${errBody.substring(0, 300)}`);
             await new Promise(r => setTimeout(r, interval));
             continue;
           }
@@ -451,7 +458,8 @@ test.describe('Wizard E2E Regression', () => {
           }
 
           if (contentChanged) {
-            console.log(`Staging deploy test: content changed but no template found yet (${elapsed}s, new version: ${newVersion})`);
+            console.log(`Staging deploy test: content changed but no template found (${elapsed}s, new version: ${newVersion})`);
+            console.log(`Staging deploy test: new content first 500 chars: ${html.substring(0, 500)}`);
           } else {
             console.log(`Staging deploy test: no change yet (${elapsed}s, baseline version: ${baselineVersion})`);
           }
