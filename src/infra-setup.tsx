@@ -2159,6 +2159,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     const e2eFirebaseStaging = read('__e2e_firebase_staging');
     const e2eFirebaseProd = read('__e2e_firebase_production');
     const e2eGithubPat = read('__e2e_github_pat');
+    const e2eProjectName = read('__e2e_project_name');
+    const e2eGithubRepo = read('__e2e_github_repo');
     const e2eDiscordToken = read('__e2e_discord_token');
     const e2eDiscordGuild = read('__e2e_discord_guild');
     const e2eDiscordBotAdded = read('__e2e_discord_bot_added');
@@ -2212,6 +2214,22 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         setGithubPat(atob(e2eGithubPat));
       } catch (e) {
         console.warn('E2E: Failed to decode __e2e_github_pat:', e);
+      }
+    }
+    if (e2eProjectName) {
+      try {
+        const decoded = atob(e2eProjectName);
+        setProjectName(decoded);
+      } catch (e) {
+        console.warn('E2E: Failed to decode __e2e_project_name:', e);
+      }
+    }
+    if (e2eGithubRepo) {
+      try {
+        const decoded = atob(e2eGithubRepo);
+        setGithubRepoName(decoded);
+      } catch (e) {
+        console.warn('E2E: Failed to decode __e2e_github_repo:', e);
       }
     }
     if (e2eDiscordToken) {
@@ -2899,7 +2917,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     const items = [
       { key: 'startup-script', value: startupScript },
       { key: 'github_pat', value: githubPat },
-      { key: 'github_repo', value: githubRepoName },
+      { key: 'github_repo', value: githubRepoName || projectName || 'SecureAgentBase' },
       { key: 'discord_bot_token', value: discordBotToken || '' },
       { key: 'discord_guild_id', value: discordGuildId || '' },
       { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },

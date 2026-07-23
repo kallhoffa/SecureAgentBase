@@ -138,6 +138,8 @@ jobs:
           E2E_DISCORD_BOT_ADDED: 'true'
           E2E_BILLING_ENABLED: 'true'
           E2E_APP_MODE: 'true'
+          E2E_PROJECT_NAME: 'agentbase-testing'
+          E2E_GITHUB_OWNER: 'kallhoffa'
           E2E_FIREBASE_STAGING_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID_STAGING }}
           E2E_FIREBASE_PRODUCTION_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID_PRODUCTION }}
 

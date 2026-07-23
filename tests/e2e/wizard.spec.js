@@ -130,6 +130,14 @@ const navigateWithE2E = async (page, extraParams = {}) => {
   if (process.env.E2E_GITHUB_PAT) {
     params.set('__e2e_github_pat', Buffer.from(process.env.E2E_GITHUB_PAT).toString('base64'));
   }
+  const projectName = process.env.E2E_PROJECT_NAME || (process.env.E2E_GCP_PROJECT_ID ? process.env.E2E_GCP_PROJECT_ID.replace(/-staging$|-production$/, '') : null);
+  if (projectName) {
+    params.set('__e2e_project_name', Buffer.from(projectName).toString('base64'));
+  }
+  if (process.env.E2E_GITHUB_OWNER && projectName) {
+    const githubRepo = `${process.env.E2E_GITHUB_OWNER}/${projectName}`;
+    params.set('__e2e_github_repo', Buffer.from(githubRepo).toString('base64'));
+  }
   if (process.env.E2E_DISCORD_TOKEN) {
     params.set('__e2e_discord_token', Buffer.from(process.env.E2E_DISCORD_TOKEN).toString('base64'));
   }

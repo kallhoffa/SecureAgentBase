@@ -172,9 +172,9 @@ if [ -n "$GITHUB_REPO" ]; then
   REPO_OWNER=$(echo "$GITHUB_REPO" | cut -d'/' -f1)
   REPO_NAME=$(echo "$GITHUB_REPO" | cut -d'/' -f2)
 else
+  echo "WARNING: No github_repo metadata set, using SecureAgentBase as default"
   REPO_OWNER="kallhoffa"
-  SUFFIX=$(echo $RANDOM | md5sum | head -c 6)
-  REPO_NAME="agentbase-$SUFFIX"
+  REPO_NAME="SecureAgentBase"
 fi
 FIREBASE_STAGING=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_staging" -H "Metadata-Flavor: Google")
 FIREBASE_PRODUCTION=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_production" -H "Metadata-Flavor: Google")
