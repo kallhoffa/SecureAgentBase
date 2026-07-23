@@ -5300,82 +5300,123 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
       {showInitModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6">
-            {vmInitComplete ? (
-              <div className="text-center space-y-4">
-                <div className="w-16 h-16 mx-auto bg-green-100 rounded-full flex items-center justify-center">
-                  <Check size={32} className="text-green-600" />
+          <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 space-y-4">
+            {/* Dynamic header */}
+            <div className="flex items-center gap-3">
+              {stagingDeployed ? (
+                <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center shrink-0">
+                  <Check size={20} className="text-green-600" />
                 </div>
-                <h2 className="text-xl font-bold text-gray-900">VM Initialization Complete!</h2>
-                <p className="text-gray-600 text-sm">
-                  Your Kimaki agent is online and ready. The bot has connected to Discord and registered the SecureAgentBase project.
+              ) : (
+                <div className="animate-spin text-2xl shrink-0">⟳</div>
+              )}
+              <div>
+                <h2 className="text-lg font-bold text-gray-900">
+                  {!vmInitComplete
+                    ? 'VM is initializing...'
+                    : !botOnline
+                      ? 'Waiting for Kimaki...'
+                      : !stagingDeployed
+                        ? 'Waiting for staging deploy...'
+                        : 'All done!'
+                  }
+                </h2>
+                <p className="text-gray-500 text-xs">
+                  {!vmInitComplete
+                    ? 'Cloning SecureAgentBase, installing Kimaki, and connecting to Discord. Usually 2-3 minutes.'
+                    : !botOnline
+                      ? 'VM is ready. Kimaki is installing dependencies and connecting to Discord.'
+                      : !stagingDeployed
+                        ? 'Bot is online. Waiting for first deploy to complete.'
+                        : 'Your Kimaki agent is online and staging is live.'
+                  }
                 </p>
-                {/* Success indicators */}
-                <div className="space-y-2 text-left">
-                  <div className="flex items-center gap-2 text-sm">
-                    {botOnline ? (
-                      <><Check size={16} className="text-green-500 shrink-0" /><span className="text-green-700">Discord bot online</span></>
-                    ) : (
-                      <><div className="animate-spin w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full shrink-0" /><span className="text-gray-500">Waiting for Discord bot...</span></>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 text-sm">
-                    {stagingDeployed ? (
-                      <><Check size={16} className="text-green-500 shrink-0" /><span className="text-green-700">Staging site deployed</span></>
-                    ) : (
-                      <><div className="animate-spin w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full shrink-0" /><span className="text-gray-500">Waiting for staging deploy...</span></>
-                    )}
-                  </div>
-                </div>
-                {kimakiInstallUrl && (
-                  <a
-                    href={kimakiInstallUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium"
-                  >
-                    <Bot size={18} />
-                    Authorize Kimaki in Discord
-                  </a>
-                )}
-                <button
-                  onClick={() => setShowInitModal(false)}
-                  className="block mx-auto text-gray-500 hover:text-gray-700 text-sm underline"
-                >
-                  Close
-                </button>
               </div>
-            ) : (
-              <div className="space-y-4">
-                <div className="flex items-center gap-3">
-                  <div className="animate-spin text-2xl">⟳</div>
-                  <h2 className="text-lg font-bold text-gray-900">VM is initializing...</h2>
-                </div>
-                <p className="text-gray-600 text-sm">
-                  The VM is cloning SecureAgentBase, installing Kimaki, and connecting to Discord. This usually takes 2-3 minutes.
-                </p>
-                <div className="bg-gray-900 text-green-400 p-3 rounded-lg text-xs font-mono max-h-40 overflow-y-auto whitespace-pre-wrap">
-                  {vmInitLogTail || 'Waiting for serial port logs...'}
-                </div>
-                {kimakiInstallUrl && (
-                  <a
-                    href={kimakiInstallUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium w-fit"
-                  >
-                    <Bot size={18} />
-                    Authorize Kimaki in Discord
-                  </a>
+            </div>
+
+            {/* Progress stages */}
+            <div className="space-y-2.5">
+              {/* Stage 1: VM initialized */}
+              <div className="flex items-center gap-2.5 text-sm">
+                {vmInitComplete ? (
+                  <div className="w-5 h-5 bg-green-100 rounded-full flex items-center justify-center shrink-0">
+                    <Check size={12} className="text-green-600" />
+                  </div>
+                ) : (
+                  <div className="animate-spin w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full shrink-0" />
                 )}
-                <button
-                  onClick={() => setShowInitModal(false)}
-                  className="block text-gray-500 hover:text-gray-700 text-sm underline"
-                >
-                  Continue in background
-                </button>
+                <span className={vmInitComplete ? 'text-green-700 font-medium' : 'text-gray-700'}>
+                  VM initialized
+                </span>
+                {vmInitComplete && <span className="text-gray-400 text-xs ml-auto">ready</span>}
               </div>
+
+              {/* Stage 2: Kimaki online */}
+              <div className="flex items-center gap-2.5 text-sm">
+                {botOnline ? (
+                  <div className="w-5 h-5 bg-green-100 rounded-full flex items-center justify-center shrink-0">
+                    <Check size={12} className="text-green-600" />
+                  </div>
+                ) : vmInitComplete ? (
+                  <div className="animate-spin w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full shrink-0" />
+                ) : (
+                  <div className="w-5 h-5 border-2 border-gray-200 rounded-full shrink-0" />
+                )}
+                <span className={
+                  botOnline ? 'text-green-700 font-medium'
+                    : vmInitComplete ? 'text-gray-700' : 'text-gray-400'
+                }>
+                  Kimaki online
+                </span>
+                {botOnline && <span className="text-gray-400 text-xs ml-auto">connected</span>}
+              </div>
+
+              {/* Stage 3: Staging deployed */}
+              <div className="flex items-center gap-2.5 text-sm">
+                {stagingDeployed ? (
+                  <div className="w-5 h-5 bg-green-100 rounded-full flex items-center justify-center shrink-0">
+                    <Check size={12} className="text-green-600" />
+                  </div>
+                ) : botOnline ? (
+                  <div className="animate-spin w-5 h-5 border-2 border-indigo-500 border-t-transparent rounded-full shrink-0" />
+                ) : (
+                  <div className="w-5 h-5 border-2 border-gray-200 rounded-full shrink-0" />
+                )}
+                <span className={
+                  stagingDeployed ? 'text-green-700 font-medium'
+                    : botOnline ? 'text-gray-700' : 'text-gray-400'
+                }>
+                  Staging deployed
+                </span>
+                {stagingDeployed && <span className="text-gray-400 text-xs ml-auto">live</span>}
+              </div>
+            </div>
+
+            {/* Serial port logs — always visible */}
+            <div className="bg-gray-900 text-green-400 p-3 rounded-lg text-xs font-mono max-h-40 overflow-y-auto whitespace-pre-wrap">
+              {vmInitLogTail || 'Waiting for serial port logs...'}
+            </div>
+
+            {/* Authorize button */}
+            {kimakiInstallUrl && (
+              <a
+                href={kimakiInstallUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-lg text-sm font-medium w-fit"
+              >
+                <Bot size={18} />
+                Authorize Kimaki in Discord
+              </a>
             )}
+
+            {/* Close / Continue in background */}
+            <button
+              onClick={() => setShowInitModal(false)}
+              className="block text-gray-500 hover:text-gray-700 text-sm underline"
+            >
+              {stagingDeployed ? 'Close' : 'Continue in background'}
+            </button>
           </div>
         </div>
       )}
