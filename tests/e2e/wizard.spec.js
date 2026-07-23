@@ -276,7 +276,7 @@ test.describe('Wizard E2E Regression', () => {
       test.skip(process.env.E2E_FULL !== 'true',
         'E2E_FULL=true required — creates real GCP VM, GitHub repo, and Discord bot');
 
-      test.setTimeout(600000); // 10 minutes for full VM provision + deploy
+      test.setTimeout(1200000); // 20 minutes for full VM provision + startup script + deploy
 
       await signIn(page);
 
@@ -314,11 +314,11 @@ test.describe('Wizard E2E Regression', () => {
         return;
       }
 
-      // Wait for VM init complete (serial port marker)
-      await expect(page.getByText('VM Initialization Complete!')).toBeVisible({ timeout: 300000 });
+      // Wait for VM init complete (serial port marker — startup script can take 10+ min on fresh VM)
+      await expect(page.getByText('VM Initialization Complete!')).toBeVisible({ timeout: 600000 });
 
       // Wait for Discord bot online indicator
-      await expect(page.getByText('Discord bot online')).toBeVisible({ timeout: 120000 });
+      await expect(page.getByText('Discord bot online')).toBeVisible({ timeout: 300000 });
 
       // Wait for staging deploy indicator
       await expect(page.getByText('Staging site deployed')).toBeVisible({ timeout: 600000 });
