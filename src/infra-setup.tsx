@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from './firestore-utils/auth-context';
 import { useNavigate } from 'react-router-dom';
 import { useNotification } from './firestore-utils/notification-context';
@@ -2271,6 +2271,34 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       console.log('E2E mode active: credentials injected from URL params');
     }
   }, []);
+
+  // E2E auto-setup: once githubPat + githubRepoName are injected, automatically
+  // run OIDC setup + upload GitHub variables (Steps 5-6 are skipped in e2e).
+  // The fine-grained PAT can't set variables (403), so the wizard must do it.
+  const e2eOidcDoneRef = useRef(false);
+  useEffect(() => {
+    if (e2eOidcDoneRef.current) return;
+    if (!githubPat || !githubRepoName || !gcpAccessToken) return;
+    if (!firebaseStagingData && !firebaseProductionData) return;
+
+    e2eOidcDoneRef.current = true;
+    console.log(`E2E: Auto-setting up OIDC + uploading GitHub vars for ${githubRepoName}...`);
+
+    (async () => {
+      try {
+        const oidcData = await setupOidcInfrastructure(githubRepoName);
+        if (oidcData) {
+          console.log('E2E: OIDC setup complete, uploading GitHub vars...');
+          await uploadGitHubVars(oidcData);
+          console.log('E2E: GitHub vars uploaded successfully');
+        } else {
+          console.warn('E2E: OIDC setup returned null — variables not uploaded');
+        }
+      } catch (err) {
+        console.error('E2E: Failed to auto-setup OIDC:', err);
+      }
+    })();
+  }, [githubPat, githubRepoName, gcpAccessToken, firebaseStagingData, firebaseProductionData]);
 
   useEffect(() => {
     const formProgress = loadFormProgress();
