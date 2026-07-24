@@ -186,11 +186,6 @@ describe('getStartupScript', () => {
       expect(script).toContain('--public');
     });
 
-    it('excludes .github/workflows/ from commit (PAT lacks workflow scope)', () => {
-      const script = getStartupScript(false);
-      expect(script).toContain('git reset HEAD .github/workflows/');
-    });
-
     it('sets Firebase project ID variables', () => {
       const script = getStartupScript(false);
       expect(script).toContain('gh variable set FIREBASE_PROJECT_ID_STAGING');

@@ -298,11 +298,9 @@ fi
 git config user.email "agent@secureagentbase.com"
 git config user.name "SecureAgent Manager"
 
-# Add and commit all files EXCEPT .github/workflows/ (PAT lacks workflow scope;
-# the repo already has the correct workflows from the original clone)
+# Add and commit all files
 git add .
-git reset HEAD .github/workflows/ 2>/dev/null || true
-git commit -m "Initial commit of SecureAgentBase template" -- ':!.github/' || git commit -m "Initial commit of SecureAgentBase template"
+git commit -m "Initial commit of SecureAgentBase template"
 
 # Create GitHub repo and push
 if [ -n "$GITHUB_PAT" ]; then
