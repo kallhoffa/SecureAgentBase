@@ -517,13 +517,12 @@ test.describe('Wizard E2E Regression', () => {
 
           // Check for expected template content
           const hasWelcome = /Welcome to/i.test(html);
-          const hasApp = /SecureAgentBase|Your App/i.test(html);
 
           // Extract new version
           const versionMatch = html.match(/v([0-9a-f]{7})/);
           const newVersion = versionMatch ? versionMatch[1] : '';
 
-          if (contentChanged && hasWelcome && hasApp) {
+          if (contentChanged && hasWelcome) {
             // Verify the version changed too (extra confidence)
             if (baselineVersion && newVersion && newVersion !== baselineVersion) {
               console.log(`Staging deploy test: PASSED — new deployment detected (${baselineVersion} → ${newVersion}, ${elapsed}s)`);

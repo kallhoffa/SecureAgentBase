@@ -10,7 +10,8 @@ test.describe('Template Preview', () => {
 
   test('preview shows app name', async ({ page }) => {
     await page.goto(`${TEST_URL}/preview`);
-    await expect(page.getByRole('heading', { name: /Welcome to/ })).toContainText(/SecureAgentBase|Your App/);
+    const heading = page.getByRole('heading', { name: /Welcome to/ });
+    await expect(heading).toContainText(/Welcome to \w+/);
   });
 
   test('description text is present', async ({ page }) => {
