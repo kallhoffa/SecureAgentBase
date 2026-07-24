@@ -18,7 +18,7 @@ beforeEach(() => {
 });
 
 describe('LandingPage', () => {
-  it('renders hero section with heading and deploy button', () => {
+  it('renders hero section with heading and two options', () => {
     render(
       <MemoryRouter>
         <LandingPage />
@@ -26,16 +26,17 @@ describe('LandingPage', () => {
     );
     expect(screen.getByText('SecureAgentBase')).toBeInTheDocument();
     expect(screen.getByText(/build full-stack apps/i)).toBeInTheDocument();
-    expect(screen.getByText(/deploy our secureagent/i)).toBeInTheDocument();
+    expect(screen.getByText(/use the cli/i)).toBeInTheDocument();
+    expect(screen.getByText(/use the web wizard/i)).toBeInTheDocument();
   });
 
-  it('navigates to infra-setup on deploy click', () => {
+  it('navigates to infra-setup on wizard click', () => {
     render(
       <MemoryRouter>
         <LandingPage />
       </MemoryRouter>
     );
-    fireEvent.click(screen.getByText(/deploy our secureagent/i));
+    fireEvent.click(screen.getByText(/launch setup wizard/i));
     expect(mockNavigate).toHaveBeenCalledWith('/infra-setup');
   });
 
