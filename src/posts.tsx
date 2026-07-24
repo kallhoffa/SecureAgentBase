@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { Rocket, Bot, Github, Cloud } from 'lucide-react';
+import { Rocket, Bot, Github, Cloud, Terminal, Globe } from 'lucide-react';
 
 const LandingPage: React.FC = () => {
   const navigate = useNavigate();
@@ -7,20 +7,54 @@ const LandingPage: React.FC = () => {
   return (
     <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white">
       <div className="max-w-4xl mx-auto px-4 py-16">
-        <div className="text-center mb-12">
+        <div className="text-center mb-8">
           <h1 className="text-5xl font-bold text-gray-900 mb-4">
             SecureAgentBase
           </h1>
-          <p className="text-xl text-gray-600 mb-8">
+          <p className="text-xl text-gray-600 mb-10">
             Build full-stack apps entirely from Discord. No terminal required.
           </p>
-          <button
-            onClick={() => navigate('/infra-setup')}
-            className="bg-green-600 hover:bg-green-700 text-white text-lg px-8 py-4 rounded-lg font-semibold flex items-center gap-3 mx-auto transition-all hover:scale-105"
-          >
-            <Rocket size={24} />
-            Deploy our SecureAgent App!
-          </button>
+        </div>
+
+        <div className="grid md:grid-cols-2 gap-6 mb-12">
+          <div className="bg-white rounded-xl shadow-sm p-8 flex flex-col">
+            <div className="w-12 h-12 bg-emerald-100 rounded-lg flex items-center justify-center mb-4">
+              <Terminal className="text-emerald-600" size={24} />
+            </div>
+            <h3 className="font-semibold text-xl mb-2">Use the CLI</h3>
+            <p className="text-gray-600 text-sm mb-4 flex-1">
+              Deploy from your terminal in one command. Best for automation, CI/CD, and developers who prefer the command line.
+            </p>
+            <div className="bg-gray-900 rounded-lg p-4 mb-4">
+              <code className="text-green-400 text-sm font-mono">
+                <span className="text-gray-500">$</span> npm install -g secureagentbase<br/>
+                <span className="text-gray-500">$</span> secureagentbase init
+              </code>
+            </div>
+            <p className="text-gray-500 text-xs">
+              Supports <code className="bg-gray-100 px-1 rounded">--sa-key</code>, <code className="bg-gray-100 px-1 rounded">--project-id</code>, <code className="bg-gray-100 px-1 rounded">--github-pat</code>, and more. Run <code className="bg-gray-100 px-1 rounded">secureagentbase --help</code> for the full list.
+            </p>
+          </div>
+
+          <div className="bg-white rounded-xl shadow-sm p-8 flex flex-col relative">
+            <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mb-4">
+              <Globe className="text-blue-600" size={24} />
+            </div>
+            <h3 className="font-semibold text-xl mb-2">Use the Web Wizard</h3>
+            <p className="text-gray-600 text-sm mb-4 flex-1">
+              Connect everything through your browser. A guided walkthrough for GCP, GitHub, Firebase, and Discord.
+            </p>
+            <button
+              onClick={() => navigate('/infra-setup')}
+              className="bg-blue-600 hover:bg-blue-700 text-white text-base px-6 py-3 rounded-lg font-semibold flex items-center gap-2 transition-all hover:scale-105"
+            >
+              <Rocket size={20} />
+              Launch Setup Wizard
+            </button>
+            <span className="inline-block mt-3 text-xs text-amber-600 bg-amber-50 rounded-md px-2 py-1 self-start">
+              Pending Google OAuth approval
+            </span>
+          </div>
         </div>
 
         <div className="grid md:grid-cols-3 gap-6 mb-12">
