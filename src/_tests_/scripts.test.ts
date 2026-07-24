@@ -174,9 +174,10 @@ describe('getStartupScript', () => {
   });
 
   describe('GitHub integration', () => {
-    it('logs in with GITHUB_PAT via gh auth', () => {
+    it('logs in with GITHUB_PAT via gh auth and sets up git credential helper', () => {
       const script = getStartupScript(false);
-      expect(script).toContain('echo $GITHUB_PAT | gh auth login');
+      expect(script).toContain('gh auth login --with-token');
+      expect(script).toContain('gh auth setup-git');
     });
 
     it('creates a public repo with gh repo create', () => {

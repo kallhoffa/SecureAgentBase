@@ -362,6 +362,19 @@ test.describe('Wizard E2E Regression', () => {
       // Init modal appeared — VM was created successfully and startup script is running
       await expect(initModal).toBeVisible();
       console.log('VM creation e2e test passed: VM created, init modal visible, startup script running');
+
+      // Capture serial port logs from the init modal DOM (the dark terminal-style div)
+      await page.waitForTimeout(5000); // wait for some serial port output to appear
+      const serialLogEl = page.locator('.bg-gray-900.font-mono');
+      if (await serialLogEl.isVisible({ timeout: 3000 }).catch(() => false)) {
+        const serialContent = await serialLogEl.innerText();
+        if (serialContent && serialContent !== 'Waiting for serial port logs...') {
+          console.log('Serial port logs from init modal:\n' + serialContent);
+        } else {
+          console.log('Serial port logs: still waiting for output');
+        }
+      }
+
       if (consoleLogs.length > 0) {
         console.log('Browser console logs:', consoleLogs.join('\n'));
       }
@@ -394,6 +407,71 @@ test.describe('Wizard E2E Regression', () => {
 
       const stagingUrl = `https://${stagingProjectId}.web.app`;
       console.log(`Staging deploy test: polling ${stagingUrl}`);
+
+      // Pre-check 1: Fetch serial port output from VM to see startup script progress
+      if (E2E_GCP_TOKEN) {
+        const instanceName = 'secureagent-manager';
+        const zones = ['us-east1-b', 'us-central1-b', 'us-central1-c', 'us-west1-a', 'us-west1-b', 'us-east1-c', 'us-east1-d', 'europe-west1-d', 'asia-east1-a'];
+        let serialOutput = '';
+        let serialZone = '';
+        for (const zone of zones) {
+          try {
+            const resp = await fetch(
+              `https://compute.googleapis.com/compute/v1/projects/${stagingProjectId}/zones/${zone}/instances/${instanceName}/serialPort?port=1`,
+              { headers: { Authorization: `Bearer ${E2E_GCP_TOKEN}` } }
+            );
+            if (resp.ok) {
+              const data = await resp.json();
+              serialOutput = data.contents || '';
+              serialZone = zone;
+              break;
+            }
+          } catch (_) { /* zone not found, try next */ }
+        }
+        if (serialOutput) {
+          // Show last 3000 chars to capture git push / secret setting / errors
+          const tail = serialOutput.slice(-3000);
+          console.log(`Serial port output from VM in ${serialZone} (last 3000 chars):\n${tail}`);
+
+          // Check for push failure indicators
+          if (/Permission denied|fatal:.*repository.*not found|error:.*push/i.test(tail)) {
+            console.log('WARNING: Serial port shows git push failure — GitHub Actions deploy will not trigger');
+          }
+          if (/Repo already exists|force-pushing/i.test(tail) && !/Everything up-to-date|main -> main/i.test(tail)) {
+            console.log('WARNING: Repo exists but push may have failed — check serial output above');
+          }
+        } else {
+          console.log('Serial port: VM not found in any zone, or serial port output unavailable');
+        }
+
+        // Pre-check 2: Check if the GitHub repo was updated recently
+        const githubPat = process.env.E2E_GITHUB_PAT || '';
+        if (githubPat) {
+          try {
+            const repoResp = await fetch('https://api.github.com/repos/kallhoffa/agentbase-testing/commits?per_page=1', {
+              headers: {
+                Authorization: `token ${githubPat}`,
+                Accept: 'application/vnd.github+json',
+              },
+            });
+            if (repoResp.ok) {
+              const commits = await repoResp.json();
+              if (commits.length > 0) {
+                const lastCommit = new Date(commits[0].commit.committer.date);
+                const ageMinutes = Math.round((Date.now() - lastCommit.getTime()) / 60000);
+                console.log(`GitHub repo last commit: ${commits[0].sha.substring(0, 7)} (${ageMinutes} min ago) — ${commits[0].commit.message.substring(0, 80)}`);
+                if (ageMinutes > 30) {
+                  console.log('WARNING: Repo not updated recently — VM push likely failed. GitHub Actions deploy will not trigger.');
+                }
+              }
+            } else {
+              console.log(`GitHub repo check: HTTP ${repoResp.status}`);
+            }
+          } catch (e) {
+            console.log(`GitHub repo check error: ${e.message}`);
+          }
+        }
+      }
 
       // Step 1: Snapshot current content to detect when a NEW deployment lands
       let baselineHtml = '';

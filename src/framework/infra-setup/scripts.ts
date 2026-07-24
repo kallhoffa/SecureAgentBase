@@ -304,19 +304,21 @@ git commit -m "Initial commit of SecureAgentBase template"
 
 # Create GitHub repo and push
 if [ -n "$GITHUB_PAT" ]; then
-  echo "DEBUG: GITHUB_PAT is set, authenticating..."
-  echo $GITHUB_PAT | gh auth login --with-token
+  echo "DEBUG: GITHUB_PAT is set ($(echo -n "$GITHUB_PAT" | wc -c) chars), authenticating..."
+  echo "$GITHUB_PAT" | gh auth login --with-token
+  gh auth setup-git 2>&1 || true  # Configure git credential helper (required for fine-grained PATs)
   echo "DEBUG: gh auth status:"; gh auth status 2>&1 || true
+  echo "DEBUG: git credential helper:"; git config --get credential.helper 2>&1 || true
   
   # Create new repo or force-push if it already exists
   if gh repo view "\${REPO_OWNER}/\${REPO_NAME}" 2>/dev/null; then
     echo "Repo already exists, force-pushing fresh template..."
     git remote remove origin 2>/dev/null || true
-    git remote add origin "https://\${REPO_OWNER}:$GITHUB_PAT@github.com/\${REPO_OWNER}/\${REPO_NAME}.git" || true
-    git push -u origin main --force || echo "WARNING: Force push failed, continuing..."
+    git remote add origin "https://github.com/\${REPO_OWNER}/\${REPO_NAME}.git" || true
+    git push -u origin main --force 2>&1 || { echo "ERROR: Force push failed (exit code $?)"; git remote -v; }
   else
-    gh repo create "$REPO_NAME" --public --source=. --push || { echo "Repo create failed!"; exit 1; }
-    git remote add origin "https://\${REPO_OWNER}:$GITHUB_PAT@github.com/\${REPO_OWNER}/\${REPO_NAME}.git" 2>/dev/null || true
+    echo "Creating new repo \${REPO_OWNER}/\${REPO_NAME}..."
+    gh repo create "\${REPO_OWNER}/\${REPO_NAME}" --public --source=. --push 2>&1 || { echo "ERROR: Repo create failed"; exit 1; }
   fi
   
   echo "DEBUG: Setting GitHub secrets and variables..."
