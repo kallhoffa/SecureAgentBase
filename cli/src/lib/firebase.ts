@@ -17,7 +17,7 @@ export async function addFirebaseToProject(
       });
       return true;
     } catch (e: any) {
-      if (e.message?.includes('ALREADY_EXISTS') || e.message?.includes('already exist')) return true;
+      if (e.message?.includes('ALREADY_EXISTS') || e.message?.includes('already exist') || e.message?.includes('INVALID_ARGUMENT')) return true;
       if (e.message?.includes('403') && attempt < 5) {
         await new Promise((r) => setTimeout(r, 5000 * (attempt + 1)));
         continue;

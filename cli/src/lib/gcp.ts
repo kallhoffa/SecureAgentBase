@@ -66,7 +66,7 @@ export async function enableApi(
 ): Promise<void> {
   const url = `https://serviceusage.googleapis.com/v1/projects/${projectId}/services/${apiName}:enable`;
   try {
-    await gcpFetch(auth, url, { method: 'POST' });
+    await gcpFetch(auth, url, { method: 'POST', body: {} });
   } catch (e: any) {
     if (!e.message?.includes('already enabled')) throw e;
   }
