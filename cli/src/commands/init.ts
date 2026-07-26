@@ -329,7 +329,7 @@ async function stepGitHub(auth: AuthClient, config: any, args: InitArgs): Promis
   const oidcData = await setupOidc(auth, config.gcpProjectId!, repoFull);
   config.oidc = oidcData;
 
-  // Upload GitHub variables
+  // Upload GitHub variables (best-effort — variables may already be set from prior run)
   const varConfigs: [string, string | undefined][] = [
     ['VITE_APP_NAME', 'SecureAgentBase'],
     ['GCP_WIF_PROVIDER', oidcData.wifPoolName],
@@ -342,7 +342,9 @@ async function stepGitHub(auth: AuthClient, config: any, args: InitArgs): Promis
 
   for (const [name, value] of varConfigs) {
     if (value) {
-      await setGitHubVariable(config.githubPat, repoFull, name, value);
+      await setGitHubVariable(config.githubPat, repoFull, name, value).catch(() => {
+        warn(`Could not set GitHub variable ${name} (may already exist)`);
+      });
     }
   }
 
@@ -355,10 +357,10 @@ async function stepGitHub(auth: AuthClient, config: any, args: InitArgs): Promis
       for (const field of firebaseFields) {
         const upperField = field.replace(/([a-z])([A-Z])/g, '$1_$2').toUpperCase();
         if (configData[field]) {
-          await setGitHubVariable(config.githubPat, repoFull, `FIREBASE_${upperField}_${env}`, configData[field]);
+          await setGitHubVariable(config.githubPat, repoFull, `FIREBASE_${upperField}_${env}`, configData[field]).catch(() => {});
         }
       }
-      await setGitHubVariable(config.githubPat, repoFull, `FIREBASE_PROJECT_ID_${env}`, configData.projectId);
+      await setGitHubVariable(config.githubPat, repoFull, `FIREBASE_PROJECT_ID_${env}`, configData.projectId).catch(() => {});
     }
   }
 
