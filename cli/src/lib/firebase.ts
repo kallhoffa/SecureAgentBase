@@ -17,7 +17,7 @@ export async function addFirebaseToProject(
       });
       return true;
     } catch (e: any) {
-      if (e.message?.includes('alreadyExists')) return true;
+      if (e.message?.includes('ALREADY_EXISTS') || e.message?.includes('already exist')) return true;
       if (e.message?.includes('403') && attempt < 5) {
         await new Promise((r) => setTimeout(r, 5000 * (attempt + 1)));
         continue;
@@ -41,10 +41,19 @@ export async function createWebApp(
   projectId: string,
   displayName: string
 ): Promise<any> {
-  return gcpFetch(auth, `https://firebase.googleapis.com/v1beta1/projects/${projectId}/webApps`, {
-    method: 'POST',
-    body: { displayName },
-  });
+  try {
+    return await gcpFetch(auth, `https://firebase.googleapis.com/v1beta1/projects/${projectId}/webApps`, {
+      method: 'POST',
+      body: { displayName },
+    });
+  } catch (e: any) {
+    if (e.message?.includes('ALREADY_EXISTS') || e.message?.includes('already exist')) {
+      const apps = await listWebApps(auth, projectId);
+      const existing = apps.find((a: any) => a.displayName === displayName);
+      if (existing) return existing;
+    }
+    throw e;
+  }
 }
 
 export async function getWebAppConfig(
