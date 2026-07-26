@@ -5,6 +5,17 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      e2e_type:
+        description: 'Which e2e tests to run'
+        required: false
+        default: 'cli'
+        type: choice
+        options:
+          - cli
+          - wizard
+          - all
+          - none
 
 concurrency:
   group: staging-deploy
@@ -145,13 +156,17 @@ jobs:
           fi
 
       - name: Run Full E2E Tests on Staging
+        if: >-
+          github.event_name != 'workflow_dispatch' ||
+          github.event.inputs.e2e_type == 'wizard' ||
+          github.event.inputs.e2e_type == 'all'
         run: |
           npx playwright test --retries=2
         env:
           TEST_URL: https://${{ vars.FIREBASE_PROJECT_ID_STAGING }}.web.app
           E2E_GCP_TOKEN: ${{ steps.gen-e2e-token.outputs.token }}
           E2E_GCP_PROJECT_ID: ${{ vars.E2E_GCP_PROJECT_ID }}
-          E2E_FULL: ${{ (startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch') && 'true' || '' }}
+          E2E_FULL: ${{ (startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch' && (github.event.inputs.e2e_type == 'wizard' || github.event.inputs.e2e_type == 'all')) && 'true' || '' }}
           E2E_FIREBASE_API_KEY: ${{ vars.FIREBASE_API_KEY_STAGING }}
           E2E_TEST_EMAIL: e2e@agentbase-staging.iam.gserviceaccount.com
           E2E_TEST_PASSWORD: ${{ secrets.E2E_TEST_PASSWORD }}
@@ -167,13 +182,17 @@ jobs:
           E2E_FIREBASE_PRODUCTION_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID_PRODUCTION }}
 
       - name: Build CLI
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        if: >-
+          startsWith(github.ref, 'refs/tags/') ||
+          (github.event_name == 'workflow_dispatch' && (github.event.inputs.e2e_type == 'cli' || github.event.inputs.e2e_type == 'all'))
         run: |
           cd cli && npm ci && npm run build && npm pack
           ls -la *.tgz
 
       - name: Run CLI E2E Tests
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        if: >-
+          startsWith(github.ref, 'refs/tags/') ||
+          (github.event_name == 'workflow_dispatch' && (github.event.inputs.e2e_type == 'cli' || github.event.inputs.e2e_type == 'all'))
         run: |
           CLI_PKG=$(ls cli/secureagentbase-*.tgz)
           echo "CLI package: $CLI_PKG"
