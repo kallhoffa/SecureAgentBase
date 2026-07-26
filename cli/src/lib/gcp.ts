@@ -181,8 +181,8 @@ export async function createVm(
 
   const result = await gcpFetch(auth, url, { method: 'POST', body });
 
-  // Poll until VM is RUNNING
-  for (let i = 0; i < 60; i++) {
+  // Poll until VM is RUNNING (up to 10 minutes)
+  for (let i = 0; i < 120; i++) {
     await new Promise((r) => setTimeout(r, 5000));
     try {
       const instance = await gcpFetch(
@@ -193,12 +193,15 @@ export async function createVm(
         const ip = instance.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP;
         return { ip, zone };
       }
+      if (i % 6 === 0) {
+        console.log(`    VM status: ${instance.status} (attempt ${i + 1}/120)`);
+      }
     } catch {
       // Instance not yet available
     }
   }
 
-  throw new Error('VM did not start within 5 minutes');
+  throw new Error('VM did not start within 10 minutes');
 }
 
 export async function deleteVm(

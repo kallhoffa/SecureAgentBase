@@ -152,7 +152,7 @@ async function main() {
     }
     console.log(`Test 2: init — full (repo: ${githubOwner}/${repoName}, vm: yes, discord: ${discordToken ? 'yes' : 'no'})`);
     {
-      r = run(cliBin, initArgs, { env: envBase, timeout: 600_000 });
+      r = run(cliBin, initArgs, { env: envBase, timeout: 900_000 });
 
       if (r.exitCode === 0) {
         assert(true, 'init completes successfully');
