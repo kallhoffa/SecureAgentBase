@@ -179,6 +179,19 @@ export async function createVm(
     ],
   };
 
+  // Try to delete any existing VM with this name in the target zone
+  try {
+    await gcpFetch(
+      auth,
+      `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances/${instanceName}`,
+      { method: 'DELETE' }
+    );
+    // Wait for deletion to complete
+    await new Promise((r) => setTimeout(r, 15000));
+  } catch {
+    // VM doesn't exist — that's fine
+  }
+
   const result = await gcpFetch(auth, url, { method: 'POST', body });
 
   // Poll until VM is RUNNING (up to 10 minutes)
@@ -218,6 +231,44 @@ export async function deleteVm(
     );
   } catch {
     // VM may not exist
+  }
+}
+
+export async function cleanupVmByName(
+  auth: AuthClient,
+  projectId: string,
+  instanceName: string
+): Promise<void> {
+  const zones = [
+    'us-central1-a', 'us-central1-b', 'us-central1-c',
+    'us-east1-b', 'us-east1-c',
+    'europe-west1-b', 'europe-west1-c',
+  ];
+  for (const zone of zones) {
+    try {
+      const inst = await gcpFetch(
+        auth,
+        `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances/${instanceName}`
+      );
+      if (inst && inst.status) {
+        console.log(`  Found existing VM "${instanceName}" in ${zone} (${inst.status}), deleting...`);
+        await deleteVm(auth, projectId, zone, instanceName);
+        // Wait for deletion
+        for (let i = 0; i < 12; i++) {
+          await new Promise((r) => setTimeout(r, 5000));
+          try {
+            await gcpFetch(
+              auth,
+              `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances/${instanceName}`
+            );
+          } catch {
+            break; // Deleted
+          }
+        }
+      }
+    } catch {
+      // VM not in this zone
+    }
   }
 }
 

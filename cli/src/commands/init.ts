@@ -12,6 +12,7 @@ import {
   createVm,
   deleteVm,
   fetchVmLogs,
+  cleanupVmByName,
 } from '../lib/gcp.js';
 import { setupFirebaseProject } from '../lib/firebase.js';
 import { ensureRepo, setGitHubVariable, setupOidc, validatePat } from '../lib/github.js';
@@ -451,6 +452,10 @@ async function stepCreateVm(auth: AuthClient, config: any, args: InitArgs): Prom
 
   // Use the real startup script (installs Node, gh, kimaki, clones repo, starts bot)
   metadata.startup_script_bin = Buffer.from(getStartupScript(), 'utf-8').toString('base64');
+
+  // Clean up any existing VM with this name from prior runs
+  info('Checking for existing VM...');
+  await cleanupVmByName(auth, projectId, 'secureagent-manager');
 
   const zones = args.vmZone ? [args.vmZone] : [
     'us-central1-a', 'us-central1-b', 'us-central1-c',
