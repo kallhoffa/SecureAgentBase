@@ -166,6 +166,26 @@ jobs:
           E2E_FIREBASE_STAGING_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID_STAGING }}
           E2E_FIREBASE_PRODUCTION_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID_PRODUCTION }}
 
+      - name: Build CLI
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        run: |
+          cd cli && npm ci && npm run build && npm pack
+          ls -la *.tgz
+
+      - name: Run CLI E2E Tests
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        run: |
+          CLI_PKG=$(ls cli/secureagentbase-*.tgz)
+          echo "CLI package: $CLI_PKG"
+          CLI_PACKAGE="$CLI_PKG" node tests/e2e/cli.spec.mjs
+        env:
+          GCP_PROJECT_ID: ${{ vars.E2E_GCP_PROJECT_ID }}
+          E2E_GITHUB_PAT: ${{ secrets.E2E_GITHUB_PAT }}
+          E2E_GITHUB_OWNER: 'kallhoffa'
+          E2E_GITHUB_REPO: 'agentbase-testing'
+          E2E_DISCORD_TOKEN: ${{ secrets.E2E_DISCORD_BOT_TOKEN }}
+          E2E_FULL: 'true'
+
       - name: Upload logs on failure
         if: failure()
         run: |

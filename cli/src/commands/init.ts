@@ -19,6 +19,7 @@ import { fetchBillingAccounts, linkBillingAccount, isBillingEnabled } from '../l
 import { loadConfig, saveConfig, clearConfig } from '../utils/config.js';
 import { heading, info, success, warn, error, kv } from '../utils/output.js';
 import { CLIError } from '../utils/errors.js';
+import { getStartupScript } from '../lib/startup-script.js';
 
 export interface InitArgs {
   saKey?: string;
@@ -395,18 +396,22 @@ async function stepDiscord(config: any, args: InitArgs): Promise<void> {
   }
 
   if (!config.discordGuildId) {
-    const inviteUrl = `https://discord.com/oauth2/authorize?client_id=${Buffer.from(config.discordBotToken.split('.')[0], 'base64').toString().match(/"(\d+)"/)?.[1] || 'UNKNOWN'}&permissions=8&integration_type=0&scope=bot%20applications.commands`;
+    if (args.yes) {
+      info('No guild ID provided, skipping guild prompt (-y mode)');
+    } else {
+      const inviteUrl = `https://discord.com/oauth2/authorize?client_id=${Buffer.from(config.discordBotToken.split('.')[0], 'base64').toString().match(/"(\d+)"/)?.[1] || 'UNKNOWN'}&permissions=8&integration_type=0&scope=bot%20applications.commands`;
 
-    warn(`Invite your bot to a server: ${inviteUrl}`);
+      warn(`Invite your bot to a server: ${inviteUrl}`);
 
-    const { guildId } = await inquirer.prompt([
-      {
-        type: 'input',
-        name: 'guildId',
-        message: 'Discord Guild (Server) ID after inviting the bot:',
-      },
-    ]);
-    config.discordGuildId = guildId;
+      const { guildId } = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'guildId',
+          message: 'Discord Guild (Server) ID after inviting the bot:',
+        },
+      ]);
+      config.discordGuildId = guildId;
+    }
   }
 
   saveConfig(config);
@@ -442,8 +447,8 @@ async function stepCreateVm(auth: AuthClient, config: any, args: InitArgs): Prom
     vite_app_name: 'SecureAgentBase',
   };
 
-  // Add startup script (embedded as base64 in the script itself for simplicity)
-  metadata.startup_script_bin = Buffer.from('#!/bin/bash\nset +e\nexport HOME=/root\necho "SecureAgentBase VM initialized"', 'utf-8').toString('base64');
+  // Use the real startup script (installs Node, gh, kimaki, clones repo, starts bot)
+  metadata.startup_script_bin = Buffer.from(getStartupScript(), 'utf-8').toString('base64');
 
   const zones = args.vmZone ? [args.vmZone] : [
     'us-central1-a', 'us-central1-b', 'us-central1-c',
@@ -473,9 +478,9 @@ async function stepCreateVm(auth: AuthClient, config: any, args: InitArgs): Prom
   saveConfig(config);
   success(`VM created at ${config.vmIp} in ${config.vmZone}`);
 
-  // Poll for initialization
+  // Poll for initialization (real startup script takes ~3-5 min)
   info('Polling VM initialization...');
-  for (let i = 0; i < 120; i++) {
+  for (let i = 0; i < 30; i++) {
     await new Promise((r) => setTimeout(r, 10000));
     try {
       const logs = await fetchVmLogs(auth, projectId, config.vmZone, 'secureagent-manager');

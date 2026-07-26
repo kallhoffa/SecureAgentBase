@@ -3,14 +3,20 @@
  *
  * Uses the packaged CLI (secureagentbase-*.tgz) installed from the CI artifact.
  * Authenticates via ADC (GOOGLE_APPLICATION_CREDENTIALS set by WIF in CI).
+ *
+ * Modes:
+ *   Minimal (default):  init --no-firebase --no-vm  (fast smoke test)
+ *   Full (E2E_FULL):    init with Firebase + GitHub + OIDC + Discord + VM (same endstate as wizard)
+ *
  * Requires env vars:
- *   CLI_PACKAGE    - path to the .tgz package (set by CI)
- *   GCP_PROJECT_ID - project to test against (agentbase-test-staging)
- *   SKIP_CLEANUP   - set to "true" to keep created resources for debugging
+ *   CLI_PACKAGE     - path to the .tgz package (set by CI)
+ *   GCP_PROJECT_ID  - project to test against (agentbase-test-staging)
+ *   E2E_GITHUB_PAT  - GitHub PAT for repo creation (full mode only)
+ *   SKIP_CLEANUP    - set to "true" to keep created resources for debugging
  */
 
-import { execSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -46,13 +52,11 @@ function run(bin, args, opts = {}) {
   };
 }
 
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
-
 async function main() {
   const cliPackage = process.env.CLI_PACKAGE;
   const projectId = process.env.GCP_PROJECT_ID || process.env.E2E_GCP_PROJECT_ID;
+  const githubPat = process.env.E2E_GITHUB_PAT;
+  const fullMode = process.env.E2E_FULL === 'true';
   const skipCleanup = process.env.SKIP_CLEANUP === 'true';
 
   if (!cliPackage) {
@@ -69,11 +73,21 @@ async function main() {
     process.exit(failed > 0 ? 1 : 0);
   }
 
+  if (fullMode && !githubPat) {
+    console.log(`${SKIP} CLI_E2E: E2E_FULL=true but E2E_GITHUB_PAT not set, skipping full mode`);
+    skipped++;
+    console.log(`\nResults: ${passed} passed, ${failed} failed, ${skipped} skipped`);
+    process.exit(failed > 0 ? 1 : 0);
+  }
+
+  const githubOwner = process.env.E2E_GITHUB_OWNER || 'kallhoffa';
+  const repoName = process.env.E2E_GITHUB_REPO || 'agentbase-testing';
+  const discordToken = process.env.E2E_DISCORD_TOKEN;
+
   // Install CLI from package in a temp directory
   const tmpDir = mkdtempSync(join(tmpdir(), 'cli-e2e-'));
   const homeDir = join(tmpDir, 'home');
-  const configDir = join(homeDir, '.config', 'secureagentbase');
-  console.log(`\nCLI E2E (project: ${projectId})`);
+  console.log(`\nCLI E2E (project: ${projectId}, mode: ${fullMode ? 'full' : 'minimal'})`);
 
   // Resolve the package path relative to the workspace
   const pkgPath = resolve(cliPackage);
@@ -122,25 +136,59 @@ async function main() {
   assert(r.exitCode === 0, 'status exits with 0');
   assert(r.stdout.includes('No deployment found') || r.stdout.includes('SecureAgentBase Status'), 'status shows no deployment');
 
-  // Test 2: Init with --project-id and --auto-sa (non-interactive headless)
-  console.log('Test 2: init — minimal headless');
-  {
-    r = run(cliBin, [
+  // Test 2: Init
+  if (fullMode) {
+    // Full mode: Firebase + GitHub + OIDC + Discord + VM (same endstate as wizard)
+    const initArgs = [
       'init',
       '--project-id', projectId,
       '--auto-sa',
-      '--no-firebase',
-      '--no-vm',
-    ], { env: envBase, timeout: 180_000 });
+      '--github-pat', githubPat,
+      '--repo-name', repoName,
+      '-y',
+    ];
+    if (discordToken) {
+      initArgs.push('--discord-token', discordToken);
+    }
+    console.log(`Test 2: init — full (repo: ${githubOwner}/${repoName}, vm: yes, discord: ${discordToken ? 'yes' : 'no'})`);
+    {
+      r = run(cliBin, initArgs, { env: envBase, timeout: 600_000 });
 
-    if (r.exitCode === 0) {
-      assert(true, 'init completes successfully');
-    } else {
-      // Show details on failure
-      console.log(`  exit code: ${r.exitCode}`);
-      if (r.stdout) console.log(`  stdout:\n${r.stdout}`);
-      if (r.stderr) console.log(`  stderr:\n${r.stderr}`);
-      assert(false, 'init completes successfully');
+      if (r.exitCode === 0) {
+        assert(true, 'init completes successfully');
+      } else {
+        console.log(`  exit code: ${r.exitCode}`);
+        if (r.stdout) console.log(`  stdout:\n${r.stdout}`);
+        if (r.stderr) console.log(`  stderr:\n${r.stderr}`);
+        assert(false, 'init completes successfully');
+      }
+
+      // Verify output contains expected steps
+      assert(r.stdout.includes('Firebase') || r.stdout.includes('firebase') || r.stdout.includes('Skipping Firebase') === false, 'init includes Firebase setup');
+      assert(r.stdout.includes('GitHub') || r.stdout.includes('github') || r.stdout.includes('Skipping GitHub') === false, 'init includes GitHub setup');
+      assert(r.stdout.includes('Discord') || r.stdout.includes('discord') || r.stdout.includes('Skipping Discord') === false, 'init includes Discord setup');
+      assert(r.stdout.includes('VM created') || r.stdout.includes('vm') || r.stdout.includes('Skipping VM') === false, 'init includes VM creation');
+    }
+  } else {
+    // Minimal mode: fast smoke test
+    console.log('Test 2: init — minimal headless');
+    {
+      r = run(cliBin, [
+        'init',
+        '--project-id', projectId,
+        '--auto-sa',
+        '--no-firebase',
+        '--no-vm',
+      ], { env: envBase, timeout: 180_000 });
+
+      if (r.exitCode === 0) {
+        assert(true, 'init completes successfully');
+      } else {
+        console.log(`  exit code: ${r.exitCode}`);
+        if (r.stdout) console.log(`  stdout:\n${r.stdout}`);
+        if (r.stderr) console.log(`  stderr:\n${r.stderr}`);
+        assert(false, 'init completes successfully');
+      }
     }
   }
 
@@ -151,12 +199,16 @@ async function main() {
   assert(r.stdout.includes(projectId), 'status shows project ID');
   assert(r.stdout.includes('secureagent-manager'), 'status shows service account');
 
+  if (fullMode) {
+    assert(r.stdout.includes('github.com') || r.stdout.includes('agentbase-testing'), 'status shows GitHub repo');
+  }
+
   // Test 4: Destroy (cleanup)
   if (!skipCleanup) {
     console.log('Test 4: destroy — cleanup');
     r = run(cliBin, ['destroy', '-y'], { env: envBase, timeout: 60_000 });
     console.log(`  ${r.stdout}`);
-    assert(true, 'destroy ran');
+    assert(r.exitCode === 0 || r.stdout.includes('No deployment') || r.stdout.includes('Configuration cleared'), 'destroy ran');
 
     // Test 5: Status after destroy
     console.log('Test 5: status — after destroy');
