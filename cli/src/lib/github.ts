@@ -140,6 +140,9 @@ export async function setupOidc(
     await grantRole(auth, `projects/${projectId}`, member, 'roles/firebase.admin');
     await grantRole(auth, `projects/${projectId}`, member, 'roles/datastore.owner');
     await grantRole(auth, `projects/${projectId}`, member, 'roles/serviceusage.serviceUsageConsumer');
+    await grantRole(auth, `projects/${projectId}`, member, 'roles/iam.workloadIdentityPoolAdmin');
+    await grantRole(auth, `projects/${projectId}`, member, 'roles/iam.securityAdmin');
+    await grantRole(auth, `projects/${projectId}`, member, 'roles/serviceusage.serviceUsageAdmin');
 
     // Grant pool impersonation
     const poolMember = `principalSet://iam.googleapis.com/${poolName}/attribute.repository/${repoFullName}`;
