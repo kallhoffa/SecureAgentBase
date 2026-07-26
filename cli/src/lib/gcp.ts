@@ -7,16 +7,19 @@ export async function gcpFetch(
 ): Promise<any> {
   const token = await auth.getToken();
   const method = opts?.method || 'GET';
+  const hasBody = opts?.body != null;
   const headers: Record<string, string> = {
     'Authorization': `Bearer ${token}`,
-    'Content-Type': 'application/json',
     ...opts?.headers,
   };
+  if (hasBody) {
+    headers['Content-Type'] = 'application/json';
+  }
 
   const response = await fetch(url, {
     method,
     headers,
-    body: opts?.body ? JSON.stringify(opts.body) : undefined,
+    body: hasBody ? JSON.stringify(opts.body) : undefined,
   });
 
   if (!response.ok) {
