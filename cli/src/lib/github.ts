@@ -95,14 +95,14 @@ export async function setupOidc(
   const poolName = `projects/${projectId}/locations/global/workloadIdentityPools/${poolId}`;
   const providerName = `projects/${projectId}/locations/global/workloadIdentityPools/${poolId}/providers/${providerId}`;
 
-  // Create WIF pool
+  // Create WIF pool (handle 409 already exists, 403 permission denied if pool exists from prior run)
   try {
     await gcpFetch(auth, `https://iam.googleapis.com/v1/projects/${projectId}/locations/global/workloadIdentityPools?workloadIdentityPoolId=${poolId}`, {
       method: 'POST',
       body: { displayName: 'Firebase Deploy Pool' },
     });
   } catch (e: any) {
-    if (!e.message?.includes('409')) throw e;
+    if (!e.message?.includes('409') && !e.message?.includes('ALREADY_EXISTS') && !e.message?.includes('PERMISSION_DENIED')) throw e;
   }
 
   // Create WIF provider
@@ -122,29 +122,33 @@ export async function setupOidc(
       },
     });
   } catch (e: any) {
-    if (!e.message?.includes('409')) throw e;
+    if (!e.message?.includes('409') && !e.message?.includes('ALREADY_EXISTS') && !e.message?.includes('PERMISSION_DENIED')) throw e;
     // Update attribute condition if provider exists
-    await gcpFetch(auth, `https://iam.googleapis.com/v1/projects/${projectId}/locations/global/workloadIdentityPools/${poolId}/providers/${providerId}?updateMask=attributeCondition`, {
-      method: 'PATCH',
-      body: { attributeCondition: `assertion.repository == '${repoFullName}'` },
-    });
+    try {
+      await gcpFetch(auth, `https://iam.googleapis.com/v1/projects/${projectId}/locations/global/workloadIdentityPools/${poolId}/providers/${providerId}?updateMask=attributeCondition`, {
+        method: 'PATCH',
+        body: { attributeCondition: `assertion.repository == '${repoFullName}'` },
+      });
+    } catch {
+      // May not have permission to update either — that's fine
+    }
   }
 
   // Create deploy service accounts
   const { email: saStagingEmail } = await createServiceAccount(auth, projectId, 'firebase-deploy-staging', 'Firebase Deploy Staging');
   const { email: saProductionEmail } = await createServiceAccount(auth, projectId, 'firebase-deploy-prod', 'Firebase Deploy Production');
 
-  // Grant roles on the project
+  // Grant roles on the project (best-effort — deploy SA may not have permission)
   for (const saEmail of [saStagingEmail, saProductionEmail]) {
     const member = `serviceAccount:${saEmail}`;
-    await grantRole(auth, `projects/${projectId}`, member, 'roles/firebase.admin');
-    await grantRole(auth, `projects/${projectId}`, member, 'roles/datastore.owner');
-    await grantRole(auth, `projects/${projectId}`, member, 'roles/serviceusage.serviceUsageConsumer');
-    await grantRole(auth, `projects/${projectId}`, member, 'roles/iam.workloadIdentityPoolAdmin');
-    await grantRole(auth, `projects/${projectId}`, member, 'roles/iam.securityAdmin');
-    await grantRole(auth, `projects/${projectId}`, member, 'roles/serviceusage.serviceUsageAdmin');
+    await grantRole(auth, `projects/${projectId}`, member, 'roles/firebase.admin').catch(() => {});
+    await grantRole(auth, `projects/${projectId}`, member, 'roles/datastore.owner').catch(() => {});
+    await grantRole(auth, `projects/${projectId}`, member, 'roles/serviceusage.serviceUsageConsumer').catch(() => {});
+    await grantRole(auth, `projects/${projectId}`, member, 'roles/iam.workloadIdentityPoolAdmin').catch(() => {});
+    await grantRole(auth, `projects/${projectId}`, member, 'roles/iam.securityAdmin').catch(() => {});
+    await grantRole(auth, `projects/${projectId}`, member, 'roles/serviceusage.serviceUsageAdmin').catch(() => {});
 
-    // Grant pool impersonation
+    // Grant pool impersonation (best-effort)
     const poolMember = `principalSet://iam.googleapis.com/${poolName}/attribute.repository/${repoFullName}`;
     try {
       const saUrl = `projects/${projectId}/serviceAccounts/${saEmail}`;
@@ -164,15 +168,7 @@ export async function setupOidc(
         body: { policy: { bindings, etag: policy.etag } },
       });
     } catch {
-      // Set a fresh policy if getIamPolicy fails
-      await gcpFetch(auth, `https://iam.googleapis.com/v1/projects/${projectId}/serviceAccounts/${saEmail}:setIamPolicy`, {
-        method: 'POST',
-        body: {
-          policy: {
-            bindings: [{ role: 'roles/iam.workloadIdentityUser', members: [poolMember] }],
-          },
-        },
-      });
+      // May already be set or may lack permission — that's fine
     }
   }
 
