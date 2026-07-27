@@ -437,9 +437,13 @@ test.describe('Wizard E2E Regression', () => {
           if (/Permission denied|fatal:.*repository.*not found|error:.*push/i.test(tail)) {
             console.log('WARNING: Serial port shows git push failure — GitHub Actions deploy will not trigger');
           }
-          if (/Repo already exists|force-pushing/i.test(tail) && !/Everything up-to-date|main -> main/i.test(tail)) {
-            console.log('WARNING: Repo exists but push may have failed — check serial output above');
-          }
+          // Check for our compact push result markers
+          const pushMatch = tail.match(/PUSH_RESULT=(\w+)/);
+          const scriptMatch = tail.match(/SCRIPT_COMPLETE\|PUSH=(\w+)/);
+          if (pushMatch) console.log(`Serial port push result: ${pushMatch[1]}`);
+          if (scriptMatch) console.log(`Serial port script complete: push=${scriptMatch[1]}, repo=${(tail.match(/SCRIPT_COMPLETE\|PUSH=\w+\|REPO=([^|]+)/) || [])[1] || '?'}`);
+          const permsMatch = tail.match(/PAT_PERMS:\s*(.+)/);
+          if (permsMatch) console.log(`Serial port PAT permissions: ${permsMatch[1]}`);
         } else {
           console.log('Serial port: VM not found in any zone, or serial port output unavailable');
         }
@@ -539,6 +543,36 @@ test.describe('Wizard E2E Regression', () => {
             console.log(`Staging deploy test: new content first 500 chars: ${html.substring(0, 500)}`);
           } else {
             console.log(`Staging deploy test: no change yet (${elapsed}s, baseline version: ${baselineVersion})`);
+          }
+
+          // Periodic diagnostics: read serial port and check GitHub state at 3min intervals
+          if (elapsed > 60 && elapsed % 180 < interval / 1000) {
+            if (E2E_GCP_TOKEN) {
+              try {
+                const serialResp = await fetch(
+                  `https://compute.googleapis.com/compute/v1/projects/${stagingProjectId}/zones/${serialZone || 'us-east1-b'}/instances/${instanceName}/serialPort?port=1`,
+                  { headers: { Authorization: `Bearer ${E2E_GCP_TOKEN}` } }
+                );
+                if (serialResp.ok) {
+                  const sd = await serialResp.json();
+                  const tail = (sd.contents || '').slice(-3000);
+                  console.log(`[diag ${elapsed}s] Serial port (last 3000 chars):\n${tail}`);
+                }
+              } catch (_) {}
+            }
+            const gpat = process.env.E2E_GITHUB_PAT || '';
+            if (gpat) {
+              try {
+                const gr = await fetch(`https://api.github.com/repos/${process.env.E2E_GITHUB_OWNER || 'kallhoffa'}/${process.env.E2E_PROJECT_NAME || 'agentbase-testing'}/commits?per_page=1`, {
+                  headers: { Authorization: `token ${gpat}`, Accept: 'application/vnd.github+json' },
+                });
+                if (gr.ok) {
+                  const c = await gr.json();
+                  const age = c.length > 0 ? Math.round((Date.now() - new Date(c[0].commit.committer.date).getTime()) / 60000) : -1;
+                  console.log(`[diag ${elapsed}s] GitHub last commit: ${c[0]?.sha?.substring(0, 7) || 'none'} (${age} min ago)`);
+                }
+              } catch (_) {}
+            }
           }
         } catch (e) {
           console.log(`Staging deploy test: error — ${e.message} (${elapsed}s)`);

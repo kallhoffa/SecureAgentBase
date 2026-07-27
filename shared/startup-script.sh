@@ -35,30 +35,27 @@ for var in FIREBASE_STAGING FIREBASE_PRODUCTION GITHUB_PAT DISCORD_BOT_TOKEN DIS
   fi
 done
 
-echo "DEBUG: REPO_OWNER=$REPO_OWNER"
-echo "DEBUG: FIREBASE_STAGING=$FIREBASE_STAGING"
-echo "DEBUG: FIREBASE_PRODUCTION=$FIREBASE_PRODUCTION"
+echo "REPO_OWNER=$REPO_OWNER | FIREBASE_STAGING=$FIREBASE_STAGING"
 
-sudo apt-get update -y || true
-sudo apt-get install -y curl git jq apt-transport-https ca-certificates gnupg2 ufw unzip || true
+sudo apt-get update -y > /dev/null 2>&1 || true
+sudo apt-get install -y curl git jq apt-transport-https ca-certificates gnupg2 ufw unzip > /dev/null 2>&1 || true
 
 # Install Node.js 20.x
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - || true
-sudo apt-get install -y nodejs || true
+curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - > /dev/null 2>&1 || true
+sudo apt-get install -y nodejs > /dev/null 2>&1 || true
 
 # Install GitHub CLI
-type gh >/dev/null 2>&1 || (curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null && sudo apt-get update -y && sudo apt-get install -y gh) || true
+type gh >/dev/null 2>&1 || (curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null && sudo apt-get update -y > /dev/null 2>&1 && sudo apt-get install -y gh > /dev/null 2>&1) || true
 
 # Install Kimaki
 if command -v npm &> /dev/null; then
-  npm install -g kimaki@latest || true
+  npm install -g kimaki@latest > /dev/null 2>&1 || true
 fi
 
 # Clone the SecureAgentBase template repository into Kimaki's projects dir
 # so kimaki can detect/register it as a project
 mkdir -p /root/.kimaki/projects
 cd /root/.kimaki/projects
-echo "DEBUG: Cloning template repository..."
 
 # Force HTTP/1.1 to avoid GitHub HTTP/2 curl 92 errors on large repos
 git config --global http.version HTTP/1.1
@@ -66,18 +63,15 @@ git config --global http.postBuffer 524288000
 
 REPO_CLONED=false
 for i in 1 2 3; do
-  echo "Clone attempt $i..."
-  if git clone --depth 1 https://github.com/$REPO_OWNER/$REPO_NAME.git $REPO_NAME; then
+  if git clone --depth 1 https://github.com/$REPO_OWNER/$REPO_NAME.git $REPO_NAME > /dev/null 2>&1; then
     REPO_CLONED=true
     break
   fi
-  echo "Clone attempt $i failed, retrying in 5s..."
   sleep 5
 done
 
 # If clone failed, fall back to creating directory manually
 if [ "$REPO_CLONED" != "true" ]; then
-  echo "WARNING: Failed to clone template after 3 attempts! Creating blank directory..."
   mkdir -p $REPO_NAME
   cd $REPO_NAME
   git init
@@ -91,7 +85,6 @@ build/
 GITEOF
 else
   cd $REPO_NAME
-  # Remove template's .git folder to start fresh
   rm -rf .git
   git init
 fi
@@ -99,8 +92,6 @@ fi
 git checkout -b main
 
 # Clean up wizard-specific files — users don't need the infra setup wizard
-# or admin panel in their template repo
-echo "Cleaning up wizard-specific files..."
 rm -rf src/infra-setup.tsx src/create-app.tsx
 rm -rf src/framework/infra-setup/
 rm -rf src/admin/
@@ -142,104 +133,88 @@ git add .
 git commit -m "Initial commit of SecureAgentBase template"
 
 # Create GitHub repo and push
+# Write diagnostics to /dev/ttyS0 (serial port 1) for external debugging
+# and compact markers at the end that survive buffer overflow
+PUSH_RESULT="NOT_ATTEMPTED"
 if [ -n "$GITHUB_PAT" ]; then
-  echo "DEBUG: GITHUB_PAT is set ($(echo -n "$GITHUB_PAT" | wc -c) chars), authenticating..."
-  echo "$GITHUB_PAT" | gh auth login --with-token
-  gh auth setup-git 2>&1 || true
-  echo "DEBUG: gh auth status:"; gh auth status 2>&1 || true
-  echo "DEBUG: git credential helper:"; git config --get credential.helper 2>&1 || true
+  echo "$GITHUB_PAT" | gh auth login --with-token 2>/dev/null
+  gh auth setup-git 2>/dev/null || true
+
+  # Check PAT repo access
+  REPO_PERMS=$(gh api "repos/${REPO_OWNER}/${REPO_NAME}" --jq '.permissions // {}' 2>&1)
+  gh auth status 2>/dev/null
+  echo "PAT_PERMS: $REPO_PERMS" > /dev/ttyS0 2>/dev/null || true
 
   # Create new repo or force-push if it already exists
   if gh repo view "${REPO_OWNER}/${REPO_NAME}" 2>/dev/null; then
-    echo "Repo already exists, force-pushing fresh template..."
+    echo "REPO_EXISTS: force-pushing..." > /dev/ttyS0 2>/dev/null || true
     git remote remove origin 2>/dev/null || true
     git remote add origin "https://github.com/${REPO_OWNER}/${REPO_NAME}.git" || true
-    git push -u origin main --force 2>&1 || {
-      echo "ERROR: Force push failed (exit code $?)"
-      git remote -v
-      echo "Attempting direct push via gh..."
-      gh api repos/${REPO_OWNER}/${REPO_NAME}/contents --method PUT -f message="Initial commit" -f content="$(git log --format=%B -n1)" 2>&1 || true
-    }
+    if git push -u origin main --force 2>&1; then
+      PUSH_RESULT="PUSH_OK"
+    else
+      PUSH_RESULT="PUSH_FAILED"
+    fi
   else
-    echo "Repo does not exist, creating ${REPO_OWNER}/${REPO_NAME}..."
-    gh repo create "${REPO_OWNER}/${REPO_NAME}" --public --source=. --push 2>&1 || {
-      echo "WARNING: Repo create failed — repo may already exist or PAT lacks admin:write"
-      echo "Attempting force-push to existing repo..."
+    echo "REPO_NOT_FOUND: creating..." > /dev/ttyS0 2>/dev/null || true
+    if gh repo create "${REPO_OWNER}/${REPO_NAME}" --public --source=. --push 2>&1; then
+      PUSH_RESULT="CREATE_OK"
+    else
+      # Fallback: try force-push (repo may exist but PAT can't view it)
+      echo "CREATE_FAILED: trying force-push..." > /dev/ttyS0 2>/dev/null || true
       git remote remove origin 2>/dev/null || true
       git remote add origin "https://github.com/${REPO_OWNER}/${REPO_NAME}.git" || true
-      git push -u origin main --force 2>&1 || echo "WARNING: Force push also failed — staging deploy will not trigger"
-    }
+      if git push -u origin main --force 2>&1; then
+        PUSH_RESULT="FALLBACK_PUSH_OK"
+      else
+        PUSH_RESULT="ALL_PUSH_FAILED"
+      fi
+    fi
   fi
 
-  echo "DEBUG: Setting GitHub secrets and variables..."
-  echo "DEBUG: FIREBASE_STAGING=$FIREBASE_STAGING"
-  echo "DEBUG: FIREBASE_PRODUCTION=$FIREBASE_PRODUCTION"
-  echo "DEBUG: GCP_WIF_PROVIDER=$GCP_WIF_PROVIDER"
-  echo "DEBUG: GCP_SA_STAGING=$GCP_SA_STAGING"
-  echo "DEBUG: GCP_SA_PRODUCTION=$GCP_SA_PRODUCTION"
-  echo "DEBUG: VITE_APP_NAME=$VITE_APP_NAME"
-  echo "DEBUG: FIREBASE_STAGING_CONFIG=$FIREBASE_STAGING_CONFIG"
-  echo "DEBUG: FIREBASE_PRODUCTION_CONFIG=$FIREBASE_PRODUCTION_CONFIG"
-  echo "DEBUG: gh auth status:"
-  gh auth status 2>&1 || true
+  # Write push result marker to serial port (compact, survives buffer overflow)
+  echo "PUSH_RESULT=$PUSH_RESULT" > /dev/ttyS0 2>/dev/null || true
+
+  # Set GitHub variables
+  echo "Setting GitHub variables..." > /dev/ttyS0 2>/dev/null || true
+  echo "FIREBASE_STAGING=$FIREBASE_STAGING | FIREBASE_PRODUCTION=$FIREBASE_PRODUCTION | PAT len=$(echo -n "$GITHUB_PAT" | wc -c)" > /dev/ttyS0 2>/dev/null || true
+  gh auth status 2>/dev/null || true
 
   # Set Firebase project IDs as VARIABLES (workflow reads vars.FIREBASE_PROJECT_ID_STAGING)
-  echo "DEBUG: Setting FIREBASE_PROJECT_ID_STAGING=$FIREBASE_STAGING"
-  gh variable set FIREBASE_PROJECT_ID_STAGING --body "$FIREBASE_STAGING" -R "${REPO_OWNER}/${REPO_NAME}" 2>&1 || echo "WARNING: Failed to set FIREBASE_PROJECT_ID_STAGING"
-  echo "DEBUG: Setting FIREBASE_PROJECT_ID_PRODUCTION=$FIREBASE_PRODUCTION"
-  gh variable set FIREBASE_PROJECT_ID_PRODUCTION --body "$FIREBASE_PRODUCTION" -R "${REPO_OWNER}/${REPO_NAME}" 2>&1 || echo "WARNING: Failed to set FIREBASE_PROJECT_ID_PRODUCTION"
+  gh variable set FIREBASE_PROJECT_ID_STAGING --body "$FIREBASE_STAGING" -R "${REPO_OWNER}/${REPO_NAME}" 2>/dev/null || echo "WARN: Failed to set FIREBASE_PROJECT_ID_STAGING"
+  gh variable set FIREBASE_PROJECT_ID_PRODUCTION --body "$FIREBASE_PRODUCTION" -R "${REPO_OWNER}/${REPO_NAME}" 2>/dev/null || echo "WARN: Failed to set FIREBASE_PROJECT_ID_PRODUCTION"
 
   # Set OIDC variables (required by google-github-actions/auth)
-  if [ -n "$GCP_WIF_PROVIDER" ]; then
-    echo "DEBUG: Setting GCP_WIF_PROVIDER=$GCP_WIF_PROVIDER"
-    gh variable set GCP_WIF_PROVIDER --body "$GCP_WIF_PROVIDER" -R "${REPO_OWNER}/${REPO_NAME}" 2>&1 || echo "WARNING: Failed to set GCP_WIF_PROVIDER"
-  fi
-  if [ -n "$GCP_SA_STAGING" ]; then
-    echo "DEBUG: Setting GCP_SA_STAGING=$GCP_SA_STAGING"
-    gh variable set GCP_SA_STAGING --body "$GCP_SA_STAGING" -R "${REPO_OWNER}/${REPO_NAME}" 2>&1 || echo "WARNING: Failed to set GCP_SA_STAGING"
-  fi
-  if [ -n "$GCP_SA_PRODUCTION" ]; then
-    echo "DEBUG: Setting GCP_SA_PRODUCTION=$GCP_SA_PRODUCTION"
-    gh variable set GCP_SA_PRODUCTION --body "$GCP_SA_PRODUCTION" -R "${REPO_OWNER}/${REPO_NAME}" 2>&1 || echo "WARNING: Failed to set GCP_SA_PRODUCTION"
-  fi
+  [ -n "$GCP_WIF_PROVIDER" ] && gh variable set GCP_WIF_PROVIDER --body "$GCP_WIF_PROVIDER" -R "${REPO_OWNER}/${REPO_NAME}" 2>/dev/null || true
+  [ -n "$GCP_SA_STAGING" ] && gh variable set GCP_SA_STAGING --body "$GCP_SA_STAGING" -R "${REPO_OWNER}/${REPO_NAME}" 2>/dev/null || true
+  [ -n "$GCP_SA_PRODUCTION" ] && gh variable set GCP_SA_PRODUCTION --body "$GCP_SA_PRODUCTION" -R "${REPO_OWNER}/${REPO_NAME}" 2>/dev/null || true
 
   # Set VITE app variables
-  if [ -n "$VITE_APP_NAME" ]; then
-    echo "DEBUG: Setting VITE_APP_NAME=$VITE_APP_NAME"
-    gh variable set VITE_APP_NAME --body "$VITE_APP_NAME" -R "${REPO_OWNER}/${REPO_NAME}" 2>&1 || echo "WARNING: Failed to set VITE_APP_NAME"
-  fi
+  [ -n "$VITE_APP_NAME" ] && gh variable set VITE_APP_NAME --body "$VITE_APP_NAME" -R "${REPO_OWNER}/${REPO_NAME}" 2>/dev/null || true
 
   # Set Firebase config variables from JSON configs (parse with jq)
   # Convert camelCase field names to SCREAMING_SNAKE_CASE for GitHub variable names
   if [ -n "$FIREBASE_STAGING_CONFIG" ] && echo "$FIREBASE_STAGING_CONFIG" | jq -e . >/dev/null 2>&1; then
-    echo "DEBUG: Parsing FIREBASE_STAGING_CONFIG for Firebase config variables..."
     for field in apiKey authDomain projectId storageBucket messagingSenderId appId measurementId; do
       val=$(echo "$FIREBASE_STAGING_CONFIG" | jq -r ".${field} // empty" 2>/dev/null)
       if [ -n "$val" ]; then
         upper_field=$(echo "${field}" | sed 's/\([a-z]\)\([A-Z]\)/\1_\2/g' | tr '[:lower:]' '[:upper:]')
-        echo "DEBUG: Setting FIREBASE_${upper_field}_STAGING=$val"
-        gh variable set "FIREBASE_${upper_field}_STAGING" --body "$val" -R "${REPO_OWNER}/${REPO_NAME}" 2>&1 || echo "WARNING: Failed to set FIREBASE_${upper_field}_STAGING"
+        gh variable set "FIREBASE_${upper_field}_STAGING" --body "$val" -R "${REPO_OWNER}/${REPO_NAME}" 2>/dev/null || true
       fi
     done
-  else
-    echo "WARNING: FIREBASE_STAGING_CONFIG is empty or invalid JSON"
   fi
 
   if [ -n "$FIREBASE_PRODUCTION_CONFIG" ] && echo "$FIREBASE_PRODUCTION_CONFIG" | jq -e . >/dev/null 2>&1; then
-    echo "DEBUG: Parsing FIREBASE_PRODUCTION_CONFIG for Firebase config variables..."
     for field in apiKey authDomain projectId storageBucket messagingSenderId appId measurementId; do
       val=$(echo "$FIREBASE_PRODUCTION_CONFIG" | jq -r ".${field} // empty" 2>/dev/null)
       if [ -n "$val" ]; then
         upper_field=$(echo "${field}" | sed 's/\([a-z]\)\([A-Z]\)/\1_\2/g' | tr '[:lower:]' '[:upper:]')
-        echo "DEBUG: Setting FIREBASE_${upper_field}_PRODUCTION=$val"
-        gh variable set "FIREBASE_${upper_field}_PRODUCTION" --body "$val" -R "${REPO_OWNER}/${REPO_NAME}" 2>&1 || echo "WARNING: Failed to set FIREBASE_${upper_field}_PRODUCTION"
+        gh variable set "FIREBASE_${upper_field}_PRODUCTION" --body "$val" -R "${REPO_OWNER}/${REPO_NAME}" 2>/dev/null || true
       fi
     done
-  else
-    echo "WARNING: FIREBASE_PRODUCTION_CONFIG is empty or invalid JSON"
   fi
 
-  echo "DEBUG: All GitHub secrets and variables set"
+  echo "VAR_RESULT=DONE" > /dev/ttyS0 2>/dev/null || true
 fi
 
 # Install Kimaki globally and create its configuration
@@ -347,8 +322,8 @@ REGISTER_EOF
 systemctl daemon-reload
 systemctl enable kimaki-register.service
 
-echo "=== Kimaki installation complete! ==="
-echo "Service status:"
-systemctl status kimaki.service --no-pager || true
+# Final compact marker — this is the LAST output before kimaki-register starts
+# It survives serial port buffer overflow because it's at the very end
+echo "SCRIPT_COMPLETE|PUSH=$PUSH_RESULT|REPO=$REPO_OWNER/$REPO_NAME|ZONE=$(curl -sf http://metadata.google.internal/computeMetadata/v1/instance/zone -H 'Metadata-Flavor: Google' 2>/dev/null | sed 's|.*/||')" > /dev/ttyS0 2>/dev/null || true
 
 systemctl start kimaki-register.service &
