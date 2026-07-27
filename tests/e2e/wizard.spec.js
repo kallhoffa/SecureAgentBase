@@ -519,15 +519,15 @@ test.describe('Wizard E2E Regression', () => {
           // Check if content changed from baseline (new deployment landed)
           const contentChanged = html !== baselineHtml;
 
-          // Check for expected template content
+          // Check for expected template content in raw HTML
           const hasWelcome = /Welcome to/i.test(html);
 
-          // Extract new version
+          // Extract new version from raw HTML (version hash is injected at build time)
           const versionMatch = html.match(/v([0-9a-f]{7})/);
           const newVersion = versionMatch ? versionMatch[1] : '';
 
           if (contentChanged && hasWelcome) {
-            // Verify the version changed too (extra confidence)
+            // Fast path: "Welcome to" found directly in raw HTML
             if (baselineVersion && newVersion && newVersion !== baselineVersion) {
               console.log(`Staging deploy test: PASSED — new deployment detected (${baselineVersion} → ${newVersion}, ${elapsed}s)`);
             } else if (!baselineVersion) {
@@ -538,9 +538,32 @@ test.describe('Wizard E2E Regression', () => {
             return;
           }
 
-          if (contentChanged) {
-            console.log(`Staging deploy test: content changed but no template found (${elapsed}s, new version: ${newVersion})`);
-            console.log(`Staging deploy test: new content first 500 chars: ${html.substring(0, 500)}`);
+          if (contentChanged && !hasWelcome) {
+            // Content changed but "Welcome to" is React-rendered, not in raw HTML.
+            // Use Playwright to render the page and check the actual DOM.
+            console.log(`Staging deploy test: content changed, checking rendered DOM (${elapsed}s, new version: ${newVersion})`);
+            try {
+              await page.goto(stagingUrl, { waitUntil: 'networkidle', timeout: 60000 });
+              const bodyText = await page.textContent('body');
+              const renderedWelcome = /Welcome to/i.test(bodyText);
+              console.log(`Staging deploy test: rendered body text (first 300 chars): ${bodyText.substring(0, 300)}`);
+
+              if (renderedWelcome) {
+                if (baselineVersion && newVersion && newVersion !== baselineVersion) {
+                  console.log(`Staging deploy test: PASSED — new deployment with rendered content (${baselineVersion} → ${newVersion}, ${elapsed}s)`);
+                } else {
+                  console.log(`Staging deploy test: PASSED — deployment verified via rendered DOM (${elapsed}s, version: ${newVersion})`);
+                }
+                return;
+              }
+
+              // Content changed but React app doesn't render "Welcome to" — may be build error
+              const versionBadge = await page.textContent('nav').catch(() => '');
+              console.log(`Staging deploy test: rendered nav text: ${versionBadge.substring(0, 200)}`);
+              console.log(`Staging deploy test: content changed but rendered app missing "Welcome to" (${elapsed}s)`);
+            } catch (renderErr) {
+              console.log(`Staging deploy test: page render error — ${renderErr.message}`);
+            }
           } else {
             console.log(`Staging deploy test: no change yet (${elapsed}s, baseline version: ${baselineVersion})`);
           }
