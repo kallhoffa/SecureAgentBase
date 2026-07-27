@@ -171,12 +171,6 @@ export async function createVm(
         value,
       })),
     },
-    serviceAccounts: [
-      {
-        email: `${await auth.getClientEmail()}`,
-        scopes: ['https://www.googleapis.com/auth/cloud-platform'],
-      },
-    ],
   };
 
   // Try to delete any existing VM with this name in the target zone
@@ -252,8 +246,10 @@ export async function cleanupVmByName(
 ): Promise<void> {
   const zones = [
     'us-central1-a', 'us-central1-b', 'us-central1-c',
-    'us-east1-b', 'us-east1-c',
-    'europe-west1-b', 'europe-west1-c',
+    'us-west1-a', 'us-west1-b',
+    'us-east1-b', 'us-east1-c', 'us-east1-d',
+    'europe-west1-b', 'europe-west1-c', 'europe-west1-d',
+    'asia-east1-a',
   ];
   for (const zone of zones) {
     try {

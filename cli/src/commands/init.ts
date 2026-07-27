@@ -435,7 +435,6 @@ async function stepCreateVm(auth: AuthClient, config: any, args: InitArgs): Prom
 
   // Build metadata (same as web wizard's buildVmMetadata)
   const metadata: Record<string, string> = {
-    startup_script_bin: '',
     github_pat: config.githubPat || '',
     github_repo: config.githubRepo || '',
     discord_bot_token: config.discordBotToken || '',
@@ -448,10 +447,13 @@ async function stepCreateVm(auth: AuthClient, config: any, args: InitArgs): Prom
     firebase_staging_config: JSON.stringify(config.firebaseStaging || {}),
     firebase_production_config: JSON.stringify(config.firebaseProduction || {}),
     vite_app_name: 'SecureAgentBase',
+    'serial-port-enable': 'TRUE',
+    'enable-oslogin': 'false',
   };
 
   // Use the real startup script (installs Node, gh, kimaki, clones repo, starts bot)
-  metadata.startup_script_bin = Buffer.from(getStartupScript(), 'utf-8').toString('base64');
+  // Key must be 'startup-script' (plain text) so GCP auto-executes it on boot
+  metadata['startup-script'] = getStartupScript();
 
   // Clean up any existing VM with this name from prior runs
   info('Checking for existing VM...');
@@ -460,8 +462,10 @@ async function stepCreateVm(auth: AuthClient, config: any, args: InitArgs): Prom
 
   const zones = args.vmZone ? [args.vmZone] : [
     'us-central1-a', 'us-central1-b', 'us-central1-c',
-    'us-east1-b', 'us-east1-c',
-    'europe-west1-b', 'europe-west1-c',
+    'us-west1-a', 'us-west1-b',
+    'us-east1-b', 'us-east1-c', 'us-east1-d',
+    'europe-west1-b', 'europe-west1-c', 'europe-west1-d',
+    'asia-east1-a',
   ];
 
   let vmResult = null;
