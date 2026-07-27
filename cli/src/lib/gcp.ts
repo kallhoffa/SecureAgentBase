@@ -210,10 +210,17 @@ export async function createVm(
         const ip = instance.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP;
         return { ip, zone };
       }
+      if (instance.status === 'STOPPING' || instance.status === 'TERMINATED') {
+        // VM is dying — abort early, delete it, and let the caller try the next zone
+        console.log(`    VM is ${instance.status}, aborting and trying next zone...`);
+        try { await gcpFetch(auth, existingUrl, { method: 'DELETE' }); } catch {}
+        throw new Error(`VM entered ${instance.status} state`);
+      }
       if (i % 6 === 0) {
         console.log(`    VM status: ${instance.status} (attempt ${i + 1}/120)`);
       }
-    } catch {
+    } catch (e: any) {
+      if (e.message?.includes('aborting') || e.message?.includes('STOPPING') || e.message?.includes('TERMINATED')) throw e;
       // Instance not yet available
     }
   }
