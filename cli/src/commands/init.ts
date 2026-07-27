@@ -455,7 +455,8 @@ async function stepCreateVm(auth: AuthClient, config: any, args: InitArgs): Prom
 
   // Clean up any existing VM with this name from prior runs
   info('Checking for existing VM...');
-  await cleanupVmByName(auth, projectId, 'secureagent-manager');
+  const vmName = `secureagent-manager`;
+  await cleanupVmByName(auth, projectId, vmName);
 
   const zones = args.vmZone ? [args.vmZone] : [
     'us-central1-a', 'us-central1-b', 'us-central1-c',
