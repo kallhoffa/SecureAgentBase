@@ -2848,13 +2848,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     }
   };
 
-  const handleInstallGitHubApp = () => {
-    const clientId = import.meta.env.VITE_GITHUB_APP_CLIENT_ID || 'YOUR_CLIENT_ID';
-    const redirectUri = encodeURIComponent(window.location.origin + '/github-callback');
-    const state = user?.uid || 'anonymous';
-    window.location.href = `https://github.com/apps/secureagentbase/installations/new?state=${state}&redirect_uri=${redirectUri}`;
-  };
-
   const parseFirebaseConfig = (rawConfig) => {
     try {
       let configStr = rawConfig.trim();
@@ -2923,22 +2916,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     } catch (err) {
       console.error('Error saving Firebase config:', err);
     }
-  };
-
-  const handleForkGitHub = async () => {
-    setError(null);
-    
-    const clientId = import.meta.env.VITE_GITHUB_APP_CLIENT_ID;
-    if (!clientId) {
-      setError('GitHub OAuth not configured. Please set VITE_GITHUB_APP_CLIENT_ID in environment.');
-      return;
-    }
-
-    const redirectUri = encodeURIComponent(window.location.origin + '/github-callback');
-    const state = user?.uid || 'anonymous';
-    
-    const githubAuthUrl = `https://github.com/login/oauth/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&scope=repo,workflow,read:org&state=${state}`;
-    window.location.href = githubAuthUrl;
   };
 
   const buildVmMetadata = (startupScript: string) => {

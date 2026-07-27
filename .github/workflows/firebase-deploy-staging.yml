@@ -43,6 +43,12 @@ jobs:
       - name: Run unit tests with coverage
         run: npm run test:ci
 
+      - name: Run mutation testing (warn only)
+        continue-on-error: true
+        run: npx stryker run --reporters clear-text
+        env:
+          STRYKER_DASHBOARD_API_KEY: ${{ secrets.STRYKER_DASHBOARD_API_KEY }}
+
       - name: Install Firebase CLI
         run: npm install -g firebase-tools
 

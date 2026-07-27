@@ -7,7 +7,9 @@
     "secureagentbase": "./bin/secureagentbase.js"
   },
   "scripts": {
-    "build": "tsc",
+    "generate": "cp ../shared/startup-script.sh src/lib/startup-script.sh",
+    "prebuild": "npm run generate",
+    "build": "tsc && cp src/lib/startup-script.sh dist/lib/startup-script.sh 2>/dev/null || true",
     "dev": "tsx src/index.ts",
     "start": "node dist/index.js"
   },

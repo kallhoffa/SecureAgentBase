@@ -49,5 +49,19 @@ service cloud.firestore {
       allow read, write: if isAuthenticated() && resource.data.userId == request.auth.uid;
       allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
     }
+
+    match /tasks/{taskId} {
+      allow read, write: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+    }
+
+    match /featureFlags/{flagId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated() && getAfter(/databases/$(database)/documents/admins/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    match /userPreferences/{userId} {
+      allow read, write: if isAuthenticated() && userId == request.auth.uid;
+    }
   }
 }

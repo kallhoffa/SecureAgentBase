@@ -5,8 +5,6 @@ interface ImportMetaEnv {
   readonly VITE_APP_VERSION: string;
   readonly VITE_SENTRY_DSN: string;
   readonly VITE_GITHUB_CLIENT_ID: string;
-  readonly VITE_GITHUB_APP_CLIENT_ID: string;
-  readonly VITE_GITHUB_APP_CLIENT_SECRET: string;
   readonly VITE_GCP_CLIENT_ID: string;
   readonly VITE_STAGING_URL: string;
   readonly VITE_PRODUCTION_URL: string;

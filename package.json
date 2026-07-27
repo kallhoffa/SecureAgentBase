@@ -18,8 +18,10 @@
     "e2e:smoke": "playwright test tests/e2e/smoke.spec.js",
     "e2e:smoke:ci": "playwright test tests/e2e/smoke.spec.js --config=playwright.ci.config.js",
     "setup": "node scripts/setup.js",
+    "mutate": "stryker run",
     "cli:build": "cd cli && npm install && npm run build",
-    "cli:package": "cd cli && npm pack"
+    "cli:package": "cd cli && npm pack",
+    "postinstall": "scripts/install-hooks.sh"
   },
   "dependencies": {
     "@sentry/react": "^10.40.0",
@@ -33,6 +35,8 @@
   "devDependencies": {
     "@playwright/test": "^1.58.2",
     "@sentry/vite-plugin": "^5.1.1",
+    "@stryker-mutator/core": "^9.6.1",
+    "@stryker-mutator/vitest-runner": "^9.6.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
