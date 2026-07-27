@@ -154,10 +154,21 @@ if [ -n "$GITHUB_PAT" ]; then
     echo "Repo already exists, force-pushing fresh template..."
     git remote remove origin 2>/dev/null || true
     git remote add origin "https://github.com/${REPO_OWNER}/${REPO_NAME}.git" || true
-    git push -u origin main --force 2>&1 || { echo "ERROR: Force push failed (exit code $?)"; git remote -v; }
+    git push -u origin main --force 2>&1 || {
+      echo "ERROR: Force push failed (exit code $?)"
+      git remote -v
+      echo "Attempting direct push via gh..."
+      gh api repos/${REPO_OWNER}/${REPO_NAME}/contents --method PUT -f message="Initial commit" -f content="$(git log --format=%B -n1)" 2>&1 || true
+    }
   else
-    echo "Creating new repo ${REPO_OWNER}/${REPO_NAME}..."
-    gh repo create "${REPO_OWNER}/${REPO_NAME}" --public --source=. --push 2>&1 || { echo "ERROR: Repo create failed"; exit 1; }
+    echo "Repo does not exist, creating ${REPO_OWNER}/${REPO_NAME}..."
+    gh repo create "${REPO_OWNER}/${REPO_NAME}" --public --source=. --push 2>&1 || {
+      echo "WARNING: Repo create failed — repo may already exist or PAT lacks admin:write"
+      echo "Attempting force-push to existing repo..."
+      git remote remove origin 2>/dev/null || true
+      git remote add origin "https://github.com/${REPO_OWNER}/${REPO_NAME}.git" || true
+      git push -u origin main --force 2>&1 || echo "WARNING: Force push also failed — staging deploy will not trigger"
+    }
   fi
 
   echo "DEBUG: Setting GitHub secrets and variables..."

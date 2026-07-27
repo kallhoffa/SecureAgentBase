@@ -226,6 +226,19 @@ if (!rateLimit.check()) {
 }
 ```
 
+## Rules for AI Agents
+
+### Test Failures: No "Preexisting" Exemptions
+
+**All test failures must be treated at the same priority as failures you introduced.** When an AI agent causes a test failure, it must NOT classify it as "preexisting" to avoid fixing it. LLMs have a known tendency to break one test, then label it preexisting in the next turn to avoid accountability.
+
+Rules:
+1. **If you break a test, you fix it.** Period. Even if it was "already broken before."
+2. **Before making changes, record the current test state.** Run `npm run test:ci` and note which tests pass/fail. Any new failures after your changes are YOUR responsibility.
+3. **Never say "this test was already failing" without evidence.** You must provide the CI run number or local test output showing the failure existed before your changes.
+4. **If a test is genuinely preexisting, fix it anyway.** A broken test is a broken test. Classifying it as preexisting does not fix it and erodes code quality.
+5. **When in doubt, run the full test suite.** Don't skip tests to save time — skipping hides regressions.
+
 **Rules for AI agents adding features:**
 1. Wrap all Firestore writes through safeCreate/safeUpdate/safeDelete
 2. Always define ALLOW_FIELDS constant for each collection

@@ -548,6 +548,48 @@ test.describe('Wizard E2E Regression', () => {
 
       // Timeout — fail the test
       const elapsed = Math.round((Date.now() - startTime) / 1000);
+
+      // Re-read serial port output NOW (after startup script has had time to run) for diagnostics
+      if (E2E_GCP_TOKEN) {
+        const instanceName = 'secureagent-manager';
+        const zones = ['us-east1-b', 'us-central1-b', 'us-central1-c', 'us-west1-a', 'us-west1-b', 'us-east1-c', 'us-east1-d', 'europe-west1-d', 'asia-east1-a'];
+        for (const zone of zones) {
+          try {
+            const resp = await fetch(
+              `https://compute.googleapis.com/compute/v1/projects/${stagingProjectId}/zones/${zone}/instances/${instanceName}/serialPort?port=1`,
+              { headers: { Authorization: `Bearer ${E2E_GCP_TOKEN}` } }
+            );
+            if (resp.ok) {
+              const data = await resp.json();
+              const serialOutput = data.contents || '';
+              // Show the LAST 5000 chars (startup script output appears after boot messages)
+              const tail = serialOutput.slice(-5000);
+              console.log(`Serial port output at timeout (last 5000 chars from ${zone}):\n${tail}`);
+              break;
+            }
+          } catch (_) {}
+        }
+      }
+
+      // Check GitHub repo state one more time
+      const githubPat = process.env.E2E_GITHUB_PAT || '';
+      if (githubPat) {
+        try {
+          const repoResp = await fetch(`https://api.github.com/repos/${process.env.E2E_GITHUB_OWNER || 'kallhoffa'}/${process.env.E2E_PROJECT_NAME || 'agentbase-testing'}/commits?per_page=3`, {
+            headers: { Authorization: `token ${githubPat}`, Accept: 'application/vnd.github+json' },
+          });
+          if (repoResp.ok) {
+            const commits = await repoResp.json();
+            console.log(`GitHub repo state at timeout — ${commits.length} recent commits:`);
+            commits.forEach(c => console.log(`  ${c.sha.substring(0, 7)} ${c.commit.message.substring(0, 80)} (${c.commit.committer.date})`));
+          } else {
+            console.log(`GitHub repo check at timeout: HTTP ${repoResp.status}`);
+          }
+        } catch (e) {
+          console.log(`GitHub repo check at timeout error: ${e.message}`);
+        }
+      }
+
       throw new Error(
         `Staging deploy test FAILED: new deployment did not appear at ${stagingUrl} within ${elapsed}s. ` +
         `Baseline version: ${baselineVersion || 'none'}. ` +
