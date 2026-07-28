@@ -10,6 +10,11 @@ GITHUB_REPO=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/insta
 if [ -n "$GITHUB_REPO" ]; then
   REPO_OWNER=$(echo "$GITHUB_REPO" | cut -d'/' -f1)
   REPO_NAME=$(echo "$GITHUB_REPO" | cut -d'/' -f2)
+  if [[ ! "$REPO_NAME" =~ ^[A-Za-z0-9._-]+$ ]] || [[ ! "$REPO_OWNER" =~ ^[A-Za-z0-9._-]+$ ]]; then
+    echo "WARNING: Invalid github_repo metadata, using SecureAgentBase as default"
+    REPO_OWNER="kallhoffa"
+    REPO_NAME="SecureAgentBase"
+  fi
 else
   echo "WARNING: No github_repo metadata set, using SecureAgentBase as default"
   REPO_OWNER="kallhoffa"
@@ -63,7 +68,7 @@ git config --global http.postBuffer 524288000
 
 REPO_CLONED=false
 for i in 1 2 3; do
-  if git clone --depth 1 https://github.com/$REPO_OWNER/$REPO_NAME.git $REPO_NAME > /dev/null 2>&1; then
+  if git clone --depth 1 "https://github.com/$REPO_OWNER/$REPO_NAME.git" "$REPO_NAME" > /dev/null 2>&1; then
     REPO_CLONED=true
     break
   fi
