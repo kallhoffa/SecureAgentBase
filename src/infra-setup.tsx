@@ -1832,12 +1832,12 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
             try {
               const infraRef = doc(db, INFRA_COLLECTION, user.uid);
               await setDoc(infraRef, {
-                gcp_access_token: response.access_token,
                 gcp_connected: true,
+                gcp_token_expiry: new Date(Date.now() + 3600 * 1000).toISOString(),
                 updated_at: new Date().toISOString(),
               }, { merge: true });
             } catch (err) {
-              console.error('Error auto-saving GCP token:', err);
+              console.error('Error auto-saving GCP connection state:', err);
             }
           }
         }
@@ -2146,8 +2146,10 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   }, [user]);
 
   // E2E test injection: load credentials from URL params (base64-encoded)
-  // or sessionStorage (set by Playwright addInitScript to avoid address bar leakage)
+  // or sessionStorage (set by Playwright addInitScript to avoid address bar leakage).
+  // SECURITY: gated out of production builds. Staging e2e builds set VITE_E2E=true.
   useEffect(() => {
+    if (!import.meta.env.DEV && import.meta.env.VITE_E2E !== 'true') return;
     const params = new URLSearchParams(window.location.search);
     const fromStorage = (key) => {
       try { return sessionStorage.getItem(key); } catch { return null; }
@@ -2327,20 +2329,20 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   useEffect(() => {
     if (!formProgressLoaded) return;
     
+    if (!import.meta.env.DEV) return;
     const formData = {
       firebaseConfigStaging,
       firebaseConfigProduction,
-      githubPat,
-      discordBotToken,
+      githubPat: githubPat ? 'saved' : null,
+      discordBotToken: discordBotToken ? 'saved' : null,
       discordGuildId,
       expandedSteps,
       step2Complete,
-      serviceAccountJson,
+      serviceAccountJson: serviceAccountJson ? 'saved' : null,
       projectId,
       godSaEmail,
       gcpAccessToken: gcpAccessToken ? 'saved' : null,
     };
-    console.log('Saving form progress:', formData);
     saveFormProgress(formData);
   }, [formProgressLoaded, firebaseConfigStaging, firebaseConfigProduction, githubPat, discordBotToken, discordGuildId, expandedSteps, step2Complete, serviceAccountJson, projectId, godSaEmail, gcpAccessToken]);
 
@@ -2454,7 +2456,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   };
 
   useEffect(() => {
-    if (!useFirestore || !user || !projectName || !passphrase || passphrase.length < 4 || !selectedProjectId) return;
+    if (!useFirestore || !user || !projectName || !passphrase || passphrase.length < 12 || !selectedProjectId) return;
     
     const timer = setTimeout(() => {
       autoSaveProject();
@@ -2642,18 +2644,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       const infraRef = doc(db, INFRA_COLLECTION, user.uid);
       await setDoc(infraRef, finalData, { merge: true });
       localStorage.removeItem(LOCALSTORAGE_KEY);
-
-      try {
-        const adminRef = doc(db, 'admins', user.uid);
-        await setDoc(adminRef, { role: 'admin', created_at: new Date().toISOString() }, { merge: true });
-      } catch (adminErr) {
-        console.error('Failed to grant admin:', adminErr);
-      }
     } else {
       saveToLocalStorage(finalData);
     }
 
-    if (useFirestore && user && projectName && passphrase && passphrase.length >= 4) {
+    if (useFirestore && user && projectName && passphrase && passphrase.length >= 12) {
       console.log('Saving project to Firestore:', { projectName, passphraseLength: passphrase.length });
       try {
         const projectIdToSave = selectedProjectId || `proj_${Date.now()}`;
@@ -2691,12 +2686,12 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         console.error('Error saving project:', err);
       }
     } else if (useFirestore && projectName) {
-      console.log('Not saving to Firestore - need passphrase (min 4 chars)');
+      console.log('Not saving to Firestore - need passphrase (min 12 chars)');
     }
   };
 
   const autoSaveProject = async () => {
-    if (!useFirestore || !user || !projectName || !passphrase || passphrase.length < 4) return;
+    if (!useFirestore || !user || !projectName || !passphrase || passphrase.length < 12) return;
     if (!selectedProjectId) {
       console.log('No project selected, skipping auto-save');
       return;
@@ -2947,6 +2942,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
     if (!vmIp) {
       setError('No VM IP configured. For initial setup, please manually create the VM via Cloud Console or gcloud CLI, then enter the IP below.');
+      return;
+    }
+
+    if (!/^[A-Za-z0-9._-]+$/.test(vmIp)) {
+      setError('Invalid VM IP. Only an IP address or hostname is allowed (no paths, ports, or query characters).');
       return;
     }
 
@@ -3242,12 +3242,12 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                         type="password"
                         value={passphrase}
                         onChange={(e) => setPassphrase(e.target.value)}
-                        placeholder="Enter passphrase (min 4 chars)"
+                        placeholder="Enter passphrase (min 12 chars)"
                         className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-400"
                       />
                       <button
                         type="button"
-                        disabled={passphrase.length < 4}
+                        disabled={passphrase.length < 12}
                         onClick={() => setPassphraseSaved(true)}
                         className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white px-3 py-2 rounded-lg text-sm font-semibold"
                       >
