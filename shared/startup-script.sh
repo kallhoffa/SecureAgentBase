@@ -232,6 +232,23 @@ openai_api_key: ""
 github_token: ""
 KIMAKICONF
 
+# Write opencode.json with provider timeout settings (chatty upstream models)
+cat > /root/.kimaki/projects/$REPO_NAME/opencode.json << 'OPENCODEEOF'
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "opencode-go/kimi-k2.6",
+  "provider": {
+    "opencode-go": {
+      "options": {
+        "timeout": 300000,
+        "headerTimeout": 120000,
+        "chunkTimeout": 120000
+      }
+    }
+  }
+}
+OPENCODEEOF
+
 # Create systemd service for Kimaki
 KIMAKI_PATH=$(which kimaki)
 cat > /etc/systemd/system/kimaki.service << SERVICEEOF
