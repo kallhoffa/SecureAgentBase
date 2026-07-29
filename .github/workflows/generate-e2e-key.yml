@@ -15,16 +15,26 @@ jobs:
       contents: read
     environment: staging
     steps:
+      - name: Validate project_id input
+        env:
+          PROJECT_ID: ${{ github.event.inputs.project_id }}
+        run: |
+          if ! echo "$PROJECT_ID" | grep -qE '^[a-z][a-z0-9-]{4,28}[a-z0-9]$'; then
+            echo "ERROR: Invalid project_id '$PROJECT_ID'. Must match GCP project ID pattern: lowercase alphanumeric and hyphens, 6-30 chars."
+            exit 1
+          fi
+          echo "PROJECT_ID=$PROJECT_ID" >> "$GITHUB_ENV"
+
       - name: Authenticate as e2e-runner SA directly via WIF
         uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
-          service_account: e2e-test-runner@${{ github.event.inputs.project_id }}.iam.gserviceaccount.com
-          project_id: ${{ github.event.inputs.project_id }}
+          service_account: e2e-test-runner@${{ env.PROJECT_ID }}.iam.gserviceaccount.com
+          project_id: ${{ env.PROJECT_ID }}
 
       - name: Enable APIs and grant roles
         run: |
-          PROJECT="${{ github.event.inputs.project_id }}"
+          PROJECT="${{ env.PROJECT_ID }}"
           DEPLOY_SA="firebase-deploy-staging@agentbase-staging.iam.gserviceaccount.com"
 
           echo "Enabling APIs..."
@@ -108,7 +118,7 @@ jobs:
         id: create-key
         run: |
           gcloud iam service-accounts keys create /tmp/sa-key.json \
-            --iam-account="e2e-test-runner@${{ github.event.inputs.project_id }}.iam.gserviceaccount.com"
+            --iam-account="e2e-test-runner@${{ env.PROJECT_ID }}.iam.gserviceaccount.com"
           echo "key_path=/tmp/sa-key.json" >> "$GITHUB_OUTPUT"
 
       - name: Upload SA key as artifact

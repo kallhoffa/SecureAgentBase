@@ -131,11 +131,13 @@ jobs:
           exit 1
 
       - name: Enable Firebase Auth and create test user
+        env:
+          E2E_TEST_PASSWORD: ${{ secrets.E2E_TEST_PASSWORD }}
         run: |
           TOKEN=$(gcloud auth print-access-token 2>/dev/null)
           PROJECT=${{ vars.FIREBASE_PROJECT_ID_STAGING }}
           EMAIL="e2e@${PROJECT}.iam.gserviceaccount.com"
-          PASSWORD="${{ secrets.E2E_TEST_PASSWORD }}"
+          PASSWORD="$E2E_TEST_PASSWORD"
 
           echo "=== Enabling email/password auth for ${PROJECT} ==="
           curl -s -X PATCH \
