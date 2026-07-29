@@ -2375,7 +2375,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         // to get a fresh token when needed.
         setGithubAppInstalled(configData.github_app_installed || false);
         setVmIp(configData.vm_ip || '');
-        setDiscordBotToken(configData.discord_bot_token || configData.discordBotToken || '');
+        // discord_bot_token intentionally NOT restored from Firestore (GHSA-x49w).
+        // User must re-enter after page reload — same pattern as SA key and GCP token.
         setDiscordGuildId(configData.discord_guild_id || configData.discordGuildId || '');
         setDiscordBotAdded(!!configData.discord_bot_added);
         if (configData.firebase_staging) {
@@ -2386,7 +2387,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           setFirebaseConfigProduction(JSON.stringify(configData.firebase_production, null, 2));
           setFirebaseProductionData(configData.firebase_production);
         }
-        setGithubPat(configData.github_pat || '');
+        // github_pat intentionally NOT restored from Firestore (GHSA-x49w).
+        // User must re-enter after page reload.
         
         // Restore OIDC values so Step 7 can build VM metadata on reload
         if (configData.gcp_wif_provider) setGcpWifProviderName(configData.gcp_wif_provider);
@@ -3069,9 +3071,9 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         invite_url_generated: !!inviteUrl
       });
 
-      await saveConfig({
-        discord_bot_token: discordBotTokenInput
-      });
+      // Discord bot token intentionally NOT saved to Firestore (GHSA-x49w).
+      // Kept in React state only — same pattern as SA key and GCP token.
+      // User must re-enter after page reload.
 
       console.log('Discord config saved');
     } catch (err) {
