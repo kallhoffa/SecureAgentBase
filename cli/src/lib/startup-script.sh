@@ -45,9 +45,19 @@ echo "REPO_OWNER=$REPO_OWNER | FIREBASE_STAGING=$FIREBASE_STAGING"
 sudo apt-get update -y > /dev/null 2>&1 || true
 sudo apt-get install -y curl git jq apt-transport-https ca-certificates gnupg2 ufw unzip > /dev/null 2>&1 || true
 
-# Install Node.js 20.x
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - > /dev/null 2>&1 || true
-sudo apt-get install -y nodejs > /dev/null 2>&1 || true
+# Install Node.js 20.x — pinned binary release with checksum verification
+NODE_VERSION="20.18.0"
+NODE_TARBALL="node-v${NODE_VERSION}-linux-x64.tar.gz"
+curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/${NODE_TARBALL}" -o "/tmp/${NODE_TARBALL}" > /dev/null 2>&1 || true
+curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt" -o /tmp/SHASUMS256.txt > /dev/null 2>&1 || true
+if (cd /tmp && sha256sum -c SHASUMS256.txt --ignore-missing --status 2>/dev/null); then
+  tar -xzf "/tmp/${NODE_TARBALL}" -C /usr/local --strip-components=1 2>/dev/null
+  export PATH="/usr/local/bin:$PATH"
+  echo "Node.js ${NODE_VERSION} installed from binary"
+else
+  echo "WARNING: Node.js checksum verification failed, falling back to apt"
+  apt-get install -y nodejs > /dev/null 2>&1 || true
+fi
 
 # Install GitHub CLI
 type gh >/dev/null 2>&1 || (curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null && sudo apt-get update -y > /dev/null 2>&1 && sudo apt-get install -y gh > /dev/null 2>&1) || true
@@ -298,7 +308,7 @@ done
 if command -v kimaki &> /dev/null; then
   KIMAKI_CMD="kimaki"
 else
-  KIMAKI_CMD="npx -y kimaki@latest"
+  KIMAKI_CMD="npx -y kimaki@0.23.1"
 fi
 
 echo "$(date): Using KIMAKI_CMD: $KIMAKI_CMD" >> /var/log/kimaki-register.log
