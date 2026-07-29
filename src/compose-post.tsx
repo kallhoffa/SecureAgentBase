@@ -2,6 +2,7 @@ import { useState, FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from './firestore-utils/auth-context';
 import { createPost } from './firestore-utils/post-storage';
+import { useRateLimit } from './guardrails/useRateLimit';
 import { Firestore } from 'firebase/firestore';
 
 interface ComposePostProps {
@@ -13,13 +14,19 @@ const ComposePost: React.FC<ComposePostProps> = ({ db }) => {
   const [content, setContent] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
+
   const { user } = useAuth();
   const navigate = useNavigate();
+  const rateLimit = useRateLimit('create-post', 10);
 
   const handleSubmit = async (e: FormEvent): Promise<void> => {
     e.preventDefault();
-    
+
+    if (!rateLimit.check()) {
+      setError(`Rate limit. Try again in ${Math.ceil(rateLimit.resetIn / 1000)}s.`);
+      return;
+    }
+
     if (!title.trim() || !content.trim()) {
       setError('Title and content are required');
       return;
@@ -34,8 +41,8 @@ const ComposePost: React.FC<ComposePostProps> = ({ db }) => {
         content: content.trim(),
         authorId: user!.uid,
         authorName: user!.email || 'Anonymous',
-      });
-      
+      }, user!.uid);
+
       navigate(`/post?id=${postId}`);
     } catch (err) {
       console.error('Error creating post:', err);

@@ -2,6 +2,7 @@ import { useState, useEffect, FormEvent } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from './firestore-utils/auth-context';
 import { getPost, addReply } from './firestore-utils/post-storage';
+import { useRateLimit } from './guardrails/useRateLimit';
 import { Firestore } from 'firebase/firestore';
 import type { Post } from './types';
 
@@ -13,14 +14,15 @@ const ComposeReply: React.FC<ComposeReplyProps> = ({ db }) => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const postId = searchParams.get('id');
-  
+
   const [content, setContent] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [post, setPost] = useState<Post | null>(null);
   const [loading, setLoading] = useState(true);
-  
+
   const { user } = useAuth();
+  const rateLimit = useRateLimit('add-reply', 20);
 
   useEffect(() => {
     const loadPost = async (): Promise<void> => {
@@ -44,7 +46,12 @@ const ComposeReply: React.FC<ComposeReplyProps> = ({ db }) => {
 
   const handleSubmit = async (e: FormEvent): Promise<void> => {
     e.preventDefault();
-    
+
+    if (!rateLimit.check()) {
+      setError(`Rate limit. Try again in ${Math.ceil(rateLimit.resetIn / 1000)}s.`);
+      return;
+    }
+
     if (!content.trim()) {
       setError('Reply content cannot be empty');
       return;
@@ -58,8 +65,8 @@ const ComposeReply: React.FC<ComposeReplyProps> = ({ db }) => {
         content: content.trim(),
         authorId: user!.uid,
         authorName: user!.email || 'Anonymous',
-      });
-      
+      }, user!.uid);
+
       navigate(`/post?id=${postId}`);
     } catch (err) {
       console.error('Error adding reply:', err);

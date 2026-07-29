@@ -19,6 +19,7 @@ import { Dashboard, Tasks } from './template';
 import AdminPanel from './admin/AdminPanel';
 import { NotificationProvider } from './firestore-utils/notification-context';
 import { RequireAuth, RedirectIfAuthed } from './components/ProtectedRoute';
+import { StagingGate } from './guardrails/StagingGate';
 
 const isAppMode = import.meta.env.VITE_APP_MODE === 'true';
 
@@ -65,14 +66,14 @@ const App: React.FC<AppProps> = ({ db }) => {
     <NotificationProvider>
       <BrowserRouter>
         <Routes>
-          <Route element={<RootLayout db={db} />}>
+          <Route path="/login" element={<RedirectIfAuthed><Login /></RedirectIfAuthed>} />
+          <Route path="/signup" element={<RedirectIfAuthed><Signup /></RedirectIfAuthed>} />
+          <Route element={<StagingGate db={db}><RootLayout db={db} /></StagingGate>}>
             <Route path="/" element={<HomePage />} />
             <Route path="/post" element={<Post db={db}/>} />
             <Route path="/compose-post" element={<RequireAuth><ComposePost db={db} /></RequireAuth>} />
             <Route path="/compose-reply" element={<RequireAuth><ComposeReply db={db} /></RequireAuth>} />
             <Route path="/about" element={<About/>} />
-            <Route path="/login" element={<RedirectIfAuthed><Login /></RedirectIfAuthed>} />
-            <Route path="/signup" element={<RedirectIfAuthed><Signup /></RedirectIfAuthed>} />
             <Route path="/profile" element={<RequireAuth><Profile db={db} /></RequireAuth>} />
             {isAppMode && (
               <Route path="/infra-setup" element={<RequireAuth><InfraSetup db={db} /></RequireAuth>} />
@@ -83,9 +84,9 @@ const App: React.FC<AppProps> = ({ db }) => {
             <Route path="/tasks" element={<RequireAuth><Tasks db={db} /></RequireAuth>} />
             <Route path="/preview" element={<Dashboard />} />
           </Route>
-          <Route path="/admin" element={<AdminPanel db={db} />} />
-          <Route path="/admin/feature-flags" element={<AdminPanel db={db} />} />
-          <Route path="/admin/limits" element={<AdminPanel db={db} />} />
+          <Route path="/admin" element={<StagingGate db={db}><AdminPanel db={db} /></StagingGate>} />
+          <Route path="/admin/feature-flags" element={<StagingGate db={db}><AdminPanel db={db} /></StagingGate>} />
+          <Route path="/admin/limits" element={<StagingGate db={db}><AdminPanel db={db} /></StagingGate>} />
         </Routes>
       </BrowserRouter>
     </NotificationProvider>

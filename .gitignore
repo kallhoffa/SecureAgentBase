@@ -83,3 +83,7 @@ SCRATCHPAD.md
 # Windows reserved-name artifact
 nul
 .stryker-tmp/
+
+# Test artifacts
+test-results/
+playwright-report/

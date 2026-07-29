@@ -1,7 +1,11 @@
 import { useState, useEffect } from 'react';
-import { collection, getDocs, setDoc, deleteDoc, doc, query, orderBy } from 'firebase/firestore';
+import { collection, getDocs, doc, query, orderBy } from 'firebase/firestore';
 import { useAuth } from '../firestore-utils/auth-context';
+import { safeCreate, safeUpdate, safeDelete } from '../guardrails/safe-firestore';
+import { useRateLimit } from '../guardrails/useRateLimit';
 import { Plus, Trash2, Loader2, ToggleLeft, ToggleRight } from 'lucide-react';
+
+const ALLOW_FIELDS = ['enabled'];
 
 const FeatureFlags = ({ db }) => {
   const { user } = useAuth();
@@ -10,6 +14,7 @@ const FeatureFlags = ({ db }) => {
   const [error, setError] = useState(null);
   const [newName, setNewName] = useState('');
   const [adding, setAdding] = useState(false);
+  const rateLimit = useRateLimit('feature-flag-action', 30);
 
   const loadFlags = async () => {
     try {
@@ -34,11 +39,11 @@ const FeatureFlags = ({ db }) => {
 
   const addFlag = async () => {
     if (!newName.trim()) return;
+    if (!rateLimit.check()) { setError('Rate limit exceeded'); return; }
     try {
       setAdding(true);
       setError(null);
-      const ref = doc(db, 'featureFlags', newName.trim());
-      await setDoc(ref, { enabled: false });
+      await safeSet(db, 'featureFlags', newName.trim(), { enabled: false }, user.uid, { allowFields: ALLOW_FIELDS });
       setNewName('');
       await loadFlags();
     } catch (err) {
@@ -50,9 +55,9 @@ const FeatureFlags = ({ db }) => {
   };
 
   const toggleFlag = async (flagId, currentValue) => {
+    if (!rateLimit.check()) { setError('Rate limit exceeded'); return; }
     try {
-      const ref = doc(db, 'featureFlags', flagId);
-      await setDoc(ref, { enabled: !currentValue }, { merge: true });
+      await safeUpdate(db, 'featureFlags', flagId, { enabled: !currentValue }, user.uid, { allowFields: ALLOW_FIELDS });
       setFlags(prev => prev.map(f => f.id === flagId ? { ...f, enabled: !currentValue } : f));
     } catch (err) {
       console.error('Error toggling flag:', err);
@@ -61,9 +66,9 @@ const FeatureFlags = ({ db }) => {
   };
 
   const deleteFlag = async (flagId) => {
+    if (!rateLimit.check()) { setError('Rate limit exceeded'); return; }
     try {
-      const ref = doc(db, 'featureFlags', flagId);
-      await deleteDoc(ref);
+      await safeDelete(db, 'featureFlags', flagId, user.uid);
       setFlags(prev => prev.filter(f => f.id !== flagId));
     } catch (err) {
       console.error('Error deleting flag:', err);

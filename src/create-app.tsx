@@ -1,7 +1,10 @@
 import { useState, useEffect, Fragment } from 'react';
 import { useAuth } from './firestore-utils/auth-context';
 import { useNavigate } from 'react-router-dom';
-import { doc, getDoc, setDoc, updateDoc, Firestore } from 'firebase/firestore';
+import { doc, getDoc, Firestore } from 'firebase/firestore';
+import { safeSet, safeUpdate } from './guardrails/safe-firestore';
+import { validate } from './guardrails/validate';
+import { useRateLimit } from './guardrails/useRateLimit';
 import { 
   Check, AlertTriangle, Loader2, Github, Server, 
   MessageSquare, ArrowRight, ExternalLink, Play 
@@ -12,6 +15,7 @@ interface CreateAppProps {
 }
 
 const APPS_COLLECTION = 'user_apps';
+const ALLOW_FIELDS = ['user_id', 'app_name', 'app_description', 'github_repo', 'github_repo_url', 'gcp_project_id', 'discord_webhook', 'discord_channel_id', 'status', 'vm_ip', 'vm_name', 'error'];
 
 const STEPS = [
   { id: 1, title: 'App Details', icon: '1' },
@@ -35,6 +39,7 @@ const CreateApp: React.FC<CreateAppProps> = ({ db }) => {
   const [creating, setCreating] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const rateLimit = useRateLimit('create-app', 5);
 
   useEffect(() => {
     const loadInfraConfig = async (): Promise<void> => {
@@ -218,7 +223,12 @@ npm start
 
   const handleCreateApp = async (): Promise<void> => {
     if (!user) return;
-    
+
+    if (!rateLimit.check()) {
+      setError(`Rate limit. Try again in ${Math.ceil(rateLimit.resetIn / 1000)}s.`);
+      return;
+    }
+
     if (!validateAppName(appName)) {
       setError('App name must be lowercase, 3-50 characters, with dashes only');
       return;
@@ -234,7 +244,7 @@ npm start
 
     try {
       const repo = await createGitHubRepo('');
-      
+
       const appData = {
         user_id: user.uid,
         app_name: appName,
@@ -245,25 +255,29 @@ npm start
         discord_webhook: discordWebhook,
         discord_channel_id: discordChannelId,
         status: 'provisioning',
-        created_at: new Date().toISOString(),
       };
 
-      const appRef = doc(db, APPS_COLLECTION, `${user.uid}_${appName}`);
-      await setDoc(appRef, appData);
+      const errors = validate(appData, {
+        user_id: { type: 'string', required: true },
+        app_name: { type: 'string', required: true, minLength: 3, maxLength: 50 },
+      });
+      if (errors) { setError(Object.values(errors)[0] as string); setCreating(false); return; }
+
+      await safeSet(db, APPS_COLLECTION, `${user.uid}_${appName}`, appData, user.uid, { allowFields: ALLOW_FIELDS });
 
       try {
         const vmResult = await createVM(repo.full_name);
-        await updateDoc(appRef, {
+        await safeUpdate(db, APPS_COLLECTION, `${user.uid}_${appName}`, {
           vm_ip: vmResult.ip,
           vm_name: vmResult.name,
           status: 'ready',
-        });
+        }, user.uid, { allowFields: ALLOW_FIELDS });
       } catch (vmErr) {
         console.error('VM creation failed:', vmErr);
-        await updateDoc(appRef, {
+        await safeUpdate(db, APPS_COLLECTION, `${user.uid}_${appName}`, {
           status: 'provisioning_failed',
           error: vmErr instanceof Error ? vmErr.message : 'Unknown error',
-        });
+        }, user.uid, { allowFields: ALLOW_FIELDS });
       }
 
       setCurrentStep(5);

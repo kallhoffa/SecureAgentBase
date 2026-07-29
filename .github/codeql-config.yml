@@ -1,0 +1,12 @@
+name: "CodeQL Security Queries"
+queries:
+  - uses: security-and-quality
+paths-ignore:
+  - node_modules
+  - build
+  - dist
+  - "**/*.test.js"
+  - "**/*.test.ts"
+  - "**/*.test.tsx"
+  - "**/*.test.jsx"
+  - "**/_tests_/**"
