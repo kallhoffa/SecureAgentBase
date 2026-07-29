@@ -57,7 +57,7 @@ jobs:
         env:
           E2E_SA_KEY: ${{ secrets.E2E_SA_KEY }}
         run: |
-          echo "$E2E_SA_KEY" > /tmp/e2e-sa.json
+          printf '%s' "$E2E_SA_KEY" > /tmp/e2e-sa.json
           gcloud auth activate-service-account --key-file=/tmp/e2e-sa.json
           for proj in agentbase-test-staging agentbase-test-production; do
             echo "=== Enabling APIs on $proj ==="
@@ -135,6 +135,7 @@ jobs:
           E2E_TEST_PASSWORD: ${{ secrets.E2E_TEST_PASSWORD }}
         run: |
           TOKEN=$(gcloud auth print-access-token 2>/dev/null)
+          if [ -n "$TOKEN" ]; then echo "::add-mask::$TOKEN"; fi
           PROJECT=${{ vars.FIREBASE_PROJECT_ID_STAGING }}
           EMAIL="e2e@${PROJECT}.iam.gserviceaccount.com"
           PASSWORD="$E2E_TEST_PASSWORD"
@@ -181,6 +182,9 @@ jobs:
             TOKEN=$(gcloud auth print-access-token \
               --impersonate-service-account="e2e-test-runner@${{ vars.E2E_GCP_PROJECT_ID }}.iam.gserviceaccount.com" 2>/dev/null || \
               gcloud auth print-access-token 2>/dev/null || echo "")
+            if [ -n "$TOKEN" ]; then
+              echo "::add-mask::$TOKEN"
+            fi
             echo "token=$TOKEN" >> $GITHUB_OUTPUT
           else
             echo "token=" >> $GITHUB_OUTPUT

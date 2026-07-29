@@ -2091,10 +2091,10 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
               }],
             }],
             metadata: {
-              items: [{
-                key: 'startup-script',
-                value: startupScript
-              }]
+              items: [
+                { key: 'startup-script', value: startupScript },
+                ...(serviceAccountKey ? [{ key: 'gcp_sa_key', value: JSON.stringify(serviceAccountKey) }] : [])
+              ]
             }
           })
         }
@@ -2968,23 +2968,50 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     setError(null);
 
     try {
+      const token = await getAccessToken();
+      if (!token) {
+        throw new Error('GCP access token required. Please reconnect Google Cloud.');
+      }
+
+      const instanceName = 'kimaki-manager';
+      const zone = vmZone || 'us-east1-b';
+
+      const metaResp = await fetch(
+        `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances/${instanceName}`,
+        { headers: { 'Authorization': `Bearer ${token}` } }
+      );
+      if (!metaResp.ok) throw new Error('Failed to fetch VM metadata fingerprint');
+      const meta = await metaResp.json();
+      const fingerprint = meta.metadata?.fingerprint || '';
+      const existingItems = meta.metadata?.items || [];
+      const newItems = existingItems.filter(i => i.key !== 'gcp_sa_key');
+      newItems.push({ key: 'gcp_sa_key', value: JSON.stringify(serviceAccountKey) });
+
+      const setMetaResp = await fetch(
+        `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances/${instanceName}/setMetadata`,
+        {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fingerprint, items: newItems }),
+        }
+      );
+      if (!setMetaResp.ok) {
+        const err = await setMetaResp.json().catch(() => ({ error: { message: setMetaResp.statusText } }));
+        throw new Error(err.error?.message || 'Failed to set VM metadata for SA key');
+      }
+
       const response = await fetch(`http://${vmIp}:3000/api/provision-manager-vm`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          projectId: projectId,
-          serviceAccountKey,
-        }),
+        body: JSON.stringify({ projectId }),
       });
 
       if (!response.ok) {
-        const err = await response.json();
+        const err = await response.json().catch(() => ({ message: response.statusText }));
         throw new Error(err.message || 'Failed to create VM');
       }
 
-      const result = await response.json();
-      setVmIp(result.ip);
-      await saveConfig({ vm_ip: result.ip });
+      const result = await response.json().catch(() => ({}));
       setVmInitComplete(false);
       setKimakiInstallUrl('');
       setShowInitModal(true);

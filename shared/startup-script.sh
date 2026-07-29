@@ -31,9 +31,10 @@ GCP_SA_PRODUCTION=$(curl -sf "http://metadata.google.internal/computeMetadata/v1
 FIREBASE_STAGING_CONFIG=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_staging_config" -H "Metadata-Flavor: Google")
 FIREBASE_PRODUCTION_CONFIG=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_production_config" -H "Metadata-Flavor: Google")
 VITE_APP_NAME=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/vite_app_name" -H "Metadata-Flavor: Google")
+GCP_SA_KEY=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/gcp_sa_key" -H "Metadata-Flavor: Google")
 
 # Clean up any potential HTML responses from failed requests or unconfigured metadata
-for var in FIREBASE_STAGING FIREBASE_PRODUCTION GITHUB_PAT DISCORD_BOT_TOKEN DISCORD_GUILD_ID GCP_WIF_PROVIDER GCP_SA_STAGING GCP_SA_PRODUCTION FIREBASE_STAGING_CONFIG FIREBASE_PRODUCTION_CONFIG VITE_APP_NAME; do
+for var in FIREBASE_STAGING FIREBASE_PRODUCTION GITHUB_PAT DISCORD_BOT_TOKEN DISCORD_GUILD_ID GCP_WIF_PROVIDER GCP_SA_STAGING GCP_SA_PRODUCTION FIREBASE_STAGING_CONFIG FIREBASE_PRODUCTION_CONFIG VITE_APP_NAME GCP_SA_KEY; do
   val=${!var}
   if [[ "$val" =~ "<html" || "$val" =~ "<!" || "$val" =~ "<HTML" ]]; then
     eval "$var=\"\""
@@ -87,8 +88,8 @@ done
 
 # If clone failed, fall back to creating directory manually
 if [ "$REPO_CLONED" != "true" ]; then
-  mkdir -p $REPO_NAME
-  cd $REPO_NAME
+  mkdir -p "$REPO_NAME"
+  cd "$REPO_NAME"
   git init
   echo "placeholder" > README.md
   cat > .gitignore << 'GITEOF'
@@ -99,7 +100,7 @@ build/
 *.log
 GITEOF
 else
-  cd $REPO_NAME
+  cd "$REPO_NAME"
   rm -rf .git
   git init
 fi
@@ -226,7 +227,7 @@ fi
 # Install Kimaki globally and create its configuration
 KIMAKI_CONFIG_DIR=/root/.kimaki
 mkdir -p $KIMAKI_CONFIG_DIR
-echo "$REPO_NAME" > $KIMAKI_CONFIG_DIR/.project_name
+echo "$REPO_NAME" > "$KIMAKI_CONFIG_DIR/.project_name"
 cat > $KIMAKI_CONFIG_DIR/config.yml << 'KIMAKICONF'
 # Kimaki config - auto-generated
 openai_api_key: ""
@@ -234,7 +235,7 @@ github_token: ""
 KIMAKICONF
 
 # Write opencode.json with provider timeout settings (chatty upstream models)
-cat > /root/.kimaki/projects/$REPO_NAME/opencode.json << 'OPENCODEEOF'
+cat > "/root/.kimaki/projects/$REPO_NAME/opencode.json" << 'OPENCODEEOF'
 {
   "$schema": "https://opencode.ai/config.json",
   "model": "opencode-go/kimi-k2.6",
@@ -261,6 +262,12 @@ FIREBASE_PRODUCTION=$FIREBASE_PRODUCTION
 NODE_ENV=production
 ENVEOF
 chmod 600 /root/.kimaki/env
+
+# Write GCP service account key from metadata (if provided) to a restricted file
+if [ -n "$GCP_SA_KEY" ]; then
+  echo "$GCP_SA_KEY" > /root/.kimaki/gcp-sa-key.json
+  chmod 600 /root/.kimaki/gcp-sa-key.json
+fi
 
 # Create systemd service for Kimaki
 KIMAKI_PATH=$(which kimaki)
