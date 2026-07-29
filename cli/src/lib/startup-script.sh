@@ -54,7 +54,7 @@ type gh >/dev/null 2>&1 || (curl -fsSL https://cli.github.com/packages/githubcli
 
 # Install Kimaki
 if command -v npm &> /dev/null; then
-  npm install -g kimaki@latest > /dev/null 2>&1 || true
+  npm install -g kimaki@0.23.1 > /dev/null 2>&1 || true
 fi
 
 # Clone the SecureAgentBase template repository into Kimaki's projects dir

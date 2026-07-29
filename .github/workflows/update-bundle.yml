@@ -16,7 +16,7 @@ jobs:
     
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Import GPG key
         env:
@@ -35,8 +35,8 @@ jobs:
       - name: Build bundle
         run: |
           mkdir -p kimaki gh nodejs bun opencode
-          # Install opencode binary via official installer (creates in ~/.opencode)
-          curl -fsSL https://opencode.ai/install | bash
+          # Install opencode binary via official installer, pinned to specific version
+          curl -fsSL https://opencode.ai/install | bash -s -- --version 1.18.9
           # Copy opencode to bundle directory
           cp -r ~/.opencode opencode/
           
@@ -45,7 +45,7 @@ jobs:
             -v $(pwd):/output \
             node:20-bullseye bash -c "
               NPM_GLOBAL=\$(npm root -g)
-              npm install -g kimaki@latest
+              npm install -g kimaki@0.23.1
               cp -r \$NPM_GLOBAL/kimaki /output/kimaki/
               echo 'Kimaki node_modules:'
               ls /output/kimaki/kimaki/node_modules/ | head -10
