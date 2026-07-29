@@ -4,6 +4,7 @@ import { doc, getDoc } from 'firebase/firestore';
 import { Link } from 'react-router-dom';
 
 const isStaging = import.meta.env.VITE_APP_ENV === 'staging';
+const isE2E = import.meta.env.VITE_E2E === 'true';
 
 export const StagingGate = ({ db, children }) => {
   const { user, loading } = useAuth();
