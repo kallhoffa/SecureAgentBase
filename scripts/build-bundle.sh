@@ -10,7 +10,7 @@ docker run --rm \
     apt-get install -y curl gnupg
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
     apt-get install -y nodejs
-    npm install -g kimaki@latest
+    npm install -g kimaki@0.23.1
     cp -r $(npm root -g)/kimaki /output/kimaki/
     chmod +x /output/kimaki/bin.js 2>/dev/null || true
     mkdir -p /output/kimaki/bin
