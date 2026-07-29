@@ -13,6 +13,8 @@
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "check": "npm run test:ci && npm run lint && npm run typecheck && npm run build",
+    "test:rules": "firebase emulators:exec 'npx vitest run src/_tests_/firestore-rules.test.js'",
+    "test:rules:setup": "npx firebase-tools setup:emulators:firestore",
     "e2e": "playwright test",
     "e2e:ci": "playwright test --config=playwright.ci.config.js",
     "e2e:smoke": "playwright test tests/e2e/smoke.spec.js",
