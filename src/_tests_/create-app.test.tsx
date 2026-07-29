@@ -26,6 +26,7 @@ vi.mock('firebase/firestore', () => ({
   getDoc: (...args: unknown[]) => mockGetDoc(...args),
   setDoc: (...args: unknown[]) => mockSetDoc(...args),
   updateDoc: (...args: unknown[]) => mockUpdateDoc(...args),
+  serverTimestamp: vi.fn(() => new Date('2024-01-01')),
   Firestore: vi.fn(),
 }));
 

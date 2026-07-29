@@ -1,0 +1,40 @@
+rules:
+  - id: raw-firestore-write
+    pattern-either:
+      - pattern: setDoc(...)
+      - pattern: updateDoc(...)
+      - pattern: addDoc(...)
+      - pattern: deleteDoc(...)
+    paths:
+      include:
+        - "src/**/*.{js,jsx,ts,tsx}"
+      exclude:
+        - "src/guardrails/safe-firestore.js"
+        - "src/_tests_/**"
+    message: >-
+      Use safeCreate/safeUpdate/safeDelete/safeSet instead of raw Firestore
+      write methods. Raw writes bypass audit stamps and field allowlists.
+      See src/guardrails/safe-firestore.js
+    severity: ERROR
+    languages:
+      - javascript
+      - typescript
+
+  - id: raw-firestore-write-test
+    pattern-either:
+      - pattern: setDoc(...)
+      - pattern: updateDoc(...)
+      - pattern: addDoc(...)
+      - pattern: deleteDoc(...)
+    paths:
+      include:
+        - "src/_tests_/**"
+      exclude:
+        - "src/_tests_/firestore-rules*.test.js"
+    message: >-
+      Test mocks should still use guardrail patterns. Raw Firestore mocks may
+      hide missing guardrail usage in production code. Mock safeCreate instead.
+    severity: WARNING
+    languages:
+      - javascript
+      - typescript

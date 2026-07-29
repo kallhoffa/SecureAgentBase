@@ -7,6 +7,7 @@ const mockGetPost = vi.fn();
 const mockAddReply = vi.fn();
 const mockNavigate = vi.fn();
 const mockUseAuth = vi.fn();
+const mockRateLimit = { check: vi.fn(() => true), resetIn: 0 };
 
 vi.mock('../firestore-utils/post-storage', () => ({
   getPost: (...args: unknown[]) => mockGetPost(...args),
@@ -15,6 +16,10 @@ vi.mock('../firestore-utils/post-storage', () => ({
 
 vi.mock('../firestore-utils/auth-context', () => ({
   useAuth: () => mockUseAuth(),
+}));
+
+vi.mock('../guardrails/useRateLimit', () => ({
+  useRateLimit: () => mockRateLimit,
 }));
 
 vi.mock('react-router-dom', async () => {
@@ -101,7 +106,7 @@ describe('ComposeReply', () => {
         content: 'Nice post!',
         authorId: 'u2',
         authorName: 'replyer@example.com',
-      });
+      }, 'u2');
       expect(mockNavigate).toHaveBeenCalledWith('/post?id=post-1');
     });
   });

@@ -1,0 +1,102 @@
+name: Security Scan
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: security-scan-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  codeql:
+    name: CodeQL Analysis
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: javascript-typescript
+          config-file: .github/codeql-config.yml
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+
+  semgrep:
+    name: Semgrep SAST
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Run Semgrep rules
+        run: semgrep --config=.semgrep/ --error --metrics=off .
+        continue-on-error: false
+
+  trivy:
+    name: Trivy Config & Secrets Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Run Trivy scan
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: config,secret
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+
+      - name: Upload Trivy results to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-results.sarif
+
+  grep-guard:
+    name: Grep Guard (Raw Firestore Check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Check for raw Firestore writes outside guardrails
+        run: |
+          BAD_FILES=$(grep -rn '\bsetDoc\|updateDoc\|addDoc\|deleteDoc\b' src/ \
+            --include='*.{js,jsx,ts,tsx}' \
+            --exclude-dir=node_modules \
+            --exclude-dir=build \
+            | grep -v 'src/guardrails/safe-firestore' \
+            | grep -v 'src/_tests_/firestore-rules' \
+            || true)
+          if [ -n "$BAD_FILES" ]; then
+            echo "ERROR: Raw Firestore write methods found outside guardrails:"
+            echo "$BAD_FILES"
+            exit 1
+          fi
+          echo "No raw Firestore writes outside guardrails."
+
+      - name: Check for inline secrets in startup scripts
+        run: |
+          BAD_LINES=$(grep -rn 'Environment="[A-Z_]*=\$' shared/startup-script.sh \
+            cli/src/lib/startup-script.sh 2>/dev/null || true)
+          if [ -n "$BAD_LINES" ]; then
+            echo "ERROR: Environment= with inline variable expansion found:"
+            echo "$BAD_LINES"
+            echo "Use EnvironmentFile= with chmod 600 instead."
+            exit 1
+          fi
+          echo "No inline secrets in startup scripts."

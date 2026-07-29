@@ -1,4 +1,4 @@
-import { collection, addDoc, updateDoc, deleteDoc, getDoc, getDocs, doc, query, where, orderBy, limit, serverTimestamp, Firestore } from 'firebase/firestore';
+import { collection, addDoc, updateDoc, deleteDoc, getDoc, getDocs, doc, setDoc, query, where, orderBy, limit, serverTimestamp, Firestore } from 'firebase/firestore';
 
 const AUDIT_FIELDS = ['createdBy', 'updatedBy', 'createdAt', 'updatedAt'];
 const RESERVED_FIELDS = ['createdAt', 'updatedAt', 'replyCount'];
@@ -16,6 +16,25 @@ const filterFields = (data, allowFields) => {
     if (key in data) clean[key] = data[key];
   }
   return clean;
+};
+
+export const safeSet = async (db, collectionName, docId, data, userId, opts = {}) => {
+  if (!userId) throw new Error('safeSet: userId is required');
+  if (!docId) throw new Error('safeSet: docId is required');
+  if (!data || typeof data !== 'object') throw new Error('safeSet: data must be an object');
+
+  const clean = filterFields(data, opts.allowFields);
+  const docData = {
+    ...clean,
+    createdBy: userId,
+    updatedBy: userId,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  };
+
+  const ref = doc(db, collectionName, docId);
+  await setDoc(ref, docData, { merge: opts.merge || false });
+  return docId;
 };
 
 export const safeCreate = async (db, collectionName, data, userId, opts = {}) => {

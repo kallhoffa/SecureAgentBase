@@ -44,6 +44,15 @@ npm run lint:fix     # Fix ESLint issues automatically
 npm run check        # Run test:ci, lint, and build (full check)
 ```
 
+### Security Scanning (CI — free tools)
+```bash
+# These run in CI on every PR, but also available locally:
+npx semgrep --config=.semgrep/ .           # Custom SAST rules
+npx trivy fs . --scanners config,secret    # Config + secret scanner
+```
+
+All security scans are defined in `.github/workflows/security-scan.yml` and run automatically on every PR.
+
 ## Code Style Guidelines
 
 ### General
@@ -203,7 +212,7 @@ const errors = validate(data, {
 if (errors) { setError(Object.values(errors)[0]); return; }
 ```
 
-**safeCreate / safeUpdate / safeDelete / safeQuery** — Wraps Firestore with audit stamps (createdBy, updatedBy, createdAt, updatedAt) and optional ownership enforcement.
+**safeCreate / safeUpdate / safeDelete / safeSet / safeQuery** — Wraps Firestore with audit stamps (createdBy, updatedBy, createdAt, updatedAt) and optional ownership enforcement. Use `safeSet` when you need a custom document ID instead of auto-generated.
 ```javascript
 // Create with field allowlist (extra fields are silently dropped)
 await safeCreate(db, 'tasks', { title: '...', completed: false }, userId, { allowFields: ['title', 'completed'] });
@@ -247,13 +256,40 @@ Rules:
 5. **When in doubt, run the full test suite.** Don't skip tests to save time — skipping hides regressions.
 
 **Rules for AI agents adding features:**
-1. Wrap all Firestore writes through safeCreate/safeUpdate/safeDelete
+1. Wrap all Firestore writes through safeCreate/safeUpdate/safeDelete/safeSet
 2. Always define ALLOW_FIELDS constant for each collection
 3. Always call validate() before any write with user input
 4. Always add useRateLimit for user-triggered actions (form submits, button clicks)
 5. Use useFeatureFlag for gating new features behind Firestore toggles
 6. Never read/write Firestore fields outside allowlists
 7. Never skip error/success/loading states in components
+
+### Security Rules (must-follow, enforced by CI)
+
+**Firestore writes:** Always use guardrail functions (`safeCreate`/`safeUpdate`/`safeDelete`/`safeSet`). Never use raw `setDoc`/`updateDoc`/`addDoc`/`deleteDoc`. CI will fail on any raw Firestore write method found outside `src/guardrails/`.
+
+**Startup scripts (VM):**
+- Secrets (PAT, tokens, Firebase IDs) must use `EnvironmentFile=` with `chmod 600`, never inline `Environment=` in systemd unit files
+- Serial console (`/dev/ttyS0`) writes must never include secrets, project identifiers, or metadata values
+- CI runs Trivy to detect hardcoded secrets in startup scripts
+
+**Validation:** Every user-input write must be prefixed with `validate(data, SCHEMA)`. The schema must define `type`, `required`, and length constraints.
+
+**Rate limiting:** Every user-triggered action (form submit, button click) must use `useRateLimit`. Minimum 5 requests/minute.
+
+**Feature flags:** New features must be gated with `useFeatureFlag(db, 'feature-name', defaultValue)`. Feature flag names must be documented in Firestore.
+
+**Staging deployment:** Only the wizard user (`WIZARD_GITHUB_USERNAME` repo variable) can deploy to staging. The deploy workflow checks `github.actor == vars.WIZARD_GITHUB_USERNAME`.
+
+### CI/CD Pipeline
+
+The following workflows run automatically:
+- **security-scan.yml** — On every PR: CodeQL (JS/TS analysis) + Semgrep (custom rules) + Trivy (secrets/config) + grep guard (raw Firestore check)
+- **firebase-deploy-staging.yml** — On push to `main` + `workflow_dispatch` (restricted to wizard user). Deploys hosting + Firestore rules.
+- **firebase-deploy.yml** — On version tags. Deploys to production.
+- **generate-e2e-key.yml** — On workflow_dispatch. Generates e2e test SA keys.
+
+The `npm run check` command runs `test:ci` + `lint` + `build` locally. Run it before every PR.
 
 ```javascript
 // Full pattern for a feature:
@@ -296,32 +332,6 @@ const Feature = ({ db }) => {
 - `VITE_APP_NAME` → displayed as the app title in nav bar and dashboard. Falls back to `'Your App'` in template mode or `'SecureAgentBase'` in app mode.
 
 Both env vars are set in CI via GitHub Actions workflow variables.
-
----
-
-## Session Status (Jul 23, 2026)
-
-### What was done
-- **All prior work preserved**: 321 unit tests, 37 wizard e2e tests, 8 CLI e2e tests, 5 smoke tests — all passing
-- **VM creation e2e test fixed and passing** — was failing for multiple reasons across several iterations:
-  1. Error detection regex too narrow ("Failed to create|out of capacity|Try again") — missed "Billing is required", "Failed to authenticate", etc. → broadened to catch all error states
-  2. "VM created successfully!" text not visible in page dump despite modal being open → switched success indicator to init modal ("VM is initializing...")
-  3. Added Promise.race pattern to race success/error/retry outcomes with 240s timeout
-  4. Added browser console log capture for debugging billing/auth flows
-- **Serial port polling test skipped** with TODO — `vmInitComplete` never becomes `true` because the polling useEffect's `getServiceAccountToken()` likely has stale `gcpAccessToken` in closure (not in dep array). Needs separate investigation.
-- **CI now fully green**: build-cli ✅, unit tests ✅ (321), smoke tests ✅ (5), wizard e2e ✅ (37 passed, 1 skipped), CLI e2e ✅ (8), staging deploy ✅
-
-### What needs to be done
-1. Cut `v0.18.2` release for prod deploy
-2. Investigate serial port polling closure issue — `getServiceAccountToken()` may return null inside the polling useEffect because `gcpAccessToken` is not in the dep array `[vmIp, projectId, vmZone, serviceAccountJson]`
-3. Optionally re-enable the serial port marker test once polling is fixed
-4. **Still failing: OAuth client ID null** — Step 5 (Identity Toolkit API) may return 404 even after enabling via Service Usage API
-
-### Relevant files
-- `tests/e2e/wizard.spec.js` — 37 tests. VM creation test (line 275): races init modal vs error vs retry with 240s timeout. Teardown test (line 334): searches zones, deletes VM + SAs.
-- `src/infra-setup.tsx` — wizard UI. Key: `buildVmMetadata` (line 2895), VM creation handler (line 4640+), serial port polling useEffect (line 2423, dep array missing `gcpAccessToken`), `getServiceAccountToken` (line 795), `showInitModal` (line 204), `step4Status`/`step4Message`
-- `.github/workflows/firebase-deploy-staging.yml` — E2E env: `E2E_DISCORD_BOT_ADDED=true`, `E2E_BILLING_ENABLED=true`, `E2E_APP_MODE=true`
-- `.github/workflows/generate-e2e-key.yml` — grants cross-project IAM roles, generates SA key artifact
 
 ---
 

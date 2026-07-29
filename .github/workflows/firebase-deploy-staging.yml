@@ -130,11 +130,6 @@ jobs:
           echo "Site did not become reachable within 150 seconds"
           exit 1
 
-      - name: Run Smoke Tests on Staging
-        run: npx playwright test e2e/smoke.spec.js --retries=2
-        env:
-          TEST_URL: https://${{ vars.FIREBASE_PROJECT_ID_STAGING }}.web.app
-
       - name: Enable Firebase Auth and create test user
         run: |
           TOKEN=$(gcloud auth print-access-token 2>/dev/null)
@@ -143,19 +138,39 @@ jobs:
           PASSWORD="${{ secrets.E2E_TEST_PASSWORD }}"
 
           echo "=== Enabling email/password auth for ${PROJECT} ==="
-          RESP=$(curl -s -X PATCH \
+          curl -s -X PATCH \
             "https://identitytoolkit.googleapis.com/v2/projects/${PROJECT}/config?updateMask=signIn.email.enabled,signIn.email.passwordRequired" \
             -H "Authorization: Bearer ${TOKEN}" \
             -H "Content-Type: application/json" \
-            -d '{"signIn":{"email":{"enabled":true,"passwordRequired":true}}}')
-          echo "Enable auth response: ${RESP}"
+            -d '{"signIn":{"email":{"enabled":true,"passwordRequired":true}}}'
 
           echo "=== Creating test user via public signUp API ==="
           RESP=$(curl -s -X POST \
             "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${{ vars.FIREBASE_API_KEY_STAGING }}" \
             -H "Content-Type: application/json" \
-            -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\",\"returnSecureToken\":false}")
-          echo "Create user response: $(echo "$RESP" | jq 'del(.idToken,.refreshToken)' 2>/dev/null || echo 'redacted')"
+            -d "{\"email\":\"${EMAIL}\",\"password\":\"${PASSWORD}\",\"returnSecureToken\":true}")
+          USER_ID=$(echo "$RESP" | jq -r '.localId // empty')
+          echo "Test user UID: ${USER_ID:-unknown}"
+
+          echo "=== Creating infra_configs document for test user ==="
+          if [ -n "$USER_ID" ] && [ "$USER_ID" != "null" ]; then
+            curl -s -X PATCH \
+              "https://firestore.googleapis.com/v1/projects/${PROJECT}/databases/(default)/documents/infra_configs/${USER_ID}" \
+              -H "Authorization: Bearer ${TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "{\"fields\":{\"e2eTest\":{\"booleanValue\":true},\"createdAt\":{\"timestampValue\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}}"
+            echo "infra_configs created for test user"
+          else
+            echo "WARNING: Could not get test user ID, infra_configs not created"
+          fi
+
+      - name: Run Smoke Tests on Staging
+        run: npx playwright test e2e/smoke.spec.js --retries=2
+        env:
+          TEST_URL: https://${{ vars.FIREBASE_PROJECT_ID_STAGING }}.web.app
+          E2E_TEST_EMAIL: e2e@${{ vars.FIREBASE_PROJECT_ID_STAGING }}.iam.gserviceaccount.com
+          E2E_TEST_PASSWORD: ${{ secrets.E2E_TEST_PASSWORD }}
+          E2E_FIREBASE_API_KEY: ${{ vars.FIREBASE_API_KEY_STAGING }}
 
       - name: Generate e2e GCP token via impersonation
         id: gen-e2e-token

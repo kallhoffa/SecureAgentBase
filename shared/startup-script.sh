@@ -145,45 +145,35 @@ if [ -n "$GITHUB_PAT" ]; then
   echo "$GITHUB_PAT" | gh auth login --with-token 2>/dev/null
   gh auth setup-git 2>/dev/null || true
 
-  # Check PAT repo access
-  REPO_PERMS=$(gh api "repos/${REPO_OWNER}/${REPO_NAME}" --jq '.permissions // {}' 2>&1)
-  gh auth status 2>/dev/null
-  echo "PAT_PERMS: $REPO_PERMS" > /dev/ttyS0 2>/dev/null || true
-
-  # Create new repo or force-push if it already exists
-  if gh repo view "${REPO_OWNER}/${REPO_NAME}" 2>/dev/null; then
-    echo "REPO_EXISTS: force-pushing..." > /dev/ttyS0 2>/dev/null || true
-    git remote remove origin 2>/dev/null || true
-    git remote add origin "https://github.com/${REPO_OWNER}/${REPO_NAME}.git" || true
-    if git push -u origin main --force 2>&1; then
-      PUSH_RESULT="PUSH_OK"
-    else
-      PUSH_RESULT="PUSH_FAILED"
-    fi
-  else
-    echo "REPO_NOT_FOUND: creating..." > /dev/ttyS0 2>/dev/null || true
-    if gh repo create "${REPO_OWNER}/${REPO_NAME}" --public --source=. --push 2>&1; then
-      PUSH_RESULT="CREATE_OK"
-    else
-      # Fallback: try force-push (repo may exist but PAT can't view it)
-      echo "CREATE_FAILED: trying force-push..." > /dev/ttyS0 2>/dev/null || true
-      git remote remove origin 2>/dev/null || true
-      git remote add origin "https://github.com/${REPO_OWNER}/${REPO_NAME}.git" || true
-      if git push -u origin main --force 2>&1; then
-        PUSH_RESULT="FALLBACK_PUSH_OK"
+      # Create new repo or force-push if it already exists
+      if gh repo view "${REPO_OWNER}/${REPO_NAME}" 2>/dev/null; then
+        git remote remove origin 2>/dev/null || true
+        git remote add origin "https://github.com/${REPO_OWNER}/${REPO_NAME}.git" || true
+        if git push -u origin main --force 2>&1; then
+          PUSH_RESULT="PUSH_OK"
+        else
+          PUSH_RESULT="PUSH_FAILED"
+        fi
       else
-        PUSH_RESULT="ALL_PUSH_FAILED"
+        if gh repo create "${REPO_OWNER}/${REPO_NAME}" --public --source=. --push 2>&1; then
+          PUSH_RESULT="CREATE_OK"
+        else
+          # Fallback: try force-push (repo may exist but PAT can't view it)
+          git remote remove origin 2>/dev/null || true
+          git remote add origin "https://github.com/${REPO_OWNER}/${REPO_NAME}.git" || true
+          if git push -u origin main --force 2>&1; then
+            PUSH_RESULT="FALLBACK_PUSH_OK"
+          else
+            PUSH_RESULT="ALL_PUSH_FAILED"
+          fi
+        fi
       fi
-    fi
-  fi
 
-  # Write push result marker to serial port (compact, survives buffer overflow)
-  echo "PUSH_RESULT=$PUSH_RESULT" > /dev/ttyS0 2>/dev/null || true
+      # Write push result marker to serial port (compact, survives buffer overflow)
+      echo "PUSH_RESULT=$PUSH_RESULT" > /dev/ttyS0 2>/dev/null || true
 
-  # Set GitHub variables
-  echo "Setting GitHub variables..." > /dev/ttyS0 2>/dev/null || true
-  echo "FIREBASE_STAGING=$FIREBASE_STAGING | FIREBASE_PRODUCTION=$FIREBASE_PRODUCTION | PAT len=$(echo -n "$GITHUB_PAT" | wc -c)" > /dev/ttyS0 2>/dev/null || true
-  gh auth status 2>/dev/null || true
+      # Set GitHub variables
+      gh auth status 2>/dev/null || true
 
   # Set Firebase project IDs as VARIABLES (workflow reads vars.FIREBASE_PROJECT_ID_STAGING)
   gh variable set FIREBASE_PROJECT_ID_STAGING --body "$FIREBASE_STAGING" -R "${REPO_OWNER}/${REPO_NAME}" 2>/dev/null || echo "WARN: Failed to set FIREBASE_PROJECT_ID_STAGING"
@@ -220,6 +210,7 @@ if [ -n "$GITHUB_PAT" ]; then
   fi
 
   echo "VAR_RESULT=DONE" > /dev/ttyS0 2>/dev/null || true
+  echo "GitHub variables set successfully" > /dev/null 2>&1
 fi
 
 # Install Kimaki globally and create its configuration
@@ -249,6 +240,18 @@ cat > /root/.kimaki/projects/$REPO_NAME/opencode.json << 'OPENCODEEOF'
 }
 OPENCODEEOF
 
+# Write sensitive env vars to a restricted file, referenced by systemd
+cat > /root/.kimaki/env << ENVEOF
+GITHUB_PAT=$GITHUB_PAT
+KIMAKI_BOT_TOKEN=$DISCORD_BOT_TOKEN
+DISCORD_BOT_TOKEN=$DISCORD_BOT_TOKEN
+DISCORD_GUILD_ID=$DISCORD_GUILD_ID
+FIREBASE_STAGING=$FIREBASE_STAGING
+FIREBASE_PRODUCTION=$FIREBASE_PRODUCTION
+NODE_ENV=production
+ENVEOF
+chmod 600 /root/.kimaki/env
+
 # Create systemd service for Kimaki
 KIMAKI_PATH=$(which kimaki)
 cat > /etc/systemd/system/kimaki.service << SERVICEEOF
@@ -263,13 +266,8 @@ WorkingDirectory=/root/.kimaki/projects/$REPO_NAME
 ExecStart=/usr/bin/node $KIMAKI_PATH
 Restart=on-failure
 RestartSec=10
-Environment="GITHUB_PAT=$GITHUB_PAT"
-Environment="KIMAKI_BOT_TOKEN=$DISCORD_BOT_TOKEN"
-Environment="DISCORD_BOT_TOKEN=$DISCORD_BOT_TOKEN"
-Environment="DISCORD_GUILD_ID=$DISCORD_GUILD_ID"
-Environment="FIREBASE_STAGING=$FIREBASE_STAGING"
-Environment="FIREBASE_PRODUCTION=$FIREBASE_PRODUCTION"
-Environment="NODE_ENV=production"
+EnvironmentFile=/root/.kimaki/env
+Environment=NODE_ENV=production
 
 [Install]
 WantedBy=multi-user.target
@@ -345,7 +343,7 @@ systemctl daemon-reload
 systemctl enable kimaki-register.service
 
 # Final compact marker — this is the LAST output before kimaki-register starts
-# It survives serial port buffer overflow because it's at the very end
-echo "SCRIPT_COMPLETE|PUSH=$PUSH_RESULT|REPO=$REPO_OWNER/$REPO_NAME|ZONE=$(curl -sf http://metadata.google.internal/computeMetadata/v1/instance/zone -H 'Metadata-Flavor: Google' 2>/dev/null | sed 's|.*/||')" > /dev/ttyS0 2>/dev/null || true
+# Non-sensitive status only — no secrets or project identifiers leaked
+echo "SCRIPT_COMPLETE" > /dev/ttyS0 2>/dev/null || true
 
 systemctl start kimaki-register.service &

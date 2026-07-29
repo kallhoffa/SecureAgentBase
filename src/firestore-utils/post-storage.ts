@@ -1,20 +1,19 @@
-import { 
-  collection, 
-  addDoc, 
-  getDoc, 
-  getDocs, 
-  doc, 
-  query, 
-  orderBy, 
+import {
+  collection,
+  getDoc,
+  getDocs,
+  doc,
+  query,
+  orderBy,
   limit,
   where,
-  serverTimestamp,
-  updateDoc,
   Firestore,
   DocumentData,
   QueryDocumentSnapshot
 } from 'firebase/firestore';
 import type { Post, Reply } from '../types';
+import { validate } from '../guardrails/validate';
+import { safeCreate, safeUpdate } from '../guardrails/safe-firestore';
 
 interface PostData {
   title: string;
@@ -30,6 +29,22 @@ interface ReplyData {
   authorName: string;
   authorPhoto?: string;
 }
+
+const POST_SCHEMA = {
+  title: { type: 'string', required: true, minLength: 1, maxLength: 200, label: 'Title' },
+  content: { type: 'string', required: true, minLength: 1, maxLength: 3000, label: 'Content' },
+  authorId: { type: 'string', required: true, label: 'Author ID' },
+  authorName: { type: 'string', required: true, maxLength: 100, label: 'Author name' },
+};
+
+const REPLY_SCHEMA = {
+  content: { type: 'string', required: true, minLength: 1, maxLength: 2000, label: 'Content' },
+  authorId: { type: 'string', required: true, label: 'Author ID' },
+  authorName: { type: 'string', required: true, maxLength: 100, label: 'Author name' },
+};
+
+const POST_ALLOW_FIELDS = ['title', 'content', 'authorId', 'authorName', 'authorPhoto', 'replyCount'];
+const REPLY_ALLOW_FIELDS = ['content', 'authorId', 'authorName', 'authorPhoto', 'postId'];
 
 const mapDocToPost = (docSnap: QueryDocumentSnapshot<DocumentData>): Post => {
   const data = docSnap.data();
@@ -58,20 +73,16 @@ const mapDocToReply = (docSnap: QueryDocumentSnapshot<DocumentData>): Reply => {
   };
 };
 
-export const createPost = async (db: Firestore, postData: PostData): Promise<string> => {
-  const postsRef = collection(db, 'posts');
-  const docRef = await addDoc(postsRef, {
-    ...postData,
-    replyCount: 0,
-    createdAt: serverTimestamp(),
-  });
-  return docRef.id;
+export const createPost = async (db: Firestore, postData: PostData, userId: string): Promise<string> => {
+  const errors = validate(postData, POST_SCHEMA);
+  if (errors) throw new Error(Object.values(errors)[0] as string);
+  return safeCreate(db, 'posts', postData, userId, { allowFields: POST_ALLOW_FIELDS });
 };
 
 export const getPost = async (db: Firestore, postId: string): Promise<Post | null> => {
   const postDoc = doc(db, 'posts', postId);
   const snapshot = await getDoc(postDoc);
-  
+
   if (snapshot.exists()) {
     const data = snapshot.data();
     return {
@@ -95,7 +106,7 @@ export const getPosts = async (db: Firestore, maxPosts = 50): Promise<Post[]> =>
     orderBy('createdAt', 'desc'),
     limit(maxPosts)
   );
-  
+
   const snapshot = await getDocs(q);
   return snapshot.docs.map(docSnap => {
     const data = docSnap.data();
@@ -121,7 +132,7 @@ export const searchPosts = async (db: Firestore, searchQuery: string): Promise<P
     orderBy('title'),
     limit(20)
   );
-  
+
   const snapshot = await getDocs(q);
   return snapshot.docs.map(docSnap => {
     const data = docSnap.data();
@@ -138,22 +149,20 @@ export const searchPosts = async (db: Firestore, searchQuery: string): Promise<P
   });
 };
 
-export const addReply = async (db: Firestore, postId: string, replyData: ReplyData): Promise<string> => {
-  const repliesRef = collection(db, 'replies');
-  const docRef = await addDoc(repliesRef, {
-    ...replyData,
-    postId,
-    createdAt: serverTimestamp(),
-  });
-  
+export const addReply = async (db: Firestore, postId: string, replyData: ReplyData, userId: string): Promise<string> => {
+  const errors = validate(replyData, REPLY_SCHEMA);
+  if (errors) throw new Error(Object.values(errors)[0] as string);
+
+  const docId = await safeCreate(db, 'replies', { ...replyData, postId }, userId, { allowFields: REPLY_ALLOW_FIELDS });
+
   const postDoc = doc(db, 'posts', postId);
   const postSnapshot = await getDoc(postDoc);
   if (postSnapshot.exists()) {
     const currentCount = postSnapshot.data().replyCount || 0;
-    await updateDoc(postDoc, { replyCount: currentCount + 1 });
+    await safeUpdate(db, 'posts', postId, { replyCount: currentCount + 1 }, userId, { allowFields: POST_ALLOW_FIELDS });
   }
-  
-  return docRef.id;
+
+  return docId;
 };
 
 export const getReplies = async (db: Firestore, postId: string): Promise<Reply[]> => {
@@ -163,7 +172,7 @@ export const getReplies = async (db: Firestore, postId: string): Promise<Reply[]
     where('postId', '==', postId),
     orderBy('createdAt', 'asc')
   );
-  
+
   const snapshot = await getDocs(q);
   return snapshot.docs.map(docSnap => {
     const data = docSnap.data();

@@ -6,12 +6,14 @@ const mockAddDoc = vi.fn();
 const mockGetDoc = vi.fn();
 const mockGetDocs = vi.fn();
 const mockDoc = vi.fn();
+const mockSetDoc = vi.fn();
 const mockQuery = vi.fn();
 const mockOrderBy = vi.fn();
 const mockLimit = vi.fn();
 const mockWhere = vi.fn();
 const mockServerTimestamp = vi.fn(() => new Date('2024-01-01'));
 const mockUpdateDoc = vi.fn();
+const mockDeleteDoc = vi.fn();
 
 vi.mock('firebase/firestore', () => ({
   collection: mockCollection,
@@ -19,12 +21,14 @@ vi.mock('firebase/firestore', () => ({
   getDoc: mockGetDoc,
   getDocs: mockGetDocs,
   doc: mockDoc,
+  setDoc: mockSetDoc,
   query: mockQuery,
   orderBy: mockOrderBy,
   limit: mockLimit,
   where: mockWhere,
   serverTimestamp: mockServerTimestamp,
   updateDoc: mockUpdateDoc,
+  deleteDoc: mockDeleteDoc,
 }));
 
 const mockDb = {} as Firestore;
@@ -35,6 +39,8 @@ const makeDocSnap = (id: string, data: Record<string, unknown>): QueryDocumentSn
   exists: () => true,
   get: (key: string) => data[key],
 }) as unknown as QueryDocumentSnapshot<DocumentData>;
+
+const USER_ID = 'test-user-id';
 
 describe('post-storage', () => {
   beforeEach(() => {
@@ -51,12 +57,17 @@ describe('post-storage', () => {
     it('creates a post and returns its id', async () => {
       const { createPost } = await import('../firestore-utils/post-storage');
       const postData = { title: 'Test', content: 'Body', authorId: 'u1', authorName: 'User' };
-      const result = await createPost(mockDb, postData);
+      const result = await createPost(mockDb, postData, USER_ID);
       expect(result).toBe('new-post-id');
       expect(mockAddDoc).toHaveBeenCalledWith('posts-collection', {
-        ...postData,
-        replyCount: 0,
+        title: 'Test',
+        content: 'Body',
+        authorId: 'u1',
+        authorName: 'User',
+        createdBy: USER_ID,
+        updatedBy: USER_ID,
         createdAt: mockServerTimestamp(),
+        updatedAt: mockServerTimestamp(),
       });
     });
   });
@@ -155,10 +166,23 @@ describe('post-storage', () => {
         content: 'My reply',
         authorId: 'u1',
         authorName: 'User',
-      });
+      }, USER_ID);
       expect(result).toBe('reply-1');
-      expect(mockAddDoc).toHaveBeenCalled();
-      expect(mockUpdateDoc).toHaveBeenCalledWith('post-doc-ref', { replyCount: 3 });
+      expect(mockAddDoc).toHaveBeenCalledWith('posts-collection', {
+        content: 'My reply',
+        authorId: 'u1',
+        authorName: 'User',
+        postId: 'post-1',
+        createdBy: USER_ID,
+        updatedBy: USER_ID,
+        createdAt: mockServerTimestamp(),
+        updatedAt: mockServerTimestamp(),
+      });
+      expect(mockUpdateDoc).toHaveBeenCalledWith('post-doc-ref', {
+        replyCount: 3,
+        updatedBy: USER_ID,
+        updatedAt: mockServerTimestamp(),
+      });
     });
 
     it('handles replyCount when post has no replyCount field', async () => {
@@ -172,9 +196,13 @@ describe('post-storage', () => {
         content: 'Reply',
         authorId: 'u1',
         authorName: 'U',
-      });
+      }, USER_ID);
       expect(result).toBe('reply-1');
-      expect(mockUpdateDoc).toHaveBeenCalledWith('post-doc-ref', { replyCount: 1 });
+      expect(mockUpdateDoc).toHaveBeenCalledWith('post-doc-ref', {
+        replyCount: 1,
+        updatedBy: USER_ID,
+        updatedAt: mockServerTimestamp(),
+      });
     });
 
     it('does not update post if post does not exist', async () => {
@@ -188,7 +216,7 @@ describe('post-storage', () => {
         content: 'Reply',
         authorId: 'u1',
         authorName: 'U',
-      });
+      }, USER_ID);
       expect(mockUpdateDoc).not.toHaveBeenCalled();
     });
   });

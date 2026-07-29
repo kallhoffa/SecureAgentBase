@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { useAuth } from './firestore-utils/auth-context';
 import { useNavigate } from 'react-router-dom';
 import { useNotification } from './firestore-utils/notification-context';
-import { doc, getDoc, setDoc, deleteDoc, collection, getDocs, query, where, serverTimestamp, Firestore } from 'firebase/firestore';
+import { doc, getDoc, collection, getDocs, query, where, serverTimestamp, Firestore } from 'firebase/firestore';
+import { safeSet, safeDelete } from './guardrails/safe-firestore';
 import { Check, Copy, Upload, AlertTriangle, Trash2, ExternalLink, Shield, Server, Bot } from 'lucide-react';
 import { encryptData, decryptData } from './framework/infra-setup/crypto';
 import { CloudShellScript, getStartupScript } from './framework/infra-setup/scripts';
@@ -66,18 +67,15 @@ const loadProjectsFromFirestore = async (userId, firestoreDb) => {
 };
 
 const saveProjectToFirestore = async (userId, projectId, name, encryptedData, firestoreDb) => {
-  const projectRef = doc(firestoreDb, PROJECTS_COLLECTION, projectId);
-  await setDoc(projectRef, {
+  await safeSet(firestoreDb, PROJECTS_COLLECTION, projectId, {
     userId,
     name,
-    encryptedData,
-    createdAt: serverTimestamp(),
-    updatedAt: serverTimestamp()
-  }, { merge: true });
+    encryptedData
+  }, userId, { allowFields: ['userId', 'name', 'encryptedData'], merge: true });
 };
 
-const deleteProjectFromFirestore = async (projectId, firestoreDb) => {
-  await deleteDoc(doc(firestoreDb, PROJECTS_COLLECTION, projectId));
+const deleteProjectFromFirestore = async (projectId, userId, firestoreDb) => {
+  await safeDelete(firestoreDb, PROJECTS_COLLECTION, projectId, userId);
 };
 
 
@@ -785,6 +783,12 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       // Upload app name (user can override this in GitHub settings)
       const repoShortName = githubRepoName.split('/')[1] || 'MyApp';
       await setGitHubVariable(githubPat, githubRepoName, 'VITE_APP_NAME', repoShortName);
+
+      // Upload wizard GitHub username to restrict staging deploys
+      const wizardUsername = githubRepoName.split('/')[0];
+      if (wizardUsername) {
+        await setGitHubVariable(githubPat, githubRepoName, 'WIZARD_GITHUB_USERNAME', wizardUsername);
+      }
 
       setGithubVarUploaded(true);
     } catch (err) {
@@ -1830,12 +1834,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           
           if (user) {
             try {
-              const infraRef = doc(db, INFRA_COLLECTION, user.uid);
-              await setDoc(infraRef, {
+              await safeSet(db, INFRA_COLLECTION, user.uid, {
                 gcp_connected: true,
                 gcp_token_expiry: new Date(Date.now() + 3600 * 1000).toISOString(),
                 updated_at: new Date().toISOString(),
-              }, { merge: true });
+              }, user.uid, { allowFields: ['gcp_connected', 'gcp_token_expiry', 'updated_at'], merge: true });
             } catch (err) {
               console.error('Error auto-saving GCP connection state:', err);
             }
@@ -2609,13 +2612,12 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       
       if (user) {
         try {
-          const infraRef = doc(db, INFRA_COLLECTION, user.uid);
-          await setDoc(infraRef, {
+          await safeSet(db, INFRA_COLLECTION, user.uid, {
             service_account_email: parsed.client_email,
             service_account_project_id: parsed.project_id,
             service_account_configured: true,
             updated_at: new Date().toISOString(),
-          }, { merge: true });
+          }, user.uid, { allowFields: ['service_account_email', 'service_account_project_id', 'service_account_configured', 'updated_at'], merge: true });
         } catch (err) {
           console.error('Error auto-saving service account:', err);
         }
@@ -2643,8 +2645,19 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     };
 
     if (user) {
-      const infraRef = doc(db, INFRA_COLLECTION, user.uid);
-      await setDoc(infraRef, finalData, { merge: true });
+      await safeSet(db, INFRA_COLLECTION, user.uid, finalData, user.uid, {
+        allowFields: [
+          'gcp_project_id', 'gcp_connected', 'gcp_token_expiry',
+          'service_account_email', 'service_account_project_id', 'service_account_configured',
+          'service_account_key',
+          'github_app_installed', 'god_sa_email', 'vm_ip',
+          'step3_complete',
+          'firebase_staging_project_id', 'firebase_production_project_id',
+          'discord_bot_token', 'discord_client_id', 'discord_guild_id',
+          'updated_at'
+        ],
+        merge: true
+      });
       localStorage.removeItem(LOCALSTORAGE_KEY);
     } else {
       saveToLocalStorage(finalData);
@@ -2787,12 +2800,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
     try {
       if (user) {
-        const infraRef = doc(db, INFRA_COLLECTION, user.uid);
-        await deleteDoc(infraRef);
-        
+        await safeDelete(db, INFRA_COLLECTION, user.uid, user.uid);
+
         // If an encrypted project is currently selected, delete it from Firestore!
         if (selectedProjectId) {
-          await deleteProjectFromFirestore(selectedProjectId, db);
+          await deleteProjectFromFirestore(selectedProjectId, user.uid, db);
         }
       }
       localStorage.removeItem(LOCALSTORAGE_KEY);
