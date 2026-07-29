@@ -9,6 +9,7 @@ export default defineConfig({
     setupFiles: ['./src/setupTests.js'],
     globals: true,
     include: ['src/_tests_/**/*.test.{js,jsx,ts,tsx}'],
+    exclude: ['src/_tests_/firestore-rules.test.js'],
     env: {
       NODE_ENV: 'development',
     },

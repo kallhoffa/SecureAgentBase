@@ -30,6 +30,13 @@ npm run test -- --filter "test-name-pattern"
 npx vitest run --filter "test-name-pattern"
 ```
 
+**Firestore rules tests** (require Firebase emulator):
+```bash
+npm install @firebase/rules-unit-testing@5.0.1 --legacy-peer-deps
+npm run test:rules       # firebase emulators:exec vitest
+```
+These are excluded from `npm run test:ci` — run separately.
+
 ### Linting & Type Checking
 ```bash
 npm run lint         # Run ESLint on src/
