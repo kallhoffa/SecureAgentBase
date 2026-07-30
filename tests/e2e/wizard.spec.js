@@ -485,6 +485,29 @@ test.describe('Wizard E2E Regression', () => {
         }
       }
 
+      // Fail-fast: if no VM was found AND repo is stale, the VM creation
+      // (previous test) failed — no point polling for 10 minutes.
+      let repoStale = false;
+      if (githubPat) {
+        try {
+          const repoResp = await fetch('https://api.github.com/repos/kallhoffa/agentbase-testing/commits?per_page=1', {
+            headers: { Authorization: `token ${githubPat}`, Accept: 'application/vnd.github+json' },
+          });
+          if (repoResp.ok) {
+            const commits = await repoResp.json();
+            if (commits.length > 0) {
+              const ageMinutes = Math.round((Date.now() - new Date(commits[0].commit.committer.date).getTime()) / 60000);
+              repoStale = ageMinutes > 30;
+            }
+          }
+        } catch (e) {
+          console.log(`GitHub repo staleness check error: ${e.message}`);
+        }
+      }
+      if (serialOutput === '' && repoStale) {
+        throw new Error(`Staging deploy test: VM not found and repo untouched >30 min — VM creation failed.`);
+      }
+
       // Step 1: Snapshot current content to detect when a NEW deployment lands
       let baselineHtml = '';
       let baselineVersion = '';
