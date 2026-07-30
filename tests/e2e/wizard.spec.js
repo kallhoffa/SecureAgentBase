@@ -311,8 +311,16 @@ test.describe('Wizard E2E Regression', () => {
       await expect(page.getByPlaceholder(/service_account/)).not.toBeVisible({ timeout: 15000 });
       await page.waitForTimeout(1000);
 
+      // Verify Step 8 is unlocked (E2E injection should complete Steps 1-7)
+      const step8Header = page.getByText('Step 8: Create VM').first();
+      await expect(step8Header).toBeVisible({ timeout: 10000 });
+
+      if (page.url().includes('/login')) {
+        throw new Error('Redirected to /login — Firebase auth failed silently');
+      }
+
       // Go to Step 8: Create VM and click create
-      await page.getByText('Step 8: Create VM').first().click();
+      await step8Header.click();
       await page.waitForTimeout(500);
 
       const createBtn = page.getByRole('button', { name: /Enable APIs & Create VM/i });
