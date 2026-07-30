@@ -352,7 +352,7 @@ test.describe('Wizard E2E Regression', () => {
         if (consoleLogs.length > 0) {
           console.log('Browser console logs:', consoleLogs.join('\n'));
         }
-        return;
+        throw new Error('VM creation timed out after 4 minutes');
       }
 
       if (result === 'error' || result === 'button') {
@@ -360,11 +360,11 @@ test.describe('Wizard E2E Regression', () => {
         const errorLines = errorBody.split('\n').filter(l =>
           /error|failed|billing|permission|capacity|terminated/i.test(l)
         ).join(' | ');
-        console.log(`VM creation failed (${result}): ${errorLines || 'unknown'}`);
+        const errMsg = `VM creation failed (${result}): ${errorLines || 'unknown'}`;
         if (consoleLogs.length > 0) {
           console.log('Browser console logs:', consoleLogs.join('\n'));
         }
-        return;
+        throw new Error(errMsg);
       }
 
       // Init modal appeared — VM was created successfully and startup script is running
@@ -487,11 +487,12 @@ test.describe('Wizard E2E Regression', () => {
 
       // Fail-fast: if no VM was found AND repo is stale, the VM creation
       // (previous test) failed — no point polling for 10 minutes.
+      const _e2ePat = process.env.E2E_GITHUB_PAT || '';
       let repoStale = false;
-      if (githubPat) {
+      if (_e2ePat) {
         try {
           const repoResp = await fetch('https://api.github.com/repos/kallhoffa/agentbase-testing/commits?per_page=1', {
-            headers: { Authorization: `token ${githubPat}`, Accept: 'application/vnd.github+json' },
+            headers: { Authorization: `token ${_e2ePat}`, Accept: 'application/vnd.github+json' },
           });
           if (repoResp.ok) {
             const commits = await repoResp.json();
