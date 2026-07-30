@@ -2371,6 +2371,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       }
 
       if (configData) {
+        const isE2EMode = !import.meta.env.DEV && import.meta.env.VITE_E2E === 'true';
         setProjectId(configData.gcp_project_id || '');
         // GCP access token is NOT restored — it's short-lived (~1h) and
         // gcpTokenExpiry can't be restored either, so getAccessToken() can't
@@ -2381,7 +2382,9 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         // discord_bot_token intentionally NOT restored from Firestore (GHSA-x49w).
         // User must re-enter after page reload — same pattern as SA key and GCP token.
         setDiscordGuildId(configData.discord_guild_id || configData.discordGuildId || '');
-        setDiscordBotAdded(!!configData.discord_bot_added);
+        // E2E injection sets discordBotAdded=true via URL params; don't overwrite
+        // with stale Firestore value that would lock Step 8 and block the test
+        if (!isE2EMode) setDiscordBotAdded(!!configData.discord_bot_added);
         if (configData.firebase_staging) {
           setFirebaseConfigStaging(JSON.stringify(configData.firebase_staging, null, 2));
           setFirebaseStagingData(configData.firebase_staging);
