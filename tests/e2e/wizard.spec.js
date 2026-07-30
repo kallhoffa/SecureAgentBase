@@ -417,11 +417,11 @@ test.describe('Wizard E2E Regression', () => {
       console.log(`Staging deploy test: polling ${stagingUrl}`);
 
       // Pre-check 1: Fetch serial port output from VM to see startup script progress
+      let serialOutput = '';
+      let repoStale = false;
       if (E2E_GCP_TOKEN) {
         const instanceName = 'secureagent-manager';
         const zones = ['us-east1-b', 'us-central1-b', 'us-central1-c', 'us-west1-a', 'us-west1-b', 'us-east1-c', 'us-east1-d', 'europe-west1-d', 'asia-east1-a'];
-        let serialOutput = '';
-        let serialZone = '';
         for (const zone of zones) {
           try {
             const resp = await fetch(
@@ -431,21 +431,16 @@ test.describe('Wizard E2E Regression', () => {
             if (resp.ok) {
               const data = await resp.json();
               serialOutput = data.contents || '';
-              serialZone = zone;
               break;
             }
           } catch (_) { /* zone not found, try next */ }
         }
         if (serialOutput) {
-          // Show last 3000 chars to capture git push / secret setting / errors
           const tail = serialOutput.slice(-3000);
-          console.log(`Serial port output from VM in ${serialZone} (last 3000 chars):\n${tail}`);
-
-          // Check for push failure indicators
+          console.log(`Serial port output from VM (last 3000 chars):\n${tail}`);
           if (/Permission denied|fatal:.*repository.*not found|error:.*push/i.test(tail)) {
             console.log('WARNING: Serial port shows git push failure — GitHub Actions deploy will not trigger');
           }
-          // Check for our compact push result markers
           const pushMatch = tail.match(/PUSH_RESULT=(\w+)/);
           const scriptMatch = tail.match(/SCRIPT_COMPLETE\|PUSH=(\w+)/);
           if (pushMatch) console.log(`Serial port push result: ${pushMatch[1]}`);
@@ -461,18 +456,15 @@ test.describe('Wizard E2E Regression', () => {
         if (githubPat) {
           try {
             const repoResp = await fetch('https://api.github.com/repos/kallhoffa/agentbase-testing/commits?per_page=1', {
-              headers: {
-                Authorization: `token ${githubPat}`,
-                Accept: 'application/vnd.github+json',
-              },
+              headers: { Authorization: `token ${githubPat}`, Accept: 'application/vnd.github+json' },
             });
             if (repoResp.ok) {
               const commits = await repoResp.json();
               if (commits.length > 0) {
-                const lastCommit = new Date(commits[0].commit.committer.date);
-                const ageMinutes = Math.round((Date.now() - lastCommit.getTime()) / 60000);
+                const ageMinutes = Math.round((Date.now() - new Date(commits[0].commit.committer.date).getTime()) / 60000);
                 console.log(`GitHub repo last commit: ${commits[0].sha.substring(0, 7)} (${ageMinutes} min ago) — ${commits[0].commit.message.substring(0, 80)}`);
-                if (ageMinutes > 30) {
+                repoStale = ageMinutes > 30;
+                if (repoStale) {
                   console.log('WARNING: Repo not updated recently — VM push likely failed. GitHub Actions deploy will not trigger.');
                 }
               }
@@ -487,24 +479,6 @@ test.describe('Wizard E2E Regression', () => {
 
       // Fail-fast: if no VM was found AND repo is stale, the VM creation
       // (previous test) failed — no point polling for 10 minutes.
-      const _e2ePat = process.env.E2E_GITHUB_PAT || '';
-      let repoStale = false;
-      if (_e2ePat) {
-        try {
-          const repoResp = await fetch('https://api.github.com/repos/kallhoffa/agentbase-testing/commits?per_page=1', {
-            headers: { Authorization: `token ${_e2ePat}`, Accept: 'application/vnd.github+json' },
-          });
-          if (repoResp.ok) {
-            const commits = await repoResp.json();
-            if (commits.length > 0) {
-              const ageMinutes = Math.round((Date.now() - new Date(commits[0].commit.committer.date).getTime()) / 60000);
-              repoStale = ageMinutes > 30;
-            }
-          }
-        } catch (e) {
-          console.log(`GitHub repo staleness check error: ${e.message}`);
-        }
-      }
       if (serialOutput === '' && repoStale) {
         throw new Error(`Staging deploy test: VM not found and repo untouched >30 min — VM creation failed.`);
       }

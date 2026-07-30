@@ -1031,6 +1031,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   const checkBillingStatus = async () => {
     if (!projectId) return null;
 
+    // E2E mode: skip real billing API call, use injected state
+    if (!import.meta.env.DEV && import.meta.env.VITE_E2E === 'true') {
+      return billingEnabled;
+    }
+
     await tryEnableBillingApi();
 
     const tryToken = async (token) => {
