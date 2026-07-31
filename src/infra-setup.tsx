@@ -1031,9 +1031,12 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   const checkBillingStatus = async () => {
     if (!projectId) return null;
 
-    // E2E mode: skip real billing API call, use injected state
+    // E2E mode: skip real billing API call, force billing enabled
+    // Must set state here too — the E2E injection effect may not have
+    // committed yet (effects run in same phase, state is stale).
     if (!import.meta.env.DEV && import.meta.env.VITE_E2E === 'true') {
-      return billingEnabled;
+      setBillingEnabled(true);
+      return true;
     }
 
     await tryEnableBillingApi();
@@ -5103,6 +5106,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                     </div>
                   )}
 
+                  {step4Status === 'idle' && (
                   <div className="mt-4 flex gap-2">
                       <button
                         onClick={async () => {
@@ -5376,6 +5380,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                         Recreate VM
                       </button>
                     </div>
+                  )}
                 </>
               )}
             </div>
