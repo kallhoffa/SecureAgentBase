@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useAuth } from '../../firestore-utils/auth-context';
 import { Shield, User, Info, CheckCircle } from 'lucide-react';
 

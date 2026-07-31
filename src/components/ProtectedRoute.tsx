@@ -1,4 +1,4 @@
-import { Navigate } from 'react-router-dom';
+import { Navigate } from 'react-router';
 import { ReactNode } from 'react';
 import { useAuth } from '../firestore-utils/auth-context';
 import { Loader2 } from 'lucide-react';

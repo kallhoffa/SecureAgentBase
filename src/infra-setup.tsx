@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useAuth } from './firestore-utils/auth-context';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useNotification } from './firestore-utils/notification-context';
 import { doc, getDoc, collection, getDocs, query, where, serverTimestamp, Firestore } from 'firebase/firestore';
 import { safeSet, safeDelete } from './guardrails/safe-firestore';

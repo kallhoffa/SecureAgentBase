@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '../firestore-utils/auth-context';
 import { doc, getDoc } from 'firebase/firestore';
-import { Link } from 'react-router-dom';
+import { Link } from 'react-router';
 
 const isStaging = import.meta.env.VITE_APP_ENV === 'staging';
 const isE2E = import.meta.env.VITE_E2E === 'true';
@@ -12,16 +12,7 @@ export const StagingGate = ({ db, children }) => {
   const [authorized, setAuthorized] = useState(false);
 
   useEffect(() => {
-    if (!isStaging) {
-      setAuthorized(true);
-      setChecking(false);
-      return;
-    }
-    if (loading) return;
-    if (!user) {
-      setChecking(false);
-      return;
-    }
+    if (!isStaging || loading || !user) return;
     let mounted = true;
     const checkWizard = async () => {
       try {
@@ -38,7 +29,8 @@ export const StagingGate = ({ db, children }) => {
 
   if (!isStaging || isE2E) return children;
 
-  if (loading || checking) {
+  const authPending = loading || (!!user && checking);
+  if (authPending) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-950">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600" />

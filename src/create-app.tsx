@@ -1,6 +1,6 @@
 import { useState, useEffect, Fragment } from 'react';
 import { useAuth } from './firestore-utils/auth-context';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { doc, getDoc, Firestore } from 'firebase/firestore';
 import { safeSet, safeUpdate } from './guardrails/safe-firestore';
 import { validate } from './guardrails/validate';

@@ -4,7 +4,11 @@ const getWindow = (counts, maxPerMinute) => {
   const now = Date.now();
   const windowStart = now - 60000;
   const active = counts.filter(t => t > windowStart);
-  return { active, remaining: Math.max(0, maxPerMinute - active.length) };
+  return {
+    active,
+    remaining: Math.max(0, maxPerMinute - active.length),
+    resetIn: active.length === 0 ? 0 : Math.max(0, 60000 - (now - active[0])),
+  };
 };
 
 export const useRateLimit = (action, maxPerMinute = 10) => {
@@ -21,10 +25,5 @@ export const useRateLimit = (action, maxPerMinute = 10) => {
     return true;
   }, [maxPerMinute]);
 
-  const resetIn = () => {
-    if (counts.current.length === 0) return 0;
-    return Math.max(0, 60000 - (Date.now() - counts.current[0]));
-  };
-
-  return { canAct: state.remaining > 0, check, remaining: state.remaining, resetIn: resetIn() };
+  return { canAct: state.remaining > 0, check, remaining: state.remaining, resetIn: state.resetIn };
 };

@@ -1,5 +1,5 @@
 import { useState, useEffect, FormEvent } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router';
 import { useAuth } from './firestore-utils/auth-context';
 import { getPost, addReply } from './firestore-utils/post-storage';
 import { useRateLimit } from './guardrails/useRateLimit';

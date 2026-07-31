@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router';
 import { MessageCircle } from 'lucide-react';
 import { getPost, getReplies } from './firestore-utils/post-storage';
 import { Firestore } from 'firebase/firestore';

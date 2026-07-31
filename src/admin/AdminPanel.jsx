@@ -1,4 +1,4 @@
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router';
 import { Shield, Flag, Gauge, ArrowLeft } from 'lucide-react';
 import { useAuth } from '../firestore-utils/auth-context';
 import { useIsAdmin } from './useIsAdmin';

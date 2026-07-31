@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Outlet } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Outlet } from 'react-router';
 import { Firestore } from 'firebase/firestore';
 import { Auth } from 'firebase/auth';
 import LandingPage from './posts';

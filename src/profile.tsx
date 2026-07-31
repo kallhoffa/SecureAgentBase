@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from './firestore-utils/auth-context';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useNotification } from './firestore-utils/notification-context';
 import { getUserPreferences, setUserBetaPreference } from './firestore-utils/user-preferences';
 import { Shield, ExternalLink, Loader2 } from 'lucide-react';

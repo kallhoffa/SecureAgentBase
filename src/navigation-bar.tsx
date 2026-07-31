@@ -1,5 +1,5 @@
 import { LogOut, User, CheckSquare } from 'lucide-react';
-import { useNavigate, NavigateFunction, Link } from 'react-router-dom';
+import { useNavigate, NavigateFunction, Link } from 'react-router';
 import { useAuth } from './firestore-utils/auth-context';
 import { useNotification } from './firestore-utils/notification-context';
 import { useIsAdmin } from './admin/useIsAdmin';

@@ -1,5 +1,5 @@
 import { useState, FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { useAuth } from './firestore-utils/auth-context';
 import { createPost } from './firestore-utils/post-storage';
 import { useRateLimit } from './guardrails/useRateLimit';

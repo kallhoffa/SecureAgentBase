@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router';
 import { Rocket, Bot, Github, Cloud, Terminal, Globe } from 'lucide-react';
 
 const LandingPage: React.FC = () => {
