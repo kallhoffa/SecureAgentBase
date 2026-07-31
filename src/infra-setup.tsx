@@ -2380,7 +2380,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
       if (configData) {
         const isE2EMode = !import.meta.env.DEV && import.meta.env.VITE_E2E === 'true';
-        setProjectId(configData.gcp_project_id || '');
+        // E2E injection sets projectId from URL params; don't overwrite with a
+        // stale Firestore value (e.g. empty string) that would break the VM
+        // creation guard (`if (!serviceAccountJson || !projectId)`) and block
+        // the e2e test.
+        if (!isE2EMode) setProjectId(configData.gcp_project_id || '');
         // GCP access token is NOT restored — it's short-lived (~1h) and
         // gcpTokenExpiry can't be restored either, so getAccessToken() can't
         // tell if it's valid. The user clicks "Connect Google Cloud Account"
@@ -2393,11 +2397,12 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         // E2E injection sets discordBotAdded=true via URL params; don't overwrite
         // with stale Firestore value that would lock Step 8 and block the test
         if (!isE2EMode) setDiscordBotAdded(!!configData.discord_bot_added);
-        if (configData.firebase_staging) {
+        // Firebase configs are E2E-injected too — skip stale Firestore restore
+        if (!isE2EMode && configData.firebase_staging) {
           setFirebaseConfigStaging(JSON.stringify(configData.firebase_staging, null, 2));
           setFirebaseStagingData(configData.firebase_staging);
         }
-        if (configData.firebase_production) {
+        if (!isE2EMode && configData.firebase_production) {
           setFirebaseConfigProduction(JSON.stringify(configData.firebase_production, null, 2));
           setFirebaseProductionData(configData.firebase_production);
         }
@@ -2413,7 +2418,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         // Note: service_account_key is NOT restored (private_key sensitive)
         // User must re-upload service account JSON each session
 
-        if (configData.god_sa_email) setGodSaEmail(configData.god_sa_email);
+        if (!isE2EMode && configData.god_sa_email) setGodSaEmail(configData.god_sa_email);
 
         const formProgress = loadFormProgress();
         
