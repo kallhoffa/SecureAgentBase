@@ -8,11 +8,7 @@ export const useIsAdmin = (db) => {
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    if (!user || !db) {
-      setIsAdmin(false);
-      setChecking(false);
-      return;
-    }
+    if (!user || !db) return;
 
     let mounted = true;
     const check = async () => {
@@ -29,6 +25,10 @@ export const useIsAdmin = (db) => {
     check();
     return () => { mounted = false; };
   }, [db, user]);
+
+  if (!user || !db) {
+    return { isAdmin: false, checking: false };
+  }
 
   return { isAdmin, checking };
 };

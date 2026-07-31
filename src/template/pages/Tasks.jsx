@@ -21,33 +21,34 @@ const Tasks = ({ db }) => {
   const rateLimit = useRateLimit('add-task', 20);
 
   const loadTasks = useCallback(async () => {
-    if (!user) {
-      setTasks([]);
-      setLoading(false);
-      return;
-    }
-    try {
-      setLoading(true);
-      setError(null);
-      const results = await safeQuery(db, 'tasks', user.uid, { maxResults: 100 });
-      const loaded = results.map((d) => ({
-        id: d.id,
-        title: d.title || '',
-        completed: d.completed || false,
-        createdAt: d.createdAt?.toDate ? d.createdAt.toDate() : new Date(),
-      }));
-      setTasks(loaded);
-    } catch (err) {
-      console.error('Error loading tasks:', err);
-      setError('Failed to load tasks');
-    } finally {
-      setLoading(false);
-    }
+    if (!user) return [];
+    const results = await safeQuery(db, 'tasks', user.uid, { maxResults: 100 });
+    return results.map((d) => ({
+      id: d.id,
+      title: d.title || '',
+      completed: d.completed || false,
+      createdAt: d.createdAt?.toDate ? d.createdAt.toDate() : new Date(),
+    }));
   }, [db, user]);
 
   useEffect(() => {
-    loadTasks();
-  }, [loadTasks]);
+    if (!user) return;
+    let mounted = true;
+    loadTasks()
+      .then((loaded) => {
+        if (mounted) setTasks(loaded);
+      })
+      .catch((err) => {
+        if (mounted) {
+          console.error('Error loading tasks:', err);
+          setError('Failed to load tasks');
+        }
+      })
+      .finally(() => {
+        if (mounted) setLoading(false);
+      });
+    return () => { mounted = false; };
+  }, [loadTasks, user]);
 
   const addTask = async () => {
     if (!user || !newTitle.trim()) return;
@@ -65,7 +66,7 @@ const Tasks = ({ db }) => {
       setError(null);
       await safeCreate(db, 'tasks', { title: newTitle.trim(), completed: false }, user.uid, { allowFields: ALLOW_FIELDS });
       setNewTitle('');
-      await loadTasks();
+      setTasks(await loadTasks());
     } catch (err) {
       console.error('Error adding task:', err);
       setError('Failed to add task');
@@ -78,7 +79,7 @@ const Tasks = ({ db }) => {
     try {
       setError(null);
       await safeUpdate(db, 'tasks', task.id, { completed: !task.completed }, user.uid, { allowFields: ALLOW_FIELDS, requireOwnership: true });
-      await loadTasks();
+      setTasks(await loadTasks());
     } catch (err) {
       console.error('Error toggling task:', err);
       setError('Failed to update task');
@@ -89,7 +90,7 @@ const Tasks = ({ db }) => {
     try {
       setError(null);
       await safeDelete(db, 'tasks', taskId, user.uid, { requireOwnership: true });
-      await loadTasks();
+      setTasks(await loadTasks());
     } catch (err) {
       console.error('Error deleting task:', err);
       setError('Failed to delete task');

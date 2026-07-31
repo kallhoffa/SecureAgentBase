@@ -1,7 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { collection, getDocs, doc, query, orderBy } from 'firebase/firestore';
 import { useAuth } from '../firestore-utils/auth-context';
-import { safeCreate, safeUpdate, safeDelete } from '../guardrails/safe-firestore';
+import { safeCreate, safeUpdate, safeDelete, safeSet } from '../guardrails/safe-firestore';
 import { useRateLimit } from '../guardrails/useRateLimit';
 import { Plus, Trash2, Loader2, ToggleLeft, ToggleRight } from 'lucide-react';
 
@@ -16,26 +16,31 @@ const FeatureFlags = ({ db }) => {
   const [adding, setAdding] = useState(false);
   const rateLimit = useRateLimit('feature-flag-action', 30);
 
-  const loadFlags = async () => {
-    try {
-      setLoading(true);
-      setError(null);
-      const ref = collection(db, 'featureFlags');
-      const q = query(ref, orderBy('__name__'));
-      const snap = await getDocs(q);
-      const loaded = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setFlags(loaded);
-    } catch (err) {
-      console.error('Error loading flags:', err);
-      setError('Failed to load flags');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const loadFlags = useCallback(async () => {
+    const ref = collection(db, 'featureFlags');
+    const q = query(ref, orderBy('__name__'));
+    const snap = await getDocs(q);
+    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  }, [db]);
 
   useEffect(() => {
-    if (db) loadFlags();
-  }, [db]);
+    if (!db) return;
+    let mounted = true;
+    loadFlags()
+      .then((loaded) => {
+        if (mounted) setFlags(loaded);
+      })
+      .catch((err) => {
+        if (mounted) {
+          console.error('Error loading flags:', err);
+          setError('Failed to load flags');
+        }
+      })
+      .finally(() => {
+        if (mounted) setLoading(false);
+      });
+    return () => { mounted = false; };
+  }, [loadFlags, db]);
 
   const addFlag = async () => {
     if (!newName.trim()) return;
@@ -45,7 +50,7 @@ const FeatureFlags = ({ db }) => {
       setError(null);
       await safeSet(db, 'featureFlags', newName.trim(), { enabled: false }, user.uid, { allowFields: ALLOW_FIELDS });
       setNewName('');
-      await loadFlags();
+      setFlags(await loadFlags());
     } catch (err) {
       console.error('Error adding flag:', err);
       setError('Failed to add flag');
