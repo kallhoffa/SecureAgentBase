@@ -339,6 +339,13 @@ test.describe('Wizard E2E Regression', () => {
       );
       const retryBtn = page.getByRole('button', { name: /Enable APIs & Create VM/i });
 
+      // The button is still visible right after click (React re-render lag).
+      // Wait for it to DISAPPEAR first — proves the handler took over and
+      // set step4Status to 'enabling'. Without this, retryBtn.waitFor below
+      // resolves instantly against the still-visible button, producing a
+      // false 'button' result even though VM creation is proceeding.
+      await expect(retryBtn).not.toBeVisible({ timeout: 15000 });
+
       // Race: wait for init modal (success) OR error text OR retry button
       const result = await Promise.race([
         initModal.waitFor({ timeout: 240000 }).then(() => 'modal').catch(() => 'timeout'),
