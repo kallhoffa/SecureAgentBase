@@ -93,7 +93,7 @@ export const getServiceAccountToken = async (serviceAccountJson: any) => {
     aud: 'https://oauth2.googleapis.com/token',
     iat: now,
     exp: now + 3600,
-    scope: 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/compute https://www.googleapis.com/auth/devstorage.full_control'
+    scope: 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/compute https://www.googleapis.com/auth/devstorage.read_write'
   };
 
   const header = { alg: 'RS256', typ: 'JWT' };
@@ -142,7 +142,7 @@ export const generateShortLivedToken = async (userToken: string, saEmail: string
           scope: [
             'https://www.googleapis.com/auth/cloud-platform',
             'https://www.googleapis.com/auth/compute',
-            'https://www.googleapis.com/auth/devstorage.full_control',
+            'https://www.googleapis.com/auth/devstorage.read_write',
             'https://www.googleapis.com/auth/cloud-billing.readonly'
           ],
           lifetime: '3600s'

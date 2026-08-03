@@ -8,6 +8,7 @@ import ComposePost from './compose-post';
 import ComposeReply from './compose-reply';
 import EnvironmentBanner from './environment-banner';
 import About from './about';
+import Privacy from './privacy';
 import NavigationBar from './navigation-bar';
 import Login from './login';
 import Signup from './signup';
@@ -74,6 +75,7 @@ const App: React.FC<AppProps> = ({ db }) => {
             <Route path="/compose-post" element={<RequireAuth><ComposePost db={db} /></RequireAuth>} />
             <Route path="/compose-reply" element={<RequireAuth><ComposeReply db={db} /></RequireAuth>} />
             <Route path="/about" element={<About/>} />
+          <Route path="/privacy" element={<Privacy />} />
             <Route path="/profile" element={<RequireAuth><Profile db={db} /></RequireAuth>} />
             {isAppMode && (
               <Route path="/infra-setup" element={<RequireAuth><InfraSetup db={db} /></RequireAuth>} />

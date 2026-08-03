@@ -813,7 +813,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
               'Content-Type': 'application/json'
             },
             body: JSON.stringify({
-              scope: ['https://www.googleapis.com/auth/cloud-platform', 'https://www.googleapis.com/auth/compute', 'https://www.googleapis.com/auth/devstorage.full_control', 'https://www.googleapis.com/auth/cloud-billing.readonly'],
+              scope: ['https://www.googleapis.com/auth/cloud-platform', 'https://www.googleapis.com/auth/compute', 'https://www.googleapis.com/auth/devstorage.read_write', 'https://www.googleapis.com/auth/cloud-billing.readonly'],
               lifetime: '3600s'
             })
           }
@@ -828,7 +828,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     }
     
     if (serviceAccountJson) {
-      return signJwtAssertion(serviceAccountJson, 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/compute https://www.googleapis.com/auth/devstorage.full_control https://www.googleapis.com/auth/cloud-billing.readonly');
+      return signJwtAssertion(serviceAccountJson, 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/compute https://www.googleapis.com/auth/devstorage.read_write https://www.googleapis.com/auth/cloud-billing.readonly');
     }
     return null;
   };
