@@ -1,7 +1,7 @@
 ---
-description: Switch to zen/big-pickle for deep reasoning tasks.
+description: Switch to opencode/big-pickle for deep reasoning tasks.
 mode: primary
-model: zen/big-pickle
+model: opencode/big-pickle
 permission:
   edit: allow
   bash: allow

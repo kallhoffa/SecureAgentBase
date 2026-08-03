@@ -23,6 +23,7 @@
     "mutate": "stryker run",
     "cli:build": "cd cli && npm install && npm run build",
     "cli:package": "cd cli && npm pack",
+    "generate:startup-script": "cp shared/startup-script.sh cli/src/lib/startup-script.sh",
     "postinstall": "scripts/install-hooks.sh"
   },
   "dependencies": {

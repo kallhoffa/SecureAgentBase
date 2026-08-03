@@ -1,5 +1,5 @@
 ---
-description: Route a task to big-pickle (zen/big-pickle) for deep reasoning.
+description: Route a task to big-pickle (opencode/big-pickle) for deep reasoning.
 agent: big-pickle
 ---
 

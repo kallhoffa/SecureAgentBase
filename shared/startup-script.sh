@@ -41,7 +41,27 @@ for var in FIREBASE_STAGING FIREBASE_PRODUCTION GITHUB_PAT DISCORD_BOT_TOKEN DIS
   fi
 done
 
+# Idempotency guard — GCP re-runs the startup script on EVERY boot, not just first boot.
+# Skip all provisioning steps if this VM was already set up, so reboots are harmless.
+if [ -f /root/.kimaki/.provisioned ]; then
+  echo "Already provisioned, skipping startup script"
+  echo "ALREADY_PROVISIONED" > /dev/ttyS0 2>/dev/null || true
+  exit 0
+fi
+
 echo "REPO_OWNER=$REPO_OWNER | FIREBASE_STAGING=$FIREBASE_STAGING"
+
+# Disk space guard — warn via serial console well before the disk fills up.
+# Large installs (apt, node tarball, npm -g) silently fail with ENOSPC at 100%.
+check_disk() {
+  DISK_USED_PCT=$(df -P / | awk 'NR==2 {gsub("%","",$5); print $5}')
+  DISK_AVAIL_MB=$(df -P / | awk 'NR==2 {print int($4/1024)}')
+  if [ -n "$DISK_USED_PCT" ] && [ "$DISK_USED_PCT" -ge 85 ]; then
+    echo "KIMAKI_DISK_ALERT:${DISK_USED_PCT}pct used on root filesystem (${DISK_AVAIL_MB} MB free)" > /dev/ttyS0 2>/dev/null || true
+    echo "WARNING: disk ${DISK_USED_PCT}% full, only ${DISK_AVAIL_MB} MB free" >&2
+  fi
+}
+check_disk
 
 sudo apt-get update -y > /dev/null 2>&1 || true
 sudo apt-get install -y curl git jq apt-transport-https ca-certificates gnupg2 ufw unzip > /dev/null 2>&1 || true
@@ -63,9 +83,11 @@ fi
 # Install GitHub CLI
 type gh >/dev/null 2>&1 || (curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null && sudo apt-get update -y > /dev/null 2>&1 && sudo apt-get install -y gh > /dev/null 2>&1) || true
 
-# Install Kimaki
-if command -v npm &> /dev/null; then
-  npm install -g kimaki@0.23.1 > /dev/null 2>&1 || true
+# Install Kimaki (skip if already installed — re-running npm -g installs crashes with ENOTEMPTY)
+if command -v kimaki >/dev/null 2>&1; then
+  echo "kimaki already installed, skipping global install"
+else
+  npm install -g kimaki@latest > /dev/null 2>&1 || true
 fi
 
 # Clone the SecureAgentBase template repository into Kimaki's projects dir
@@ -77,32 +99,39 @@ cd /root/.kimaki/projects
 git config --global http.version HTTP/1.1
 git config --global http.postBuffer 524288000
 
-REPO_CLONED=false
-for i in 1 2 3; do
-  if git clone --depth 1 "https://github.com/$REPO_OWNER/$REPO_NAME.git" "$REPO_NAME" > /dev/null 2>&1; then
-    REPO_CLONED=true
-    break
-  fi
-  sleep 5
-done
-
-# If clone failed, fall back to creating directory manually
-if [ "$REPO_CLONED" != "true" ]; then
-  mkdir -p "$REPO_NAME"
+# Reuse an existing clone on re-runs ("destination path already exists" otherwise)
+if [ -d "$REPO_NAME/.git" ]; then
+  echo "Project already cloned, reusing existing checkout"
   cd "$REPO_NAME"
-  git init
-  echo "placeholder" > README.md
-  cat > .gitignore << 'GITEOF'
+  REPO_CLONED=true
+else
+  REPO_CLONED=false
+  for i in 1 2 3; do
+    if git clone --depth 1 "https://github.com/$REPO_OWNER/$REPO_NAME.git" "$REPO_NAME" > /dev/null 2>&1; then
+      REPO_CLONED=true
+      break
+    fi
+    sleep 5
+  done
+
+  # If clone failed, fall back to creating directory manually
+  if [ "$REPO_CLONED" != "true" ]; then
+    mkdir -p "$REPO_NAME"
+    cd "$REPO_NAME"
+    git init
+    echo "placeholder" > README.md
+    cat > .gitignore << 'GITEOF'
 node_modules/
 .env*
 dist/
 build/
 *.log
 GITEOF
-else
-  cd "$REPO_NAME"
-  rm -rf .git
-  git init
+  else
+    cd "$REPO_NAME"
+    rm -rf .git
+    git init
+  fi
 fi
 
 git checkout -b main
@@ -140,6 +169,15 @@ if [ -f src/navigation-bar.tsx ]; then
   echo "navigation-bar.tsx cleaned of admin references"
 fi
 
+# Write a CONTEXT.md scaffold for the domain-modeling/setup-project skills
+if [ ! -f CONTEXT.md ]; then
+  cat > CONTEXT.md << 'CONTEXTEOF'
+# Context
+
+Glossary of this project's domain terms, maintained by the `domain-modeling` skill. Architectural decisions live in `docs/adr/`; run `/setup-project` to scaffold the issue tracker and ADR workflow.
+CONTEXTEOF
+fi
+
 # Configure git
 git config user.email "agent@secureagentbase.com"
 git config user.name "SecureAgent Manager"
@@ -151,8 +189,12 @@ git commit -m "Initial commit of SecureAgentBase template"
 # Create GitHub repo and push
 # Write diagnostics to /dev/ttyS0 (serial port 1) for external debugging
 # and compact markers at the end that survive buffer overflow
+check_disk
 PUSH_RESULT="NOT_ATTEMPTED"
 if [ -n "$GITHUB_PAT" ]; then
+  # Clear stale gh credentials first — a revoked PAT or old token causes 401s that
+  # persist across boots because gh caches the failed login state.
+  gh auth logout --hostname github.com 2>/dev/null || true
   echo "$GITHUB_PAT" | gh auth login --with-token 2>/dev/null
   gh auth setup-git 2>/dev/null || true
 
@@ -251,6 +293,24 @@ cat > "/root/.kimaki/projects/$REPO_NAME/opencode.json" << 'OPENCODEEOF'
 }
 OPENCODEEOF
 
+# Install agent skills globally — opencode and Claude Code auto-discover these dirs.
+SKILLS_DIR=/root/.config/opencode/skills
+mkdir -p "$SKILLS_DIR" /tmp/sab-skills-tmp
+# 1) Matt Pocock engineering skills (MIT licensed): tdd, code-review, diagnosing-bugs, research, prototype, etc.
+if [ ! -d "$SKILLS_DIR/tdd" ] && git clone --depth 1 https://github.com/mattpocock/skills.git /tmp/sab-skills-tmp/matt-skills > /dev/null 2>&1; then
+  cp -r /tmp/sab-skills-tmp/matt-skills/skills/engineering/. "$SKILLS_DIR/" 2>/dev/null || true
+fi
+# 2) SecureAgentBase skills: reuse the local project copy, else clone the template repo.
+if [ -d "/root/.kimaki/projects/$REPO_NAME/.opencode/skills" ]; then
+  cp -r "/root/.kimaki/projects/$REPO_NAME/.opencode/skills/." "$SKILLS_DIR/" 2>/dev/null || true
+elif git clone --depth 1 https://github.com/kallhoffa/SecureAgentBase.git /tmp/sab-skills-tmp/sab > /dev/null 2>&1; then
+  cp -r /tmp/sab-skills-tmp/sab/.opencode/skills/. "$SKILLS_DIR/" 2>/dev/null || true
+fi
+# 3) Claude Code compatibility mirror.
+mkdir -p /root/.claude/skills
+cp -r "$SKILLS_DIR/." /root/.claude/skills/ 2>/dev/null || true
+rm -rf /tmp/sab-skills-tmp
+
 # Write sensitive env vars to a restricted file, referenced by systemd
 cat > /root/.kimaki/env << ENVEOF
 GITHUB_PAT=$GITHUB_PAT
@@ -269,9 +329,15 @@ if [ -n "$GCP_SA_KEY" ]; then
   chmod 600 /root/.kimaki/gcp-sa-key.json
 fi
 
-# Create systemd service for Kimaki
-KIMAKI_PATH=$(which kimaki)
-cat > /etc/systemd/system/kimaki.service << SERVICEEOF
+# Create systemd service for Kimaki (no-clobber — never overwrite a running unit)
+KIMAKI_PATH=$(command -v kimaki || true)
+if [ -z "$KIMAKI_PATH" ] || [ ! -x "$KIMAKI_PATH" ]; then
+  echo "KIMAKI_MISSING" > /dev/ttyS0 2>/dev/null || true
+  echo "WARNING: kimaki binary not found, defaulting to /usr/bin/kimaki" >&2
+  KIMAKI_PATH=/usr/bin/kimaki
+fi
+if [ ! -f /etc/systemd/system/kimaki.service ]; then
+  cat > /etc/systemd/system/kimaki.service << SERVICEEOF
 [Unit]
 Description=Kimaki Agent Service
 After=network.target
@@ -290,9 +356,19 @@ Environment=NODE_ENV=production
 WantedBy=multi-user.target
 SERVICEEOF
 
-systemctl daemon-reload
-systemctl enable kimaki.service
-systemctl start kimaki.service
+  # Verify the ExecStart line actually references a script (an empty KIMAKI_PATH
+  # would write `ExecStart=/usr/bin/node` and exit status=0 in ~30ms).
+  grep -q "ExecStart=/usr/bin/node $KIMAKI_PATH" /etc/systemd/system/kimaki.service \
+    || echo "WARNING: kimaki.service ExecStart may be broken" >&2
+
+  systemctl daemon-reload
+  systemctl enable kimaki.service
+  systemctl start kimaki.service
+else
+  echo "kimaki.service already exists, skipping re-write"
+  systemctl daemon-reload
+  systemctl restart kimaki.service
+fi
 
 # Create a separate script for project registration (more reliable than inline)
 cat > /usr/local/bin/kimaki-register.sh << 'REGISTER_SCRIPT'
@@ -315,13 +391,19 @@ done
 if command -v kimaki &> /dev/null; then
   KIMAKI_CMD="kimaki"
 else
-  KIMAKI_CMD="npx -y kimaki@0.23.1"
+  KIMAKI_CMD="npx -y kimaki@latest"
 fi
 
 echo "$(date): Using KIMAKI_CMD: $KIMAKI_CMD" >> /var/log/kimaki-register.log
 
 # Try to register the project (retries needed because OpenCode server needs time to start)
 PROJECT_NAME=$(cat /root/.kimaki/.project_name 2>/dev/null || echo "SecureAgentBase")
+# Skip if already registered (reboot-safe — project add fails non-zero when the channel exists)
+if $KIMAKI_CMD project list --json 2>/dev/null | grep -q "$PROJECT_NAME"; then
+  echo "$(date): Project already registered, skipping" >> /var/log/kimaki-register.log
+  echo "KIMAKI_BOT_ONLINE" > /dev/ttyS0 2>/dev/null || true
+  exit 0
+fi
 for i in $(seq 1 30); do
   echo "$(date): Attempting to register project (attempt $i)..." >> /var/log/kimaki-register.log
   if $KIMAKI_CMD project add /root/.kimaki/projects/$PROJECT_NAME >> /var/log/kimaki-register.log 2>&1; then
@@ -358,6 +440,10 @@ REGISTER_EOF
 
 systemctl daemon-reload
 systemctl enable kimaki-register.service
+
+# Mark this VM as provisioned — GCP re-runs startup scripts on every boot,
+# and the top-of-script guard skips everything once this marker exists.
+touch /root/.kimaki/.provisioned
 
 # Final compact marker — this is the LAST output before kimaki-register starts
 # Non-sensitive status only — no secrets or project identifiers leaked

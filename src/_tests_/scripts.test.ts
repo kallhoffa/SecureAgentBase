@@ -200,6 +200,116 @@ describe('getStartupScript', () => {
     });
   });
 
+  describe('agent skills installation', () => {
+    it('installs skills to the global opencode skills dir', () => {
+      const script = getStartupScript(false);
+      expect(script).toContain('SKILLS_DIR=/root/.config/opencode/skills');
+    });
+
+    it('vendors Matt Pocock engineering skills from GitHub', () => {
+      const script = getStartupScript(false);
+      expect(script).toContain('github.com/mattpocock/skills.git');
+      expect(script).toContain('skills/engineering');
+    });
+
+    it('reuses the local project skills copy when present', () => {
+      const script = getStartupScript(false);
+      expect(script).toContain('$REPO_NAME/.opencode/skills');
+    });
+
+    it('mirrors skills to the Claude Code skills dir', () => {
+      const script = getStartupScript(false);
+      expect(script).toContain('/root/.claude/skills');
+    });
+
+    it('writes a CONTEXT.md scaffold for fresh projects', () => {
+      const script = getStartupScript(false);
+      expect(script).toContain('# Context');
+      expect(script).toContain('/setup-project');
+    });
+  });
+
+  describe('disk space guard', () => {
+    it('defines a check_disk function', () => {
+      const script = getStartupScript(false);
+      expect(script).toContain('check_disk()');
+    });
+
+    it('runs the guard before installs and before the git push', () => {
+      const script = getStartupScript(false);
+      const firstCall = script.indexOf('check_disk');
+      const aptIndex = script.indexOf('sudo apt-get update');
+      const pushIndex = script.indexOf('Create GitHub repo and push');
+      expect(firstCall).toBeGreaterThan(-1);
+      expect(firstCall).toBeLessThan(aptIndex);
+      expect(script.indexOf('check_disk', aptIndex)).toBeGreaterThan(pushIndex);
+    });
+
+    it('emits a serial console marker at >=85% usage', () => {
+      const script = getStartupScript(false);
+      expect(script).toContain('KIMAKI_DISK_ALERT');
+      expect(script).toContain('/dev/ttyS0');
+      expect(script).toContain('-ge 85');
+    });
+
+    it('never leaks secrets or project identifiers to the serial console', () => {
+      const script = getStartupScript(false);
+      // Find only the disk-alert echo line and assert it is free of secret/project patterns
+      const alertLines = script
+        .split('\n')
+        .filter((line) => line.includes('KIMAKI_DISK_ALERT') && line.includes('ttyS0'));
+      for (const line of alertLines) {
+        expect(line).not.toMatch(/PAT|TOKEN|SECRET|KEY|PROJECT|REPO_NAME|ZONE/);
+      }
+    });
+  });
+
+  describe('idempotency (reboot-safe provisioning)', () => {
+    it('guards the script with a first-boot .provisioned marker', () => {
+      const script = getStartupScript(false);
+      expect(script).toContain('.provisioned');
+      expect(script).toContain('Already provisioned, skipping startup script');
+      expect(script).toContain('touch /root/.kimaki/.provisioned');
+    });
+
+    it('skips kimaki global install when already installed (ENOTEMPTY guard)', () => {
+      const script = getStartupScript(false);
+      expect(script).toContain('command -v kimaki >/dev/null 2>&1');
+      expect(script).toContain('already installed, skipping global install');
+    });
+
+    it('falls back when KIMAKI_PATH is empty and verifies ExecStart', () => {
+      const script = getStartupScript(false);
+      expect(script).toContain('KIMAKI_PATH=$(command -v kimaki || true)');
+      expect(script).toContain('KIMAKI_MISSING');
+      expect(script).toContain('defaulting to /usr/bin/kimaki');
+      expect(script).toContain('ExecStart may be broken');
+    });
+
+    it('reuses an existing clone instead of failing on destination exists', () => {
+      const script = getStartupScript(false);
+      expect(script).toContain('REPO_NAME/.git');
+      expect(script).toContain('reusing existing checkout');
+    });
+
+    it('clears stale gh credentials before re-login', () => {
+      const script = getStartupScript(false);
+      expect(script).toContain('gh auth logout --hostname github.com');
+    });
+
+    it('skips project registration when already registered', () => {
+      const script = getStartupScript(false);
+      expect(script).toContain('project list --json');
+      expect(script).toContain('Project already registered, skipping');
+    });
+
+    it('does not overwrite an existing kimaki.service unit', () => {
+      const script = getStartupScript(false);
+      expect(script).toContain('if [ ! -f /etc/systemd/system/kimaki.service ]; then');
+      expect(script).toContain('skipping re-write');
+    });
+  });
+
   describe('project registration', () => {
     it('creates the kimaki-register.sh script', () => {
       const script = getStartupScript(false);

@@ -1,7 +1,7 @@
 ---
-description: Switch to go/glm-5.2 for fast, cost-effective tasks.
+description: Switch to opencode-go/glm-5.2 for fast, cost-effective tasks.
 mode: primary
-model: go/glm-5.2
+model: opencode-go/glm-5.2
 permission:
   edit: allow
   bash: allow

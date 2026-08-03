@@ -45,7 +45,7 @@ jobs:
             -v $(pwd):/output \
             node:20-bullseye bash -c "
               NPM_GLOBAL=\$(npm root -g)
-              npm install -g kimaki@0.23.1
+              npm install -g kimaki@latest
               cp -r \$NPM_GLOBAL/kimaki /output/kimaki/
               echo 'Kimaki node_modules:'
               ls /output/kimaki/kimaki/node_modules/ | head -10

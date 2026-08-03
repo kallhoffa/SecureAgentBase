@@ -133,6 +133,24 @@ See `.env.example` for the full template. In CI, these are injected from GitHub 
 - **Posts / replies**: `src/posts.tsx`, `src/post.tsx`, `src/compose-post.tsx`, `src/compose-reply.tsx`
 - **Firestore rules**: `firestore.rules`
 
+## Agent Skills
+
+This template ships with agent skills in [`.opencode/skills/`](./.opencode/skills/) (standard `SKILL.md` format — auto-discovered by opencode and kimaki). They're mostly adapted from [Matt Pocock's engineering skills](https://github.com/mattpocock/skills) (MIT licensed, attribution in the skills README), plus SecureAgentBase-original skills covering our Firestore guardrails, the infra-setup wizard, and the release gate.
+
+The VM startup script also installs the skills **globally** (`~/.config/opencode/skills/` and `~/.claude/skills/`), so every project on the VM — even empty repos — inherits them, and writes a `CONTEXT.md` scaffold into new projects.
+
+**Run once per repo** to scaffold the issue tracker + ADR workflow:
+
+```
+/setup-project
+```
+
+**Model-invoked** (agents reach for these automatically): `tdd`, `code-review`, `diagnosing-bugs`, `research`, `prototype`, `resolving-merge-conflicts`, `domain-modeling`, `codebase-design`, `secure-firestore`.
+
+**User-invoked slash commands**: `/setup-project`, `/to-tickets`, `/to-spec`, `/implement`, `/wayfinder`, `/improve-codebase-architecture`, `/tdd`, `/code-review`.
+
+See [`.opencode/skills/README.md`](./.opencode/skills/README.md) for the full usage guide.
+
 ## VM Package Bundle (Fast Deployment)
 
 The infra-setup wizard includes an optional fast-deployment mode that downloads a pre-bundled, GPG-signed `.tar.gz` of Debian packages from GCS instead of installing via `apt`. This cuts VM startup time roughly in half.
