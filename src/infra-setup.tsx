@@ -15,7 +15,7 @@ import {
   createDeployServiceAccount, grantFirebaseRoles, grantPoolAccessToSA
 } from './framework/infra-setup/api';
 import { SCHEMAS } from './framework/infra-setup/schemas';
-import { StepHeader, Step1, Step2, Step3, Step4, Step5, Step6, Step7 } from './framework/infra-setup/steps';
+import { StepHeader } from './framework/infra-setup/steps';
 
 interface Window {
   google?: {
