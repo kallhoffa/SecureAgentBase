@@ -4,14 +4,17 @@ import { useNavigate } from 'react-router';
 import { useNotification } from './firestore-utils/notification-context';
 import { doc, getDoc, collection, getDocs, query, where, serverTimestamp, Firestore } from 'firebase/firestore';
 import { safeSet, safeDelete } from './guardrails/safe-firestore';
+import { validate } from './guardrails/validate';
+import { useRateLimit } from './guardrails/useRateLimit';
 import { Check, Copy, Upload, AlertTriangle, Trash2, ExternalLink, Shield, Server, Bot } from 'lucide-react';
 import { encryptData, decryptData } from './framework/infra-setup/crypto';
 import { CloudShellScript, getStartupScript } from './framework/infra-setup/scripts';
 import {
-  gcpApiFetch, githubApiFetch, setGitHubVariable, getServiceAccountToken, ensureGitHubRepo,
+  gcpApiFetch, githubApiFetch, setGitHubVariable, ensureGitHubRepo,
   createWorkloadIdentityPool, createWorkloadIdentityProvider,
   createDeployServiceAccount, grantFirebaseRoles, grantPoolAccessToSA
 } from './framework/infra-setup/api';
+import { SCHEMAS } from './framework/infra-setup/schemas';
 import { StepHeader, Step1, Step2, Step3, Step4, Step5, Step6, Step7 } from './framework/infra-setup/steps';
 
 interface Window {
@@ -116,6 +119,15 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const { addNotification } = useNotification();
+
+  // Guardrails: client-side rate limiting for user-triggered actions (5/min min per AGENTS.md)
+  const vmRateLimit = useRateLimit('create-vm', 5);
+  const saRateLimit = useRateLimit('create-service-account', 5);
+  const configRateLimit = useRateLimit('save-config', 5);
+  const githubRateLimit = useRateLimit('upload-github-vars', 5);
+  const firebaseRateLimit = useRateLimit('setup-firebase', 5);
+  const discordRateLimit = useRateLimit('create-discord-bot', 5);
+
   const [projectId, setProjectId] = useState('');
   const [serviceAccountKey, setServiceAccountKey] = useState(null);
   const [githubAppInstalled, setGithubAppInstalled] = useState(false);
@@ -574,6 +586,10 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       setError('Please set your app name (top of page) or select a Firebase project.');
       return;
     }
+    if (!firebaseRateLimit.check()) {
+      setError('Rate limit reached for Firebase setup. Try again in a minute.');
+      return;
+    }
     setAutoConfiguringFirebase(true);
     setFirebaseAutoConfigMessage('Configuring Firebase projects...');
     setError(null);
@@ -732,6 +748,18 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
   const uploadGitHubVars = async (oidcData) => {
     if (!githubPat || !githubRepoName) return;
+    const errors = validate({ githubPat }, { githubPat: SCHEMAS.githubPat });
+    if (errors) {
+      setError(errors.githubPat);
+      addOidcLog('GitHub variable upload blocked: invalid PAT format');
+      setGithubVarUploading(false);
+      return;
+    }
+    if (!githubRateLimit.check()) {
+      setError('Rate limit reached for GitHub uploads. Try again in a minute.');
+      setGithubVarUploading(false);
+      return;
+    }
     setGithubVarUploading(true);
     
     try {
@@ -1653,6 +1681,15 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   const handleAutoGenerateServiceAccount = async (targetProjectId) => {
     if (!gcpAccessToken) {
       setError('Please sign in to Google (Step 1) to enable auto-generation.');
+      return;
+    }
+    const errors = validate({ projectId: targetProjectId }, { projectId: SCHEMAS.projectId });
+    if (errors) {
+      setError(errors.projectId);
+      return;
+    }
+    if (!saRateLimit.check()) {
+      setError('Rate limit reached for service account creation. Try again in a minute.');
       return;
     }
     setAutoGeneratingSa(true);
@@ -2759,6 +2796,16 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   const handleSaveConfig = async () => {
     if (!projectId.trim()) return;
 
+    const errors = validate({ projectId, passphrase }, { projectId: SCHEMAS.projectId, passphrase: SCHEMAS.passphrase });
+    if (errors) {
+      setError(errors.projectId || errors.passphrase);
+      return;
+    }
+    if (!configRateLimit.check()) {
+      setError('Rate limit reached for saving configuration. Try again in a minute.');
+      return;
+    }
+
     setSaving(true);
     setError(null);
 
@@ -2778,6 +2825,10 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   const handleMergeToAccount = async () => {
     if (!user) {
       setError('Please sign in to merge your configuration');
+      return;
+    }
+    if (!configRateLimit.check()) {
+      setError('Rate limit reached. Try again in a minute.');
       return;
     }
 
@@ -2904,6 +2955,10 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
   const handleSetupFirebase = async () => {
     setError(null);
+    if (!firebaseRateLimit.check()) {
+      setError('Rate limit reached for Firebase setup. Try again in a minute.');
+      return;
+    }
     
     let stagingConfig = null;
     let productionConfig = null;
@@ -2967,6 +3022,17 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   const handleCreateVM = async () => {
     if (!serviceAccountKey || !projectId) {
       setError('Please configure GCP project and service account first');
+      return;
+    }
+
+    if (!vmRateLimit.check()) {
+      setError('Rate limit reached for VM creation. Try again in a minute.');
+      return;
+    }
+
+    const errors = validate({ projectId, vmMachineType }, { projectId: SCHEMAS.projectId, vmMachineType: SCHEMAS.vmMachineType });
+    if (errors) {
+      setError(errors.projectId || errors.vmMachineType);
       return;
     }
 
@@ -3087,13 +3153,14 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   };
 
   const handleCreateDiscordBot = async () => {
-    if (!discordBotTokenInput.trim()) {
-      setError('Please enter your Discord bot token');
+    const errors = validate({ discordBotToken: discordBotTokenInput, discordClientId }, { discordBotToken: SCHEMAS.discordBotToken, discordClientId: SCHEMAS.discordClientId });
+    if (errors) {
+      setError(errors.discordBotToken || errors.discordClientId);
       return;
     }
 
-    if (!discordClientId.trim()) {
-      setError('Please enter your Discord Application Client ID');
+    if (!discordRateLimit.check()) {
+      setError('Rate limit reached for Discord bot setup. Try again in a minute.');
       return;
     }
 
@@ -4810,6 +4877,15 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                         onClick={async () => {
                           if (!serviceAccountJson || !projectId) {
                             setError('Service account and project ID required');
+                            return;
+                          }
+                          if (!vmRateLimit.check()) {
+                            setError('Rate limit reached for VM creation. Try again in a minute.');
+                            return;
+                          }
+                          const errors = validate({ projectId }, { projectId: SCHEMAS.projectId });
+                          if (errors) {
+                            setError(errors.projectId);
                             return;
                           }
                           setStep4Status('enabling');
