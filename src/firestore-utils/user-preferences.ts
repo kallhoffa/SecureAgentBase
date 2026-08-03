@@ -1,4 +1,5 @@
-import { doc, getDoc, setDoc, Firestore } from 'firebase/firestore';
+import { doc, getDoc, Firestore } from 'firebase/firestore';
+import { safeSet } from '../guardrails/safe-firestore';
 import type { UserPreferences } from '../types';
 
 export const getUserPreferences = async (db: Firestore, userId: string): Promise<UserPreferences> => {
@@ -13,6 +14,8 @@ export const getUserPreferences = async (db: Firestore, userId: string): Promise
 };
 
 export const setUserBetaPreference = async (db: Firestore, userId: string, enabled: boolean): Promise<void> => {
-  const prefsRef = doc(db, 'userPreferences', userId);
-  await setDoc(prefsRef, { beta_enabled: enabled }, { merge: true });
+  await safeSet(db, 'userPreferences', userId, { beta_enabled: enabled }, userId, {
+    allowFields: ['beta_enabled'],
+    merge: true,
+  });
 };

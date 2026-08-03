@@ -1,10 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
+import { safeSet } from '../guardrails/safe-firestore';
 
 vi.mock('firebase/firestore', () => ({
   doc: vi.fn((db, collection, id) => ({ db, collection, id })),
   getDoc: vi.fn(),
-  setDoc: vi.fn(),
+}));
+
+vi.mock('../guardrails/safe-firestore', () => ({
+  safeSet: vi.fn(),
 }));
 
 describe('user-preferences', () => {
@@ -33,13 +37,16 @@ describe('user-preferences', () => {
   });
 
   describe('setUserBetaPreference', () => {
-    it('sets beta preference with merge', async () => {
+    it('writes beta preference through safeSet with allowlist and merge', async () => {
       const { setUserBetaPreference } = await import('../firestore-utils/user-preferences');
       await setUserBetaPreference(mockDb, 'user123', true);
-      expect(setDoc).toHaveBeenCalledWith(
-        { db: mockDb, collection: 'userPreferences', id: 'user123' },
+      expect(safeSet).toHaveBeenCalledWith(
+        mockDb,
+        'userPreferences',
+        'user123',
         { beta_enabled: true },
-        { merge: true }
+        'user123',
+        { allowFields: ['beta_enabled'], merge: true }
       );
     });
   });
