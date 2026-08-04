@@ -156,8 +156,6 @@ const [loading, setLoading] = useState(true);
   const [serviceAccountError, setServiceAccountError] = useState(null);
   const [godSaEmail, setGodSaEmail] = useState(null);
 
-  const [step1Complete, setStep1Complete] = useState(false);
-  const [step2Complete, setStep2Complete] = useState(false);
   const [step3Complete, setStep3Complete] = useState(false);
   const [gcpConfigLost, setGcpConfigLost] = useState(false);
   const [checkingCompletion, setCheckingCompletion] = useState(true);
@@ -191,7 +189,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   const [useOptimizedBundle, setUseOptimizedBundle] = useState(false);
   const [showRecreateOptions, setShowRecreateOptions] = useState(false);
 
-  const [currentStep, setCurrentStep] = useState(1);
   const [expandedSteps, setExpandedSteps] = useState([1]);
 
   const [billingEnabled, setBillingEnabled] = useState(null);
@@ -1712,7 +1709,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       setGodSaEmail(saEmail);
       setServiceAccountJson(keyJson);
       setProjectId(targetProjectId);
-      setStep2Complete(true);
       setStep3Complete(true);
       
       setExpandedSteps(prev => [...prev.filter(s => s !== 2 && s !== 3), 4]);
@@ -1873,8 +1869,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           setGcpConfigLost(false);
           
           const projects = await fetchGcpProjects(response.access_token);
-          
-          setStep1Complete(true);
           expandNextStep(1);
           
           if (user) {
@@ -2185,14 +2179,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     }
   };
 
-  useEffect(() => {
-    if (user) {
-      setStep1Complete(true);
-    } else {
-      setStep1Complete(false);
-    }
-  }, [user]);
-
   // E2E test injection: load credentials from URL params (base64-encoded)
   // or sessionStorage (set by Playwright addInitScript to avoid address bar leakage).
   // SECURITY: gated out of production builds. Staging e2e builds set VITE_E2E=true.
@@ -2223,7 +2209,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           setServiceAccountJson(saJson);
           setGodSaEmail(saJson.client_email || (saJson.project_id ? `secureagent@${saJson.project_id}.iam.gserviceaccount.com` : null));
           if (saJson.project_id) setProjectId(saJson.project_id);
-          setStep2Complete(true);
           setStep3Complete(true);
         }
       } catch (e) {
@@ -2366,7 +2351,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       }
       if (formProgress.vmHttpsUrl) setVmHttpsUrl(formProgress.vmHttpsUrl);
       if (formProgress.expandedSteps) setExpandedSteps(formProgress.expandedSteps);
-      if (formProgress.step2Complete) setStep2Complete(formProgress.step2Complete);
       // Note: serviceAccountJson is NOT restored from storage since it contains sensitive private_key
       // User must re-upload the service account JSON each session
       if (formProgress.projectId) setProjectId(formProgress.projectId);
@@ -2385,14 +2369,13 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       discordBotToken: discordBotToken ? 'saved' : null,
       discordGuildId,
       expandedSteps,
-      step2Complete,
       serviceAccountJson: serviceAccountJson ? 'saved' : null,
       projectId,
       godSaEmail,
       gcpAccessToken: gcpAccessToken ? 'saved' : null,
     };
     saveFormProgress(formData);
-  }, [formProgressLoaded, firebaseConfigStaging, firebaseConfigProduction, githubPat, discordBotToken, discordGuildId, expandedSteps, step2Complete, serviceAccountJson, projectId, godSaEmail, gcpAccessToken]);
+  }, [formProgressLoaded, firebaseConfigStaging, firebaseConfigProduction, githubPat, discordBotToken, discordGuildId, expandedSteps, serviceAccountJson, projectId, godSaEmail, gcpAccessToken]);
 
   useEffect(() => {
     const loadInfraConfig = async () => {
@@ -2459,8 +2442,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
         const formProgress = loadFormProgress();
         
-        if (!formProgress?.step1Complete && configData.gcp_project_id) setStep1Complete(true);
-        if (!formProgress?.step2Complete && configData.gcp_project_id && configData.service_account_configured) setStep2Complete(true);
         if (!formProgress?.step3Complete && (configData.step3_complete || (configData.gcp_project_id && configData.billing_enabled))) {
           setStep3Complete(true);
         }
@@ -2903,8 +2884,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       setUseFirestore(false);
       setPendingDecryptProject(null);
       
-      setStep1Complete(false);
-      setStep2Complete(false);
       setStep3Complete(false);
       setGcpConfigLost(false);
       
@@ -3596,8 +3575,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
               setFirebaseConfigStaging('');
               setFirebaseConfigProduction('');
               setVmIp('');
-              setStep1Complete(false);
-              setStep2Complete(false);
               setStep3Complete(false);
             }}
             className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg flex items-center gap-1"
@@ -4023,7 +4000,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                     onClick={async () => {
                       console.log('Continue clicked, serviceAccountJson:', !!serviceAccountJson, serviceAccountJson?.project_id);
                       if (serviceAccountJson && serviceAccountJson.project_id) {
-                        setStep2Complete(true);
                         await saveConfig({});
                         setExpandedSteps(prev => [...prev, 3]);
                       } else {
@@ -4039,7 +4015,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                   <div className="mt-4 pt-4 border-t">
                     <p className="text-gray-600 text-sm">Don't want to create a service account?</p>
                     <button
-                      onClick={() => { setStep2Complete(true); setExpandedSteps(prev => [...prev, 3]); }}
+                      onClick={() => { setExpandedSteps(prev => [...prev, 3]); }}
                       className="text-blue-600 hover:text-blue-700 text-sm underline"
                     >
                       Skip to manual VM setup
