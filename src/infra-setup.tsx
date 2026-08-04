@@ -16,6 +16,7 @@ import {
 } from './framework/infra-setup/api';
 import { SCHEMAS } from './framework/infra-setup/schemas';
 import { StepHeader } from './framework/infra-setup/steps';
+import { useWizardProgress } from './framework/infra-setup/useWizardProgress';
 
 interface Window {
   google?: {
@@ -156,7 +157,6 @@ const [loading, setLoading] = useState(true);
   const [serviceAccountError, setServiceAccountError] = useState(null);
   const [godSaEmail, setGodSaEmail] = useState(null);
 
-  const [step3Complete, setStep3Complete] = useState(false);
   const [gcpConfigLost, setGcpConfigLost] = useState(false);
   const [checkingCompletion, setCheckingCompletion] = useState(true);
 
@@ -188,8 +188,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   const [formProgressLoaded, setFormProgressLoaded] = useState(false);
   const [useOptimizedBundle, setUseOptimizedBundle] = useState(false);
   const [showRecreateOptions, setShowRecreateOptions] = useState(false);
-
-  const [expandedSteps, setExpandedSteps] = useState([1]);
 
   const [billingEnabled, setBillingEnabled] = useState(null);
   const [billingChecking, setBillingChecking] = useState(false);
@@ -239,6 +237,24 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   const [selectedFirebaseProductionProject, setSelectedFirebaseProductionProject] = useState('');
   const [autoConfiguringFirebase, setAutoConfiguringFirebase] = useState(false);
   const [firebaseAutoConfigMessage, setFirebaseAutoConfigMessage] = useState('');
+
+  // Wizard progress reducer — owns { expandedSteps, step3Complete } and derives
+  // step completion from the external signals below. Replaces the legacy inline
+  // isStepCompleted/isStepLocked/isStepActive/isStepWarning + setExpandedSteps +
+  // setStep3Complete scattered across the component. See wizard-progress.js.
+  const wizard = useWizardProgress({
+    user,
+    serviceAccountJson,
+    firebaseStagingData,
+    firebaseProductionData,
+    billingEnabled,
+    githubPat,
+    discordBotAdded,
+    vmIp,
+    projectId,
+    gcpConnected,
+  });
+  const { expandedSteps, step3Complete } = wizard;
 
   const addStep3Log = (message) => {
     const timestamp = new Date().toLocaleTimeString();
@@ -652,7 +668,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
       setFirebaseAutoConfigMessage('Firebase configuration complete!');
       addNotification('Firebase projects configured successfully!', 'success');
-      setExpandedSteps(prev => [...prev.filter(s => s !== 4), 5]);
+      wizard.dispatch({ type: 'COLLAPSE_AND_EXPAND', remove: [4], add: 5 });
       await saveConfig({ firebase_staging: stagingConfig, firebase_production: productionConfig }).catch(() => {});
     } catch (e) {
       console.error(e);
@@ -1709,9 +1725,9 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       setGodSaEmail(saEmail);
       setServiceAccountJson(keyJson);
       setProjectId(targetProjectId);
-      setStep3Complete(true);
+      wizard.dispatch({ type: 'SET_STEP3_COMPLETE', value: true });
       
-      setExpandedSteps(prev => [...prev.filter(s => s !== 2 && s !== 3), 4]);
+      wizard.dispatch({ type: 'COLLAPSE_AND_EXPAND', remove: [2, 3], add: 4 });
       setSaAutoProgress('');
       
       await saveConfig({
@@ -1734,71 +1750,19 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     return !!(projectId && serviceAccountJson);
   };
 
-  const expandNextStep = (currentStepNum) => {
-    const nextStep = currentStepNum + 1;
-    setExpandedSteps(prev => {
-      const filtered = prev.filter(s => s !== currentStepNum);
-      if (nextStep <= 9 && !filtered.includes(nextStep)) {
-        return [...filtered, nextStep];
-      }
-      return filtered;
-    });
-  };
-
-  const toggleStep = (step) => {
-    if (expandedSteps.includes(step)) {
-      setExpandedSteps(prev => prev.filter(s => s !== step));
-    } else {
-      setExpandedSteps(prev => [...prev, step]);
-    }
-  };
-
-  const editStep = (step) => {
-    setExpandedSteps(prev => [...prev, step]);
-  };
-
-  const isStepCompleted = (step) => {
-    if (step === 1) return !!user;
-    if (step === 2) return !!serviceAccountJson;
-    if (step === 3) return step3Complete;
-    if (step === 4) return !!(firebaseStagingData?.projectId && firebaseProductionData?.projectId);
-    if (step === 5) return billingEnabled === true; // Step 5: Billing (NEW)
-    if (step === 6) return !!githubPat; // Step 6: GitHub Auth (was 5)
-    if (step === 7) return discordBotAdded;
-    if (step === 8) return !!vmIp;
-    return false;
-  };
-
-  const isStepLocked = (step) => {
-    if (step === 1) return false;
-    if (step === 2) return !isStepCompleted(1);
-    if (step === 3) return !isStepCompleted(2);
-    if (step === 4) return !isStepCompleted(3);
-    if (step === 5) return !isStepCompleted(4);
-    if (step === 6) return !isStepCompleted(5);
-    if (step === 7) return !isStepCompleted(6);
-    if (step === 8) return !isStepCompleted(7);
-    return false;
-  };
-
-  const isStepActive = (step) => {
-    if (step === 1) return !isStepCompleted(1);
-    if (step === 2) return isStepCompleted(1) && !isStepCompleted(2);
-    if (step === 3) return isStepCompleted(2) && !isStepCompleted(3);
-    if (step === 4) return isStepCompleted(3) && !isStepCompleted(4);
-    if (step === 5) return isStepCompleted(4) && !isStepCompleted(5);
-    if (step === 6) return isStepCompleted(5) && !isStepCompleted(6);
-    if (step === 7) return isStepCompleted(6) && !isStepCompleted(7);
-    if (step === 8) return isStepCompleted(7) && !isStepCompleted(8);
-    return !isStepCompleted(step);
-  };
-
-  const isStepWarning = (step) => {
-    if (step === 2) {
-      return !!(projectId && gcpConnected && !serviceAccountJson);
-    }
-    return false;
-  };
+  // Step navigation + completion selectors come from the wizardProgress hook
+  // (see useWizardProgress). The legacy inline implementations lived here as
+  // 5 separate functions reading 8 loose signals; they are now pure selectors
+  // on the reducer state, unit-tested in wizard-progress.test.js.
+  const {
+    isStepCompleted,
+    isStepLocked,
+    isStepActive,
+    isStepWarning,
+    toggleStep,
+    editStep,
+    expandNextStep,
+  } = wizard;
 
   const [showNewProjectForm, setShowNewProjectForm] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
@@ -1913,7 +1877,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         const existingProject = listData.projects?.find(p => p.projectId === projectIdVal);
         if (existingProject) {
           setProjectId(projectIdVal);
-          setStep3Complete(true);
+          wizard.dispatch({ type: 'SET_STEP3_COMPLETE', value: true });
           setBillingChecking(true);
           await checkBillingStatus();
           setBillingChecking(false);
@@ -1959,7 +1923,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         }
       }
       
-      setStep3Complete(true);
+      wizard.dispatch({ type: 'SET_STEP3_COMPLETE', value: true });
       setBillingChecking(true);
       await checkBillingStatus();
       setBillingChecking(false);
@@ -2098,7 +2062,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       const checkData = await checkResponse.json();
       if (checkData.items?.length > 0) {
         setVmIp(checkData.items[0].networkInterfaces[0].accessConfigs[0].natIP);
-        setStep3Complete(true);
+        wizard.dispatch({ type: 'SET_STEP3_COMPLETE', value: true });
         expandNextStep(5);
         setCreatingVm(false);
         return;
@@ -2158,10 +2122,10 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       
       if (ip) {
         setVmIp(ip);
-        setStep3Complete(true);
+        wizard.dispatch({ type: 'SET_STEP3_COMPLETE', value: true });
         expandNextStep(5);
       } else {
-        setStep3Complete(true);
+        wizard.dispatch({ type: 'SET_STEP3_COMPLETE', value: true });
         expandNextStep(5);
       }
     } catch (err) {
@@ -2209,7 +2173,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           setServiceAccountJson(saJson);
           setGodSaEmail(saJson.client_email || (saJson.project_id ? `secureagent@${saJson.project_id}.iam.gserviceaccount.com` : null));
           if (saJson.project_id) setProjectId(saJson.project_id);
-          setStep3Complete(true);
+          wizard.dispatch({ type: 'SET_STEP3_COMPLETE', value: true });
         }
       } catch (e) {
         console.warn('E2E: Failed to parse __e2e_sa param:', e);
@@ -2217,7 +2181,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     }
     if (e2eProjectId) {
       setProjectId(e2eProjectId);
-      setStep3Complete(true);
+      wizard.dispatch({ type: 'SET_STEP3_COMPLETE', value: true });
     }
     if (e2eToken) {
       try {
@@ -2350,7 +2314,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         if (parsed) setFirebaseProductionData(parsed);
       }
       if (formProgress.vmHttpsUrl) setVmHttpsUrl(formProgress.vmHttpsUrl);
-      if (formProgress.expandedSteps) setExpandedSteps(formProgress.expandedSteps);
+      if (formProgress.expandedSteps) wizard.dispatch({ type: 'SET_EXPANDED', steps: formProgress.expandedSteps });
       // Note: serviceAccountJson is NOT restored from storage since it contains sensitive private_key
       // User must re-upload the service account JSON each session
       if (formProgress.projectId) setProjectId(formProgress.projectId);
@@ -2443,11 +2407,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         const formProgress = loadFormProgress();
         
         if (!formProgress?.step3Complete && (configData.step3_complete || (configData.gcp_project_id && configData.billing_enabled))) {
-          setStep3Complete(true);
+          wizard.dispatch({ type: 'SET_STEP3_COMPLETE', value: true });
         }
         
         if (configData.vm_ip && !expandedSteps.includes(8)) {
-          setExpandedSteps(prev => [...prev, 8]);
+          wizard.dispatch({ type: 'EXPAND_STEP', step: 8 });
         }
 
         if (configData.gcp_project_id && !configData.gcp_access_token) {
@@ -2464,10 +2428,14 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
   useEffect(() => {
     if (checkingCompletion) return;
-    setExpandedSteps(prev => {
-      const next = prev.filter(s => !isStepCompleted(s));
-      return next.length === prev.length ? prev : next;
-    });
+    // Collapse any expanded steps that have become complete. Reads current
+    // state via the bound selector and dispatches a SET_EXPANDED only when
+    // the array actually changes (preserves the prev.length guard).
+    const current = wizard.expandedSteps;
+    const next = current.filter((s) => !isStepCompleted(s));
+    if (next.length !== current.length) {
+      wizard.dispatch({ type: 'SET_EXPANDED', steps: next });
+    }
   }, [checkingCompletion]);
 
   useEffect(() => {
@@ -2506,7 +2474,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
   useEffect(() => {
     if (user && !expandedSteps.includes(2) && isStepLocked(2) === false) {
-      setExpandedSteps(prev => [...prev, 2]);
+      wizard.dispatch({ type: 'EXPAND_STEP', step: 2 });
     }
   }, [user]);
 
@@ -2884,10 +2852,10 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       setUseFirestore(false);
       setPendingDecryptProject(null);
       
-      setStep3Complete(false);
+      wizard.dispatch({ type: 'SET_STEP3_COMPLETE', value: false });
       setGcpConfigLost(false);
       
-      setExpandedSteps([]);
+      wizard.dispatch({ type: 'CLEAR' });
       setError(null);
 
       // Reload projects list to reflect the deletion
@@ -2966,7 +2934,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       return;
     }
     
-    setExpandedSteps(prev => [...prev.filter(s => s !== 4), 5]);
+    wizard.dispatch({ type: 'COLLAPSE_AND_EXPAND', remove: [4], add: 5 });
     try {
       await saveConfig({
         firebase_staging: stagingConfig,
@@ -3413,7 +3381,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     setGithubVarUploaded(true);
     setRepoCollision(null);
     setRepoCollisionChoice(null);
-    setExpandedSteps(prev => [...prev.filter(s => s !== 7), 8]);
+    wizard.dispatch({ type: 'COLLAPSE_AND_EXPAND', remove: [7], add: 8 });
   };
 
   const handleCreateDiscordBot = async () => {
@@ -3474,7 +3442,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   const handleBotAdded = () => {
     setDiscordBotAdded(true);
     saveConfig({ discord_bot_added: true });
-    setExpandedSteps(prev => [...prev.filter(s => s !== 7), 8]);
+    wizard.dispatch({ type: 'COLLAPSE_AND_EXPAND', remove: [7], add: 8 });
   };
 
   const pendingConfig = !user && loadFromLocalStorage();
@@ -3575,7 +3543,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
               setFirebaseConfigStaging('');
               setFirebaseConfigProduction('');
               setVmIp('');
-              setStep3Complete(false);
+              wizard.dispatch({ type: 'SET_STEP3_COMPLETE', value: false });
             }}
             className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg flex items-center gap-1"
           >
@@ -3700,7 +3668,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                       
                       const newExpanded = [nextStep];
                       if (hasVm && !newExpanded.includes(7)) newExpanded.push(7);
-                      setExpandedSteps(newExpanded);
+                      wizard.dispatch({ type: 'SET_EXPANDED', steps: newExpanded });
                       setGcpConfigLost(false);
                       setPendingDecryptProject(null);
                       setDecryptPassphrase('');
@@ -4001,7 +3969,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                       console.log('Continue clicked, serviceAccountJson:', !!serviceAccountJson, serviceAccountJson?.project_id);
                       if (serviceAccountJson && serviceAccountJson.project_id) {
                         await saveConfig({});
-                        setExpandedSteps(prev => [...prev, 3]);
+                        wizard.dispatch({ type: 'EXPAND_STEP', step: 3 });
                       } else {
                         setServiceAccountError('Please paste a valid service account JSON');
                       }
@@ -4015,7 +3983,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                   <div className="mt-4 pt-4 border-t">
                     <p className="text-gray-600 text-sm">Don't want to create a service account?</p>
                     <button
-                      onClick={() => { setExpandedSteps(prev => [...prev, 3]); }}
+                      onClick={() => { wizard.dispatch({ type: 'EXPAND_STEP', step: 3 }); }}
                       className="text-blue-600 hover:text-blue-700 text-sm underline"
                     >
                       Skip to manual VM setup
@@ -4070,7 +4038,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                       type="button"
                       onClick={() => {
                         setProjectId('');
-                        setStep3Complete(false);
+                        wizard.dispatch({ type: 'SET_STEP3_COMPLETE', value: false });
                       }}
                       className="text-xs text-red-600 hover:text-red-800 underline font-semibold"
                     >
@@ -4081,7 +4049,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                   <button
                     type="button"
                     onClick={async () => {
-                      setExpandedSteps(prev => [...prev.filter(s => s !== 3), 4]);
+                      wizard.dispatch({ type: 'COLLAPSE_AND_EXPAND', remove: [3], add: 4 });
                     }}
                     className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold"
                   >
@@ -4183,9 +4151,9 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                     onClick={async () => {
                       if (projectId.trim()) {
                         setError(null);
-                        setStep3Complete(true);
+                        wizard.dispatch({ type: 'SET_STEP3_COMPLETE', value: true });
                         await saveConfig({});
-                        setExpandedSteps(prev => [...prev.filter(s => s !== 3), 4]);
+                        wizard.dispatch({ type: 'COLLAPSE_AND_EXPAND', remove: [3], add: 4 });
                       } else {
                         setError('Please enter a GCP project ID');
                       }
@@ -4398,7 +4366,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                   <button
                     type="button"
                     onClick={async () => {
-                      setExpandedSteps(prev => [...prev.filter(s => s !== 5), 6]);
+                      wizard.dispatch({ type: 'COLLAPSE_AND_EXPAND', remove: [5], add: 6 });
                     }}
                     className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold"
                   >
