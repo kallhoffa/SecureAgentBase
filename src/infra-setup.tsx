@@ -3019,6 +3019,291 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     return { items };
   };
 
+  const createVmWithSetup = async ({ isRecreate = false } = {}) => {
+    const log = (msg) => addStep4Log(msg);
+    const processLabel = isRecreate ? 'recreation' : 'creation';
+
+    if (!serviceAccountJson || !projectId) {
+      setError('Service account and project ID required');
+      return;
+    }
+    if (!vmRateLimit.check()) {
+      setError('Rate limit reached for VM creation. Try again in a minute.');
+      return;
+    }
+    const errors = validate({ projectId }, { projectId: SCHEMAS.projectId });
+    if (errors) {
+      setError(errors.projectId);
+      return;
+    }
+    if (!discordGuildId) {
+      log('WARNING: Discord Guild ID not set - Discord channel will not be created');
+    }
+
+    setStep4Status('enabling');
+    if (!isRecreate) {
+      setStep4Message('Clearing previous VM state...');
+      log('Clearing previous VM state...');
+      setVmIp('');
+    }
+    setStep4Message('Checking billing status...');
+    log(`Starting VM ${processLabel} process...`);
+
+    // Check billing with user's OAuth token first
+    const billingOk = await checkBillingStatus();
+    if (billingOk === null) {
+      log('Billing API not accessible, skipping auto-check');
+    } else if (billingOk === true) {
+      log('Billing is enabled');
+    } else {
+      log('Billing not enabled - attempting to link billing account...');
+      const accounts = await fetchBillingAccounts();
+      if (accounts.length > 0 && gcpAccessToken) {
+        setSelectedBillingAccount(accounts[0].name);
+        setError(null);
+        await linkBillingAccount(accounts[0].name);
+      }
+      // Re-check billing after linking attempt
+      const stillOk = await checkBillingStatus();
+      if (!stillOk) {
+        setError(`Billing is required. Link a billing account at https://console.cloud.google.com/billing/linkedaccount?project=${projectId} then retry.`);
+        setStep4Status('error');
+        return;
+      }
+      log('Billing account linked successfully');
+    }
+
+    setStep4Message('Getting service account token...');
+    log('Authenticating service account...');
+
+    const token = await getServiceAccountToken();
+    if (!token) {
+      setError('Failed to authenticate with service account');
+      setStep4Status('error');
+      return;
+    }
+    log('Service account authenticated');
+
+    const apis = [
+      { name: 'compute.googleapis.com', displayName: 'Compute Engine API' },
+      { name: 'cloudresourcemanager.googleapis.com', displayName: 'Cloud Resource Manager API' },
+      { name: 'serviceusage.googleapis.com', displayName: 'Service Usage API' },
+      { name: 'cloudbilling.googleapis.com', displayName: 'Cloud Billing API' },
+      { name: 'iamcredentials.googleapis.com', displayName: 'IAM Service Account Credentials API' }
+    ];
+
+    for (const api of apis) {
+      setStep4Message(`Enabling ${api.displayName}...`);
+      log(`Enabling ${api.displayName}...`);
+
+      const enableToken = gcpAccessToken || token;
+      if (!enableToken) {
+        log(`No token available to enable ${api.displayName}`);
+        continue;
+      }
+
+      try {
+        const response = await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/${api.name}:enable`, {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${enableToken}`,
+            'Content-Type': 'application/json'
+          }
+        });
+
+        if (response.ok) {
+          log(`${api.displayName} enable request accepted, waiting for activation...`);
+        } else {
+          const errData = await response.json().catch(() => ({}));
+          const errMsg = errData.error?.message || '';
+          if (errMsg.includes('billing') || errMsg.includes('Billing')) {
+            setError(`Billing must be enabled on project ${projectId}. Go to Google Cloud Console > Billing to link a billing account.`);
+            log(`ERROR: Billing required for ${api.displayName}`);
+            setStep4Status('error');
+            return;
+          } else if (errMsg.includes('already') || errMsg.includes('enabled') || errMsg.includes('ALREADY')) {
+            log(`${api.displayName} already enabled`);
+          } else if (errMsg.includes('permission') || errMsg.includes('PERMISSION_DENIED') || errMsg.includes('403')) {
+            log(`Permission denied enabling ${api.displayName} with current token, trying user token...`);
+            if (enableToken !== gcpAccessToken && gcpAccessToken) {
+              const retryRes = await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/${api.name}:enable`, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${gcpAccessToken}`,
+                  'Content-Type': 'application/json'
+                }
+              });
+              if (!retryRes.ok) {
+                log(`Failed to enable ${api.displayName} with user token too`);
+              } else {
+                log(`${api.displayName} enable request accepted with user token`);
+              }
+            } else {
+              log(`Cannot enable ${api.displayName} - insufficient permissions`);
+            }
+          } else {
+            setError(`Failed to enable ${api.displayName}: ${errMsg || response.statusText} (${response.status})`);
+            log(`ERROR: ${errMsg}`);
+            setStep4Status('error');
+            return;
+          }
+        }
+      } catch (e) {
+        log(`Error enabling ${api.displayName}: ${e.message}`);
+      }
+
+      let activated = false;
+      for (let i = 0; i < 10; i++) {
+        await new Promise(r => setTimeout(r, 3000));
+        const active = await checkApiStatus(api.name);
+        if (active) {
+          log(`${api.displayName} is now active`);
+          activated = true;
+          break;
+        }
+        log(`Waiting for ${api.displayName} to activate... (${i + 1}/10)`);
+      }
+      if (!activated && api.name === 'compute.googleapis.com') {
+        log('Compute Engine API did not activate yet, will attempt VM creation anyway');
+      }
+    }
+
+    setStep4Message('Creating VM...');
+    log('Creating VM...');
+
+    const instanceName = 'secureagent-manager';
+    const startupScript = getStartupScript(useOptimizedBundle);
+    const zones = [vmZone, 'us-central1-b', 'us-central1-c', 'us-west1-a', 'us-west1-b', 'us-east1-c', 'us-east1-d', 'europe-west1-d', 'asia-east1-a'];
+    let vmCreated = false;
+
+    for (const tryZone of zones) {
+      try {
+        setStep4Message(`Creating VM in ${tryZone}...`);
+        log(`Attempting VM creation in ${tryZone}...`);
+
+        const vmResponse = await fetch(
+          `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances`,
+          {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              name: instanceName,
+              machineType: `zones/${tryZone}/machineTypes/${vmMachineType}`,
+              disks: [{
+                boot: true,
+                autoDelete: true,
+                initializeParams: {
+                  diskSizeGb: '10',
+                  sourceImage: 'projects/debian-cloud/global/images/family/debian-11',
+                },
+              }],
+              networkInterfaces: [{
+                network: 'global/networks/default',
+                accessConfigs: [{ type: 'ONE_TO_ONE_NAT' }],
+              }],
+              metadata: buildVmMetadata(startupScript)
+            })
+          }
+        );
+
+        if (vmResponse.ok) {
+          setVmZone(tryZone);
+          log(`VM creation started in ${tryZone}, waiting for completion...`);
+          await new Promise(r => setTimeout(r, 15000));
+
+          const instanceResp = await fetch(
+            `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances/${instanceName}`,
+            { headers: { 'Authorization': `Bearer ${token}` } }
+          );
+          const instanceData = await instanceResp.json();
+          const vmStatus = instanceData.status;
+          const ip = instanceData.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP;
+
+          if (vmStatus !== 'RUNNING') {
+            log(`VM status: ${vmStatus} - waiting for startup...`);
+
+            await new Promise(r => setTimeout(r, 10000));
+
+            const recheckResp = await fetch(
+              `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances/${instanceName}`,
+              { headers: { 'Authorization': `Bearer ${token}` } }
+            );
+            const recheckData = await recheckResp.json();
+            const recheckStatus = recheckData.status;
+
+            if (recheckStatus !== 'RUNNING') {
+              log(`VM failed to start. Status: ${recheckStatus}`);
+              if (recheckStatus === 'TERMINATED') {
+                setError('VM terminated. Check startup script logs in GCP Console for errors.');
+              } else {
+                setError(`VM is in "${recheckStatus}" state. Please check GCP Console.`);
+              }
+              setStep4Status('error');
+              break;
+            }
+          }
+
+          if (ip) {
+            setVmIp(ip);
+            log(`VM ready at ${ip}`);
+          }
+          vmCreated = true;
+          setStep4Status('complete');
+          setStep4Message('VM created successfully!');
+          setShowRecreateOptions(false);
+          setVmInitComplete(false);
+          setKimakiInstallUrl('');
+          setShowInitModal(true);
+          expandNextStep(8);
+          break;
+        } else {
+          const err = await vmResponse.json();
+          const errStr = JSON.stringify(err);
+          const errMsg = err.error?.message || '';
+          const errStatus = err.error?.status || '';
+          const statusMsg = err.status?.message || '';
+
+          log(`VM response not ok: ${errMsg || statusMsg || errStr}`);
+
+          if (errStr.toLowerCase().includes('zone') &&
+              (errStr.toLowerCase().includes('exhausted') ||
+               errStr.toLowerCase().includes('unavailable') ||
+               errStr.toLowerCase().includes('resource'))) {
+            log(`Zone ${tryZone} may be out of capacity, trying next zone...`);
+            continue;
+          }
+
+          if (errMsg.includes('ZONE_RESOURCE_POOL_EXHAUSTED') ||
+              errStr.includes('RESOURCE_EXHAUSTED') ||
+              errStr.includes('resource_availability') ||
+              errStatus === 'RESOURCE_EXHAUSTED' ||
+              statusMsg.includes('ZONE_RESOURCE_POOL_EXHAUSTED') ||
+              (errMsg.includes('unavailable') && errMsg.includes('zone'))) {
+            log(`Zone ${tryZone} out of capacity, trying next zone...`);
+            continue;
+          }
+
+          log(`VM creation failed: ${errMsg || statusMsg || errStr}`);
+          setError(`Failed to create VM: ${errMsg || statusMsg}`);
+          setStep4Status('error');
+          break;
+        }
+      } catch (e) {
+        log(`Error creating VM in ${tryZone}: ${e.message}, trying next zone...`);
+        continue;
+      }
+    }
+
+    if (!vmCreated && step4Status !== 'error') {
+      log('All zones exhausted, could not create VM');
+      setError('All zones are out of capacity. Please try again later.');
+      setStep4Status('error');
+    }
+  };
+
   const handleCreateVM = async () => {
     if (!serviceAccountKey || !projectId) {
       setError('Please configure GCP project and service account first');
@@ -4875,282 +5160,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                       <button
                         id="recreate-vm-trigger"
                         onClick={async () => {
-                          if (!serviceAccountJson || !projectId) {
-                            setError('Service account and project ID required');
-                            return;
-                          }
-                          if (!vmRateLimit.check()) {
-                            setError('Rate limit reached for VM creation. Try again in a minute.');
-                            return;
-                          }
-                          const errors = validate({ projectId }, { projectId: SCHEMAS.projectId });
-                          if (errors) {
-                            setError(errors.projectId);
-                            return;
-                          }
-                          setStep4Status('enabling');
-                          setStep4Message('Clearing previous VM state...');
-                          addStep4Log('Clearing previous VM state...');
-                          setVmIp('');
-                          setStep4Message('Checking billing status...');
-                          addStep4Log('Starting VM creation process...');
-
-                          // Check billing with user's OAuth token first
-                          const billingOk = await checkBillingStatus();
-                          if (billingOk === null) {
-                            addStep4Log('Billing API not accessible, skipping auto-check');
-                          } else if (billingOk === true) {
-                            addStep4Log('Billing is enabled');
-                          } else {
-                            addStep4Log('Billing not enabled - attempting to link billing account...');
-                            const accounts = await fetchBillingAccounts();
-                            if (accounts.length > 0 && gcpAccessToken) {
-                              setSelectedBillingAccount(accounts[0].name);
-                              setError(null);
-                              await linkBillingAccount(accounts[0].name);
-                            }
-                            // Re-check billing after linking attempt
-                            const stillOk = await checkBillingStatus();
-                            if (!stillOk) {
-                              setError(`Billing is required. Link a billing account at https://console.cloud.google.com/billing/linkedaccount?project=${projectId} then retry.`);
-                              setStep4Status('error');
-                              return;
-                            }
-                            addStep4Log('Billing account linked successfully');
-                          }
-
-                          setStep4Message('Getting service account token...');
-                          addStep4Log('Authenticating service account...');
-
-                          const token = await getServiceAccountToken();
-                          if (!token) {
-                            setError('Failed to authenticate with service account');
-                            setStep4Status('error');
-                            return;
-                          }
-                          addStep4Log('Service account authenticated');
-
-                          const apis = [
-                            { name: 'compute.googleapis.com', displayName: 'Compute Engine API' },
-                            { name: 'cloudresourcemanager.googleapis.com', displayName: 'Cloud Resource Manager API' },
-                            { name: 'serviceusage.googleapis.com', displayName: 'Service Usage API' },
-                            { name: 'cloudbilling.googleapis.com', displayName: 'Cloud Billing API' },
-                            { name: 'iamcredentials.googleapis.com', displayName: 'IAM Service Account Credentials API' }
-                          ];
-                          
-                          for (const api of apis) {
-                            setStep4Message(`Enabling ${api.displayName}...`);
-                            addStep4Log(`Enabling ${api.displayName}...`);
-                            
-                            const enableToken = gcpAccessToken || token;
-                            if (!enableToken) {
-                              addStep4Log(`No token available to enable ${api.displayName}`);
-                              continue;
-                            }
-                            
-                            try {
-                              const response = await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/${api.name}:enable`, {
-                                method: 'POST',
-                                headers: {
-                                  'Authorization': `Bearer ${enableToken}`,
-                                  'Content-Type': 'application/json'
-                                }
-                              });
-                              
-                              if (response.ok) {
-                                addStep4Log(`${api.displayName} enable request accepted, waiting for activation...`);
-                              } else {
-                                const errData = await response.json().catch(() => ({}));
-                                const errMsg = errData.error?.message || '';
-                                if (errMsg.includes('billing') || errMsg.includes('Billing')) {
-                                  setError(`Billing must be enabled on project ${projectId}. Go to Google Cloud Console > Billing to link a billing account.`);
-                                  addStep4Log(`ERROR: Billing required for ${api.displayName}`);
-                                  setStep4Status('error');
-                                  return;
-                                } else if (errMsg.includes('already') || errMsg.includes('enabled') || errMsg.includes('ALREADY')) {
-                                  addStep4Log(`${api.displayName} already enabled`);
-                                } else if (errMsg.includes('permission') || errMsg.includes('PERMISSION_DENIED') || errMsg.includes('403')) {
-                                  addStep4Log(`Permission denied enabling ${api.displayName} with current token, trying user token...`);
-                                  if (enableToken !== gcpAccessToken && gcpAccessToken) {
-                                    const retryRes = await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/${api.name}:enable`, {
-                                      method: 'POST',
-                                      headers: {
-                                        'Authorization': `Bearer ${gcpAccessToken}`,
-                                        'Content-Type': 'application/json'
-                                      }
-                                    });
-                                    if (!retryRes.ok) {
-                                      addStep4Log(`Failed to enable ${api.displayName} with user token too`);
-                                    } else {
-                                      addStep4Log(`${api.displayName} enable request accepted with user token`);
-                                    }
-                                  } else {
-                                    addStep4Log(`Cannot enable ${api.displayName} - insufficient permissions`);
-                                  }
-                                } else {
-                                  setError(`Failed to enable ${api.displayName}: ${errMsg || response.statusText} (${response.status})`);
-                                  addStep4Log(`ERROR: ${errMsg}`);
-                                  setStep4Status('error');
-                                  return;
-                                }
-                              }
-                            } catch (e) {
-                              addStep4Log(`Error enabling ${api.displayName}: ${e.message}`);
-                            }
-                            
-                            let activated = false;
-                            for (let i = 0; i < 10; i++) {
-                              await new Promise(r => setTimeout(r, 3000));
-                              const active = await checkApiStatus(api.name);
-                              if (active) {
-                                addStep4Log(`${api.displayName} is now active`);
-                                activated = true;
-                                break;
-                              }
-                              addStep4Log(`Waiting for ${api.displayName} to activate... (${i + 1}/10)`);
-                            }
-                            if (!activated && api.name === 'compute.googleapis.com') {
-                              addStep4Log('Compute Engine API did not activate yet, will attempt VM creation anyway');
-                            }
-                          }
-                          
-                          setStep4Message('Creating VM...');
-                          addStep4Log('Creating VM...');
-                          
-                          const zone = vmZone;
-                          const instanceName = 'secureagent-manager';
-                          const startupScript = getStartupScript(useOptimizedBundle);
-
-                          const zones = [vmZone, 'us-central1-b', 'us-central1-c', 'us-west1-a', 'us-west1-b', 'us-east1-c', 'us-east1-d', 'europe-west1-d', 'asia-east1-a'];
-                          let vmCreated = false;
-                          
-                          for (const tryZone of zones) {
-                            try {
-                              setStep4Message(`Creating VM in ${tryZone}...`);
-                              addStep4Log(`Attempting VM creation in ${tryZone}...`);
-                              
-                              const vmResponse = await fetch(
-                                `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances`,
-                                {
-                                  method: 'POST',
-                                  headers: {
-                                    'Authorization': `Bearer ${token}`,
-                                    'Content-Type': 'application/json'
-                                  },
-                                  body: JSON.stringify({
-                                    name: instanceName,
-                                    machineType: `zones/${tryZone}/machineTypes/${vmMachineType}`,
-                                    disks: [{
-                                      boot: true,
-                                      autoDelete: true,
-                                      initializeParams: {
-                                        diskSizeGb: '10',
-                                        sourceImage: 'projects/debian-cloud/global/images/family/debian-11',
-                                      },
-                                    }],
-                                    networkInterfaces: [{
-                                      network: 'global/networks/default',
-                                      accessConfigs: [{ type: 'ONE_TO_ONE_NAT' }],
-                                    }],
-                                      metadata: buildVmMetadata(startupScript)
-                                  })
-                                }
-                              );
-                              
-                              if (vmResponse.ok) {
-                                setVmZone(tryZone);
-                                addStep4Log(`VM creation started in ${tryZone}, waiting for completion...`);
-                                await new Promise(r => setTimeout(r, 15000));
-                                
-                                const instanceResp = await fetch(
-                                  `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances/${instanceName}`,
-                                  { headers: { 'Authorization': `Bearer ${token}` } }
-                                );
-                                const instanceData = await instanceResp.json();
-                                const vmStatus = instanceData.status;
-                                const ip = instanceData.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP;
-                                
-                                if (vmStatus !== 'RUNNING') {
-                                  addStep4Log(`VM status: ${vmStatus} - waiting for startup...`);
-                                  
-                                  await new Promise(r => setTimeout(r, 10000));
-                                  
-                                  const recheckResp = await fetch(
-                                    `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances/${instanceName}`,
-                                    { headers: { 'Authorization': `Bearer ${token}` } }
-                                  );
-                                  const recheckData = await recheckResp.json();
-                                  const recheckStatus = recheckData.status;
-                                  
-                                  if (recheckStatus !== 'RUNNING') {
-                                    addStep4Log(`VM failed to start. Status: ${recheckStatus}`);
-                                    if (recheckStatus === 'TERMINATED') {
-                                      setError('VM terminated. Check startup script logs in GCP Console for errors.');
-                                    } else {
-                                      setError(`VM is in "${recheckStatus}" state. Please check GCP Console.`);
-                                    }
-                                    setStep4Status('error');
-                                    break;
-                                  }
-                                }
-                                
-                                if (ip) {
-                                  setVmIp(ip);
-                                  addStep4Log(`VM ready at ${ip}`);
-                                }
-                                 vmCreated = true;
-                                 setStep4Status('complete');
-                                 setStep4Message('VM created successfully!');
-                                 setShowRecreateOptions(false);
-                                 setVmInitComplete(false);
-                                 setKimakiInstallUrl('');
-                                 setShowInitModal(true);
-                                 expandNextStep(8);
-                                 break;
-                              } else {
-                                const err = await vmResponse.json();
-                                const errStr = JSON.stringify(err);
-                                const errMsg = err.error?.message || '';
-                                const errStatus = err.error?.status || '';
-                                const statusMsg = err.status?.message || '';
-                                
-                                addStep4Log(`VM response not ok: ${errMsg || statusMsg || errStr}`);
-                                
-                                if (errStr.toLowerCase().includes('zone') && 
-                                    (errStr.toLowerCase().includes('exhausted') || 
-                                     errStr.toLowerCase().includes('unavailable') ||
-                                     errStr.toLowerCase().includes('resource'))) {
-                                  addStep4Log(`Zone ${tryZone} may be out of capacity, trying next zone...`);
-                                  continue;
-                                }
-                                
-                                if (errMsg.includes('ZONE_RESOURCE_POOL_EXHAUSTED') || 
-                                    errStr.includes('RESOURCE_EXHAUSTED') ||
-                                    errStr.includes('resource_availability') ||
-                                    errStatus === 'RESOURCE_EXHAUSTED' ||
-                                    statusMsg.includes('ZONE_RESOURCE_POOL_EXHAUSTED') ||
-                                    (errMsg.includes('unavailable') && errMsg.includes('zone'))) {
-                                  addStep4Log(`Zone ${tryZone} out of capacity, trying next zone...`);
-                                  continue;
-                                }
-                                
-                                addStep4Log(`VM creation failed: ${errMsg || statusMsg || errStr}`);
-                                setError(`Failed to create VM: ${errMsg || statusMsg}`);
-                                setStep4Status('error');
-                                break;
-                              }
-                            } catch (e: any) {
-                              const errMsg = e?.message || e?.name || 'Unknown error';
-                              addStep4Log(`Error creating VM in ${tryZone}: ${errMsg}, trying next zone...`);
-                              continue;
-                            }
-                          }
-                          
-                          if (!vmCreated) {
-                            addStep4Log('All zones exhausted, could not create VM');
-                            setError('All zones are out of capacity. Please try again later.');
-                            setStep4Status('error');
-                          }
+                          createVmWithSetup({ isRecreate: false });
                         }}
                         className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
                       >
@@ -5191,270 +5201,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                   <div className="mt-4 flex gap-2">
                       <button
                         onClick={async () => {
-                          if (!serviceAccountJson || !projectId) {
-                            setError('Service account and project ID required');
-                            return;
-                          }
-                          if (!discordGuildId) {
-                            addStep4Log('WARNING: Discord Guild ID not set - Discord channel will not be created');
-                          }
-                          setStep4Status('enabling');
-                          setStep4Message('Checking billing status...');
-                          addStep4Log('Starting VM recreation process...');
-
-                          const billingOk = await checkBillingStatus();
-                          if (billingOk === null) {
-                            addStep4Log('Billing API not accessible, skipping auto-check');
-                          } else if (billingOk === true) {
-                            addStep4Log('Billing is enabled');
-                          } else {
-                            addStep4Log('Billing not enabled - attempting to link billing account...');
-                            const accounts = await fetchBillingAccounts();
-                            if (accounts.length > 0 && gcpAccessToken) {
-                              setSelectedBillingAccount(accounts[0].name);
-                              setError(null);
-                              await linkBillingAccount(accounts[0].name);
-                            }
-                            const stillOk = await checkBillingStatus();
-                            if (!stillOk) {
-                              setError(`Billing is required. Link a billing account at https://console.cloud.google.com/billing/linkedaccount?project=${projectId} then retry.`);
-                              setStep4Status('error');
-                              return;
-                            }
-                            addStep4Log('Billing account linked successfully');
-                          }
-
-                          setStep4Message('Getting service account token...');
-                          addStep4Log('Authenticating service account...');
-
-                          const token = await getServiceAccountToken();
-                          if (!token) {
-                            setError('Failed to authenticate with service account');
-                            setStep4Status('error');
-                            return;
-                          }
-                          addStep4Log('Service account authenticated');
-
-                          const apis = [
-                            { name: 'compute.googleapis.com', displayName: 'Compute Engine API' },
-                            { name: 'cloudresourcemanager.googleapis.com', displayName: 'Cloud Resource Manager API' },
-                            { name: 'serviceusage.googleapis.com', displayName: 'Service Usage API' },
-                            { name: 'cloudbilling.googleapis.com', displayName: 'Cloud Billing API' },
-                            { name: 'iamcredentials.googleapis.com', displayName: 'IAM Service Account Credentials API' }
-                          ];
-                          
-                          for (const api of apis) {
-                            setStep4Message(`Enabling ${api.displayName}...`);
-                            addStep4Log(`Enabling ${api.displayName}...`);
-                            
-                            const enableToken = gcpAccessToken || token;
-                            if (!enableToken) {
-                              addStep4Log(`No token available to enable ${api.displayName}`);
-                              continue;
-                            }
-                            
-                            try {
-                              const response = await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/${api.name}:enable`, {
-                                method: 'POST',
-                                headers: {
-                                  'Authorization': `Bearer ${enableToken}`,
-                                  'Content-Type': 'application/json'
-                                }
-                              });
-                              
-                              if (response.ok) {
-                                addStep4Log(`${api.displayName} enable request accepted, waiting for activation...`);
-                              } else {
-                                const errData = await response.json().catch(() => ({}));
-                                const errMsg = errData.error?.message || '';
-                                if (errMsg.includes('billing') || errMsg.includes('Billing')) {
-                                  setError(`Billing must be enabled on project ${projectId}. Go to Google Cloud Console > Billing to link a billing account.`);
-                                  addStep4Log(`ERROR: Billing required for ${api.displayName}`);
-                                  setStep4Status('error');
-                                  return;
-                                } else if (errMsg.includes('already') || errMsg.includes('enabled') || errMsg.includes('ALREADY')) {
-                                  addStep4Log(`${api.displayName} already enabled`);
-                                } else if (errMsg.includes('permission') || errMsg.includes('PERMISSION_DENIED') || errMsg.includes('403')) {
-                                  addStep4Log(`Permission denied enabling ${api.displayName} with current token, trying user token...`);
-                                  if (enableToken !== gcpAccessToken && gcpAccessToken) {
-                                    const retryRes = await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/${api.name}:enable`, {
-                                      method: 'POST',
-                                      headers: {
-                                        'Authorization': `Bearer ${gcpAccessToken}`,
-                                        'Content-Type': 'application/json'
-                                      }
-                                    });
-                                    if (!retryRes.ok) {
-                                      addStep4Log(`Failed to enable ${api.displayName} with user token too`);
-                                    } else {
-                                      addStep4Log(`${api.displayName} enable request accepted with user token`);
-                                    }
-                                  } else {
-                                    addStep4Log(`Cannot enable ${api.displayName} - insufficient permissions`);
-                                  }
-                                } else {
-                                  setError(`Failed to enable ${api.displayName}: ${errMsg || response.statusText} (${response.status})`);
-                                  addStep4Log(`ERROR: ${errMsg}`);
-                                  setStep4Status('error');
-                                  return;
-                                }
-                              }
-                            } catch (e) {
-                              addStep4Log(`Error enabling ${api.displayName}: ${e.message}`);
-                            }
-                            
-                            let activated = false;
-                            for (let i = 0; i < 10; i++) {
-                              await new Promise(r => setTimeout(r, 3000));
-                              const active = await checkApiStatus(api.name);
-                              if (active) {
-                                addStep4Log(`${api.displayName} is now active`);
-                                activated = true;
-                                break;
-                              }
-                              addStep4Log(`Waiting for ${api.displayName} to activate... (${i + 1}/10)`);
-                            }
-                            if (!activated && api.name === 'compute.googleapis.com') {
-                              addStep4Log('Compute Engine API did not activate yet, will attempt VM creation anyway');
-                            }
-                          }
-                          
-                          setStep4Message('Creating VM...');
-                          addStep4Log('Creating VM...');
-                          
-                          const zone = vmZone;
-                          const instanceName = 'secureagent-manager';
-                          const startupScript = getStartupScript(useOptimizedBundle);
-
-                          const zones = [vmZone, 'us-central1-b', 'us-central1-c', 'us-west1-a', 'us-west1-b', 'us-east1-c', 'us-east1-d', 'europe-west1-d', 'asia-east1-a'];
-                          let vmCreated = false;
-                          
-                          for (const tryZone of zones) {
-                            try {
-                              setStep4Message(`Creating VM in ${tryZone}...`);
-                              addStep4Log(`Attempting VM creation in ${tryZone}...`);
-                              
-                              const vmResponse = await fetch(
-                                `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances`,
-                                {
-                                  method: 'POST',
-                                  headers: {
-                                    'Authorization': `Bearer ${token}`,
-                                    'Content-Type': 'application/json'
-                                  },
-                                  body: JSON.stringify({
-                                    name: instanceName,
-                                    machineType: `zones/${tryZone}/machineTypes/${vmMachineType}`,
-                                    disks: [{
-                                      boot: true,
-                                      autoDelete: true,
-                                      initializeParams: {
-                                        diskSizeGb: '10',
-                                        sourceImage: 'projects/debian-cloud/global/images/family/debian-11',
-                                      },
-                                    }],
-                                    networkInterfaces: [{
-                                      network: 'global/networks/default',
-                                      accessConfigs: [{ type: 'ONE_TO_ONE_NAT' }],
-                                    }],
-                                      metadata: buildVmMetadata(startupScript)
-                                  })
-                                }
-                              );
-                              
-                              if (vmResponse.ok) {
-                                setVmZone(tryZone);
-                                addStep4Log(`VM creation started in ${tryZone}, waiting for completion...`);
-                                await new Promise(r => setTimeout(r, 15000));
-                                
-                                const instanceResp = await fetch(
-                                  `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances/${instanceName}`,
-                                  { headers: { 'Authorization': `Bearer ${token}` } }
-                                );
-                                const instanceData = await instanceResp.json();
-                                const vmStatus = instanceData.status;
-                                const ip = instanceData.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP;
-                                
-                                if (vmStatus !== 'RUNNING') {
-                                  addStep4Log(`VM status: ${vmStatus} - waiting for startup...`);
-                                  
-                                  await new Promise(r => setTimeout(r, 10000));
-                                  
-                                  const recheckResp = await fetch(
-                                    `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances/${instanceName}`,
-                                    { headers: { 'Authorization': `Bearer ${token}` } }
-                                  );
-                                  const recheckData = await recheckResp.json();
-                                  const recheckStatus = recheckData.status;
-                                  
-                                  if (recheckStatus !== 'RUNNING') {
-                                    addStep4Log(`VM failed to start. Status: ${recheckStatus}`);
-                                    if (recheckStatus === 'TERMINATED') {
-                                      setError('VM terminated. Check startup script logs in GCP Console for errors.');
-                                    } else {
-                                      setError(`VM is in "${recheckStatus}" state. Please check GCP Console.`);
-                                    }
-                                    setStep4Status('error');
-                                    break;
-                                  }
-                                }
-                                
-                                if (ip) {
-                                  setVmIp(ip);
-                                  addStep4Log(`VM ready at ${ip}`);
-                                }
-                                 vmCreated = true;
-                                 setStep4Status('complete');
-                                 setStep4Message('VM created successfully!');
-                                 setShowRecreateOptions(false);
-                                 setVmInitComplete(false);
-                                 setKimakiInstallUrl('');
-                                 setShowInitModal(true);
-                                 expandNextStep(8);
-                                 break;
-                              } else {
-                                const err = await vmResponse.json();
-                                const errStr = JSON.stringify(err);
-                                const errMsg = err.error?.message || '';
-                                const errStatus = err.error?.status || '';
-                                const statusMsg = err.status?.message || '';
-                                
-                                addStep4Log(`VM response not ok: ${errMsg || statusMsg || errStr}`);
-                                
-                                if (errStr.toLowerCase().includes('zone') && 
-                                    (errStr.toLowerCase().includes('exhausted') || 
-                                     errStr.toLowerCase().includes('unavailable') ||
-                                     errStr.toLowerCase().includes('resource'))) {
-                                  addStep4Log(`Zone ${tryZone} may be out of capacity, trying next zone...`);
-                                  continue;
-                                }
-                                
-                                if (errMsg.includes('ZONE_RESOURCE_POOL_EXHAUSTED') || 
-                                    errStr.includes('RESOURCE_EXHAUSTED') ||
-                                    errStr.includes('resource_availability') ||
-                                    errStatus === 'RESOURCE_EXHAUSTED' ||
-                                    statusMsg.includes('ZONE_RESOURCE_POOL_EXHAUSTED') ||
-                                    (errMsg.includes('unavailable') && errMsg.includes('zone'))) {
-                                  addStep4Log(`Zone ${tryZone} out of capacity, trying next zone...`);
-                                  continue;
-                                }
-                                
-                                addStep4Log(`VM creation failed: ${errMsg || statusMsg || errStr}`);
-                                setError(`Failed to create VM: ${errMsg || statusMsg}`);
-                                setStep4Status('error');
-                                break;
-                              }
-                            } catch (e) {
-                              addStep4Log(`Error creating VM in ${tryZone}: ${e.message}, trying next zone...`);
-                              continue;
-                            }
-                          }
-                          
-                          if (!vmCreated && (step4Status as string) !== 'error') {
-                            addStep4Log('All zones exhausted, could not create VM');
-                            setError('All zones are out of capacity. Please try again later.');
-                            setStep4Status('error');
-                          }
+                          createVmWithSetup({ isRecreate: true });
                         }}
                         className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg"
                       >
