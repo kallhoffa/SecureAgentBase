@@ -2,10 +2,15 @@ import { GoogleAuth, ExternalAccountClient } from 'google-auth-library';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+// Least-privilege scope policy — must stay in sync with the web wizard's SA
+// impersonation scopes (src/infra-setup.tsx, src/framework/infra-setup/api.ts).
+// devstorage.read_write (not full_control): the SA key only uploads/overwrites
+// the app bundle in GCS; it never lists/deletes buckets. See architecture
+// review finding #6 — full_control was narrowed to match the web flow.
 const SCOPES = [
   'https://www.googleapis.com/auth/cloud-platform',
   'https://www.googleapis.com/auth/compute',
-  'https://www.googleapis.com/auth/devstorage.full_control',
+  'https://www.googleapis.com/auth/devstorage.read_write',
   'https://www.googleapis.com/auth/cloud-billing.readonly',
 ];
 
