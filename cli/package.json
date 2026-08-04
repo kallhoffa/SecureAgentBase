@@ -1,17 +1,26 @@
 {
   "name": "secureagentbase",
-  "version": "1.0.0",
+  "version": "1.2.12",
   "description": "CLI tool to deploy and manage SecureAgentBase on GCP",
   "type": "module",
   "bin": {
     "secureagentbase": "./bin/secureagentbase.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kallhoffa/SecureAgentBase.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   },
   "scripts": {
     "generate": "cp ../shared/startup-script.sh src/lib/startup-script.sh",
     "prebuild": "npm run generate",
     "build": "tsc && cp src/lib/startup-script.sh dist/lib/startup-script.sh 2>/dev/null || true",
     "dev": "tsx src/index.ts",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "chalk": "^5.3.0",

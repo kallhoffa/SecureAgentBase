@@ -292,3 +292,32 @@ jobs:
         run: |
           echo "## Deployment Failed" >> $GITHUB_STEP_SUMMARY
           echo "Check the logs above for errors." >> $GITHUB_STEP_SUMMARY
+
+  publish-npm:
+    name: Publish CLI to npm
+    needs: production-promote
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node.js (v6 required for npm Trusted Publishing / OIDC)
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
+
+      - name: Install latest npm (OIDC requires npm CLI 11.5.1+)
+        run: npm install -g npm@latest
+
+      - name: Install CLI dependencies
+        run: cd cli && npm ci
+
+      - name: Set CLI version from git tag (prevents version drift)
+        run: cd cli && npm version ${{ github.ref_name }} --no-git-tag-version --allow-same-version
+
+      - name: Publish to npm (Trusted Publishing via OIDC, no token)
+        run: cd cli && npm publish --provenance
