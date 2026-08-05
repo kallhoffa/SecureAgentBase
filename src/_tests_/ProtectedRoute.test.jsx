@@ -22,7 +22,7 @@ vi.mock('../firestore-utils/auth-context', () => ({
 // mounting decisions as App.tsx routes).
 // `initialEntry` is where the test starts.
 const renderInRouter = (slot, opts = {}) => {
-  const { atPath = '/', initialEntry = '/' } = opts;
+  const { atPath = '/', initialEntry = atPath } = opts;
   return render(
     <MemoryRouter initialEntries={[initialEntry]}>
       <Routes>
