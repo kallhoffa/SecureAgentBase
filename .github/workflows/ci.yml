@@ -30,7 +30,7 @@ jobs:
       matrix:
         include:
           - name: unit tests
-            cmd: npm run test:ci
+            cmd: npx vitest run --pool=forks --coverage
           - name: lint
             cmd: npm run lint
           - name: typecheck
