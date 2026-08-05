@@ -2602,7 +2602,9 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       github_repo: githubRepoName,
       service_account_configured: !!godSaEmail || gcpConnected,
       god_sa_email: godSaEmail,
-      vm_ip: vmIp,
+      // Explicit vm_ip in configData wins over state — handleManualVMIP sets
+      // state asynchronously and would otherwise persist a stale/empty value.
+      vm_ip: configData.vm_ip !== undefined ? configData.vm_ip : vmIp,
       firebase_staging_project_id: firebaseStagingData?.projectId || null,
       firebase_production_project_id: firebaseProductionData?.projectId || null,
       updated_at: new Date().toISOString(),
@@ -3149,6 +3151,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           if (ip) {
             setVmIp(ip);
             log(`VM ready at ${ip}`);
+            // Persist so a reload/rehydrate can restore step-3 completion.
+            await saveConfig({ vm_ip: ip }).catch(() => {});
           }
           vmCreated = true;
           setStep4Status('complete');
@@ -4879,19 +4883,26 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                      </div>
                    )}
                    
-                   {step4Status === 'idle' && (
-                    <div className="flex gap-2 flex-wrap">
-                      <button
-                        id="recreate-vm-trigger"
-                        onClick={async () => {
-                          createVmWithSetup({ isRecreate: false });
-                        }}
-                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
-                      >
-                        Enable APIs & Create VM
-                      </button>
-                    </div>
-                  )}
+                    {step4Status === 'idle' && (
+                     <div className="flex gap-2 flex-wrap">
+                       <button
+                         id="recreate-vm-trigger"
+                         onClick={async () => {
+                           createVmWithSetup({ isRecreate: false });
+                         }}
+                         className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
+                       >
+                         Enable APIs & Create VM
+                       </button>
+                       <button
+                         type="button"
+                         onClick={handleManualVMIP}
+                         className="border border-gray-300 hover:bg-gray-100 text-gray-700 px-4 py-2 rounded-lg text-sm"
+                       >
+                         I already have a VM — enter its IP
+                       </button>
+                     </div>
+                   )}
                   
                   {(step4Status === 'enabling' || step4Status === 'complete') && (
                     <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mt-3">
