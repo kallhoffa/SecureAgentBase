@@ -136,7 +136,12 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
   const [kimakiBotInvited, setKimakiBotInvited] = useState(false);
   const [kimakiInstallUrl, setKimakiInstallUrl] = useState('');
   const [vmZone, setVmZone] = useState('us-east1-b');
-  const [vmMachineType, setVmMachineType] = useState('e2-medium');
+  // Default to e2-small (2 GB) — measured baseline for bot + agent + GCP agents
+  // is ~330 MB; e2-small gives ~1.6 GB usable headroom at ~50% the cost of
+  // e2-medium. Users who want free-tier pick e2-micro explicitly and see the
+  // warning; users who want comfort pick e2-medium. The default is what most
+  // users end up paying, so the leaner default saves them money silently.
+  const [vmMachineType, setVmMachineType] = useState('e2-small');
 const [discordBotToken, setDiscordBotToken] = useState('');
 const [discordClientId, setDiscordClientId] = useState('');
 const [discordInviteUrl, setDiscordInviteUrl] = useState('');
@@ -3594,6 +3599,9 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                     <>
                       <input
                         type="password"
+                        id="secureagentbase-passphrase"
+                        name="secureagentbase-passphrase"
+                        autoComplete="new-password"
                         value={passphrase}
                         onChange={(e) => setPassphrase(e.target.value)}
                         placeholder="Enter passphrase (min 12 chars)"
@@ -3619,6 +3627,9 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
               <div className="flex gap-2">
                 <input
                   type="password"
+                  id="secureagentbase-decrypt-passphrase"
+                  name="secureagentbase-decrypt-passphrase"
+                  autoComplete="current-password"
                   value={decryptPassphrase}
                   onChange={(e) => setDecryptPassphrase(e.target.value)}
                   placeholder="Enter passphrase"
@@ -4969,7 +4980,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                     </select>
                     {vmMachineType === 'e2-micro' && (
                       <p className="mt-2 text-xs text-yellow-700 bg-yellow-50 p-2 rounded">
-                        Warning: e2-micro may not have enough memory to run Kimaki + OpenCode. Consider e2-small.
+                        ⚠️ <strong>Reality check on 1GB RAM:</strong> Kimaki (~170 MB) + Node (~40 MB) + GCP guest agents (~120 MB) consume ~330 MB baseline. After the OS, usable headroom is ~520 MB — that fills fast when running agent sessions or installing npm packages. Strongly consider e2-small (~$6-12/mo) unless you're certain your workload fits.
                       </p>
                     )}
                   </div>

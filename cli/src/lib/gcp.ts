@@ -148,7 +148,10 @@ export async function createVm(
 
   const body = {
     name: instanceName,
-    machineType: `zones/${zone}/machineTypes/e2-medium`,
+    // Default to e2-small — same default as the web wizard (see
+    // infra-setup.tsx). 1GB e2-micro is too tight for bot + agent; 4GB
+    // e2-medium is comfort most users don't need at ~2x the cost.
+    machineType: `zones/${zone}/machineTypes/e2-small`,
     disks: [
       {
         boot: true,
