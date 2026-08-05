@@ -41,8 +41,10 @@ These are excluded from `npm run test:ci` — run separately.
 ```bash
 npm run lint         # Run ESLint on src/
 npm run lint:fix     # Fix ESLint issues automatically
-npm run check        # Run test:ci, lint, and build (full check)
+npm run check        # Run test:ci, lint, and build (full check) — optional local fast feedback
 ```
+
+**CI is the source of truth.** `ci.yml` runs `npm run check` + CLI build on every PR and push to main. Local runs are optional fast feedback only — if your local env has quirks (npm 10.8 hang, missing toolchain, etc.), push your branch and let CI verify rather than fixing your box. Don't block a release on a local pass or fixate on a local timeout.
 
 ### Security Scanning (CI — free tools)
 ```bash
@@ -250,10 +252,10 @@ if (!rateLimit.check()) {
 
 Rules:
 1. **If you break a test, you fix it.** Period. Even if it was "already broken before."
-2. **Before making changes, record the current test state.** Run `npm run test:ci` and note which tests pass/fail. Any new failures after your changes are YOUR responsibility.
-3. **Never say "this test was already failing" without evidence.** You must provide the CI run number or local test output showing the failure existed before your changes.
+2. **Before making changes, record the current test state.** Check the most recent CI run on `main` (or push a baseline branch and let CI run `npm run check`), and note which tests pass/fail. Any new failures after your changes are YOUR responsibility.
+3. **Never say "this test was already failing" without evidence.** You must provide the CI run number showing the failure existed before your changes.
 4. **If a test is genuinely preexisting, fix it anyway.** A broken test is a broken test. Classifying it as preexisting does not fix it and erodes code quality.
-5. **When in doubt, run the full test suite.** Don't skip tests to save time — skipping hides regressions.
+5. **When in doubt, push a PR and let CI run.** Don't skip tests to save time — skipping hides regressions. Local `npm run test:ci` works when your box supports it, but CI is the source of truth.
 
 **Rules for AI agents adding features:**
 1. Wrap all Firestore writes through safeCreate/safeUpdate/safeDelete/safeSet
@@ -288,8 +290,9 @@ The following workflows run automatically:
 - **firebase-deploy-staging.yml** — On push to `main` + `workflow_dispatch` (restricted to wizard user). Deploys hosting + Firestore rules.
 - **firebase-deploy.yml** — On version tags. Deploys to production.
 - **generate-e2e-key.yml** — On workflow_dispatch. Generates e2e test SA keys.
+- **ci.yml** — On every PR + push to main: `npm run check` (test:ci + lint + typecheck + build) + CLI build. **This is the source of truth for merge/deploy gating.** Local `npm run check` runs are optional fast feedback only — don't block a release on a local pass or fixate on a local timeout. Push a PR branch and let CI verify.
 
-The `npm run check` command runs `test:ci` + `lint` + `build` locally. Run it before every PR.
+For forks: ci.yml ships in `.github/workflows/`, so copies of this repo inherit the gate automatically. No per-fork setup.
 
 ```javascript
 // Full pattern for a feature:
