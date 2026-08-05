@@ -6,7 +6,7 @@ import { doc, getDoc, collection, getDocs, query, where, serverTimestamp, Firest
 import { safeSet, safeDelete } from './guardrails/safe-firestore';
 import { validate } from './guardrails/validate';
 import { useRateLimit } from './guardrails/useRateLimit';
-import { Check, Copy, AlertTriangle, Trash2, ExternalLink, Shield, Server, Bot } from 'lucide-react';
+import { Check, AlertTriangle, Trash2, Shield, Server, Bot } from 'lucide-react';
 import { encryptData, decryptData } from './framework/infra-setup/crypto';
 import { CloudShellScript, getStartupScript } from './framework/infra-setup/scripts';
 import {
@@ -17,6 +17,32 @@ import {
 import { SCHEMAS } from './framework/infra-setup/schemas';
 import { StepHeader } from './framework/infra-setup/steps';
 import { useWizardProgress } from './framework/infra-setup/useWizardProgress';
+
+// URL builders. User-controlled values always flow through URLSearchParams or
+// encodeURIComponent so they are percent-encoded, never interpolated raw into
+// hrefs or request URLs (keeps CodeQL js/xss-through-dom and
+// js/client-side-request-forgery quiet and is genuinely safer).
+const buildDiscordInviteUrl = (clientId) => {
+  const url = new URL('https://discord.com/oauth2/authorize');
+  url.searchParams.set('client_id', clientId);
+  url.searchParams.set('permissions', '2147551248');
+  url.searchParams.set('integration_type', '0');
+  url.searchParams.set('scope', 'bot');
+  return url.toString();
+};
+
+const gcpConsoleUrl = (path, projectId) => {
+  const url = new URL(`https://console.cloud.google.com/${path}`);
+  if (projectId) url.searchParams.set('project', projectId);
+  return url.toString();
+};
+
+const gcpApiProjectUrl = (projectId, endpoint) => {
+  const url = new URL(
+    `https://cloudresourcemanager.googleapis.com/v1/projects/${encodeURIComponent(projectId)}:${endpoint}`
+  );
+  return url.toString();
+};
 
 interface Window {
   google?: {
@@ -538,7 +564,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     const token = useSaToken ? (await getServiceAccountToken()) : gcpAccessToken;
     if (!token) throw new Error('No auth token available');
 
-    const policyResp = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${projectIdVal}:getIamPolicy`, {
+    // Only ever send requests for a syntactically valid project ID.
+    const projectErr = validate({ projectId: projectIdVal }, { projectId: SCHEMAS.projectId });
+    if (projectErr) throw new Error(projectErr.projectId);
+
+    const policyResp = await fetch(gcpApiProjectUrl(projectIdVal, 'getIamPolicy'), {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${token}` }
     });
@@ -550,7 +580,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       const grantEmail = gcpConsentEmail || user?.email || '';
       if (grantEmail) {
         addMemberToBinding(bindings, 'roles/firebase.admin', `user:${grantEmail}`);
-        await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${projectIdVal}:setIamPolicy`, {
+        await fetch(gcpApiProjectUrl(projectIdVal, 'setIamPolicy'), {
           method: 'POST',
           headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
           body: JSON.stringify({ policy: { bindings, etag: policy.etag } })
@@ -2577,8 +2607,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     if (!discordBotToken || discordInviteUrl || !discordClientId) return;
 
     // Generate invite URL using manually entered Client ID
-    const perms = '2147551248';
-    const url = `https://discord.com/oauth2/authorize?client_id=${discordClientId}&permissions=${perms}&integration_type=0&scope=bot`;
+    const url = buildDiscordInviteUrl(discordClientId);
     setDiscordInviteUrl(url);
     console.log('Discord invite URL regenerated from saved token and client ID');
   }, [discordBotToken, discordClientId]);
@@ -3360,8 +3389,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
     try {
       // Generate invite URL using the manually entered Client ID
-      const perms = '2147551248'; // Send Messages, Read History, Manage Channels, Use Slash Commands
-      const inviteUrl = `https://discord.com/oauth2/authorize?client_id=${discordClientId}&permissions=${perms}&integration_type=0&scope=bot`;
+      const inviteUrl = buildDiscordInviteUrl(discordClientId);
       setDiscordInviteUrl(inviteUrl);
 
       // Discord guild detection now happens server-side on the VM
@@ -4841,7 +4869,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                         ) : (
                           <div className="text-xs text-yellow-700 space-y-2">
                             <p>No billing accounts found via API. You can enable billing at{' '}
-                              <a href={`https://console.cloud.google.com/billing/linkedaccount?project=${projectId}`} target="_blank" rel="noopener noreferrer" className="underline font-semibold">Cloud Console</a>, then click{' '}
+                              <a href={gcpConsoleUrl('billing/linkedaccount', projectId)} target="_blank" rel="noopener noreferrer" className="underline font-semibold">Cloud Console</a>, then click{' '}
                               <button
                                 type="button"
                                 onClick={async () => {
@@ -4986,7 +5014,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           <h2 className="text-lg font-semibold text-gray-800 mb-4">Resources</h2>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <a
-              href={`https://console.cloud.google.com/compute/instances?project=${projectId}`}
+              href={gcpConsoleUrl('compute/instances', projectId)}
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-2 p-3 bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 text-sm text-gray-700"
