@@ -20,10 +20,23 @@ concurrency:
 
 jobs:
   check:
-    name: npm run check (lint + typecheck + tests + build)
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - name: unit tests
+            cmd: npm run test:ci
+          - name: lint
+            cmd: npm run lint
+          - name: typecheck
+            cmd: npm run typecheck
+          - name: build
+            cmd: npm run build
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -33,16 +46,22 @@ jobs:
           node-version: '22'
           cache: 'npm'
 
+      # Force npm 11 — Node 22 ships npm 10.x which has a flat-mode hoisting
+      # bug (only ~175 of ~530 packages install on this lockfile). AGENTS.md
+      # documents the workaround: a known-good npm must install the deps.
+      - name: Upgrade npm
+        run: npm install -g npm@latest
+
       - name: Install dependencies
         run: npm ci
 
-      # npm run check = test:ci + lint + typecheck + build (defined in package.json)
-      - name: Run full check
-        run: npm run check
+      - name: ${{ matrix.name }}
+        run: ${{ matrix.cmd }}
 
   cli-build:
     name: CLI builds (tsc)
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     permissions:
       contents: read
     steps:
@@ -54,6 +73,9 @@ jobs:
           node-version: '22'
           cache: 'npm'
           cache-dependency-path: cli/package-lock.json
+
+      - name: Upgrade npm
+        run: npm install -g npm@latest
 
       - name: Install CLI dependencies
         run: cd cli && npm ci
