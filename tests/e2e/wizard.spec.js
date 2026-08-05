@@ -238,9 +238,20 @@ test.describe('Wizard E2E Regression', () => {
       await expect(page.getByText('Step 2: GitHub')).toBeVisible();
       await expect(page.getByText('Step 3: Google Cloud')).toBeVisible();
 
-      // Step 3 is unlocked (GitHub pat injected) and its sections render
-      // once the e2e OIDC/vars setup dispatches EXPAND_STEP 3.
-      await expect(page.getByText('1. Connect Google Cloud & Service Account')).toBeVisible({ timeout: 15000 });
+      // Step 3 is unlocked (GitHub pat injected) and its sections render.
+      // Injection never dispatches EXPAND_STEP 3 on its own, so open the
+      // step by clicking its header (with a re-click guard in case the
+      // toggle collapsed it) — same pattern as the VM creation test.
+      const step3SectionOne = page.getByText('1. Connect Google Cloud & Service Account');
+      if (!(await step3SectionOne.isVisible().catch(() => false))) {
+        await page.getByText('Step 3: Google Cloud').first().click();
+        await page.waitForTimeout(400);
+      }
+      if (!(await step3SectionOne.isVisible().catch(() => false))) {
+        await page.getByText('Step 3: Google Cloud').first().click();
+        await page.waitForTimeout(400);
+      }
+      await expect(step3SectionOne).toBeVisible({ timeout: 10000 });
 
       console.log('Wizard e2e injection test passed: Steps 1-2 auto-completed, Step 3 unlocked with sections');
     });
