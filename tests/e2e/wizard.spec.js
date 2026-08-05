@@ -8,18 +8,6 @@ const E2E_USER = {
   password: process.env.E2E_TEST_PASSWORD || '',
 };
 
-// Fake SA JSON for parsing tests (not used for real API calls)
-const MOCK_SA_JSON = JSON.stringify({
-  type: 'service_account',
-  project_id: 'e2e-test-project',
-  private_key_id: 'abc123',
-  private_key: '-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCy\n-----END PRIVATE KEY-----\n',
-  client_email: 'e2e-test@e2e-test-project.iam.gserviceaccount.com',
-  client_id: '123456789',
-  auth_uri: 'https://accounts.google.com/o/oauth2/auth',
-  token_uri: 'https://oauth2.googleapis.com/token',
-});
-
 // GCP access token: generated in CI via gcloud auth print-access-token (WIF impersonation)
 const E2E_GCP_TOKEN = process.env.E2E_GCP_TOKEN || '';
 
@@ -60,40 +48,23 @@ const signIn = async (page) => {
   await page.waitForURL((url) => !url.pathname.includes('/login'), { timeout: 15000 });
 };
 
-// Helper: navigate to wizard and wait for auth to resolve
+// Helper: navigate to wizard and wait for it to render.
+// The wizard is reachable signed-out now (step 0 sign-in is optional), and the
+// Discord step (1) auto-expands for everyone on mount, so we wait on its header
+// rather than on auth-dependent text that gets collapsed once complete.
 const goToWizard = async (page) => {
   await page.goto(`${TEST_URL}/infra-setup`);
   await page.waitForLoadState('domcontentloaded');
-  // Wait for Firebase Auth to resolve — Step 1 shows "Signed in as" when ready
-  await expect(page.getByText(/Signed in as/).first()).toBeVisible({ timeout: 15000 });
-  // Wait for Step 2 auto-expand useEffect to fire (depends on [user] state)
+  await expect(page.getByText('Step 1: Discord Bot')).toBeVisible({ timeout: 15000 });
   await page.waitForTimeout(500);
 };
 
-// Helper: navigate to wizard with e2e credentials injected
+// Helper: navigate to wizard with e2e credentials injected.
+// extraParams.skipGithubPat:true keeps the GitHub step open (the test pastes
+// the PAT manually instead of letting the injection complete step 2).
 const navigateWithE2E = async (page, extraParams = {}) => {
+  const { skipGithubPat, ...restParams } = extraParams;
   const params = new URLSearchParams();
-
-  // Inject SA key JSON as __e2e_sa (base64-encoded JSON string)
-  if (process.env.E2E_SA_KEY) {
-    try {
-      let saJson;
-      const trimmed = process.env.E2E_SA_KEY.trim();
-      if (trimmed.startsWith('{')) {
-        saJson = trimmed;
-      } else {
-        saJson = Buffer.from(trimmed, 'base64').toString('utf-8');
-      }
-      const parsed = JSON.parse(saJson);
-      if (parsed.private_key) {
-        params.set('__e2e_sa', Buffer.from(saJson).toString('base64'));
-      } else {
-        console.warn('E2E_SA_KEY parsed but missing private_key field');
-      }
-    } catch (e) {
-      console.warn('E2E_SA_KEY is not valid JSON:', e.message);
-    }
-  }
 
   // Inject GCP access token via sessionStorage
   if (E2E_GCP_TOKEN) {
@@ -127,7 +98,7 @@ const navigateWithE2E = async (page, extraParams = {}) => {
     const minimalProduction = { projectId: productionProjectId };
     params.set('__e2e_firebase_production', Buffer.from(JSON.stringify(minimalProduction)).toString('base64'));
   }
-  if (process.env.E2E_GITHUB_PAT) {
+  if (process.env.E2E_GITHUB_PAT && !skipGithubPat) {
     params.set('__e2e_github_pat', Buffer.from(process.env.E2E_GITHUB_PAT).toString('base64'));
   }
   const projectName = process.env.E2E_PROJECT_NAME || (process.env.E2E_GCP_PROJECT_ID ? process.env.E2E_GCP_PROJECT_ID.replace(/-staging$|-production$/, '') : null);
@@ -151,30 +122,31 @@ const navigateWithE2E = async (page, extraParams = {}) => {
     params.set('__e2e_billing_enabled', Buffer.from('true').toString('base64'));
   }
 
-  for (const [key, val] of Object.entries(extraParams)) {
+  for (const [key, val] of Object.entries(restParams)) {
     if (val) params.set(key, val);
   }
 
   const qs = params.toString();
   await page.goto(`${TEST_URL}/infra-setup${qs ? '?' + qs : ''}`);
   await page.waitForLoadState('domcontentloaded');
-  // Firebase may briefly redirect to /login before auth state resolves
-  if (page.url().includes('/login')) {
-    await page.waitForURL((url) => !url.pathname.includes('/login'), { timeout: 20000 });
-    await page.waitForLoadState('domcontentloaded');
-  }
-  // Wait for Firebase Auth to resolve
-  await expect(page.getByText(/Signed in as/).first()).toBeVisible({ timeout: 15000 });
+  // No redirect to /login anymore — step 0 sign-in is optional.
+  await expect(page.getByText('Step 1: Discord Bot')).toBeVisible({ timeout: 15000 });
 };
 
 test.describe('Wizard E2E Regression', () => {
 
-  // ---------- Auth redirect tests (app mode only) ----------
-  test.describe('Auth Redirect', () => {
-    test('redirects unauthenticated user to login', async ({ page }) => {
+  // ---------- Signed-out access tests (app mode only) ----------
+  test.describe('Signed-out Access', () => {
+    test('loads wizard signed-out without redirect (optional sign-in)', async ({ page }) => {
       test.skip(process.env.E2E_APP_MODE !== 'true', 'Wizard route only available in app mode');
       await page.goto(`${TEST_URL}/infra-setup`);
-      await expect(page).toHaveURL(new RegExp('/login'), { timeout: 10000 });
+      await page.waitForLoadState('domcontentloaded');
+      // Must NOT bounce to /login — sign-in is optional persistence only.
+      await expect(page).toHaveURL(new RegExp(`/infra-setup`), { timeout: 10000 });
+      await expect(page.getByText('Step 0: Sign In (Optional)')).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Sign in with Google' })).toBeVisible();
+      // Discord step (1) auto-expands for signed-out users too — never locked.
+      await expect(page.getByText('Discord Bot Token:')).toBeVisible({ timeout: 10000 });
     });
   });
 
@@ -193,46 +165,31 @@ test.describe('Wizard E2E Regression', () => {
       ).toBeVisible();
     });
 
-    test('shows all 8 step headers', async ({ page }) => {
+    test('shows all 4 step headers', async ({ page }) => {
       await goToWizard(page);
       const steps = [
-        'Step 1: Account',
-        'Step 2: Service Account',
-        'Step 3: GCP Project',
-        'Step 4: Firebase Setup',
-        'Step 5: Billing Account',
-        'Step 6: GitHub Auth',
-        'Step 7: Discord Bot',
-        'Step 8: Create VM',
+        'Step 0: Sign In (Optional)',
+        'Step 1: Discord Bot',
+        'Step 2: GitHub',
+        'Step 3: Google Cloud',
       ];
       for (const step of steps) {
         await expect(page.getByText(step)).toBeVisible({ timeout: 10000 });
       }
     });
 
-    test('SA key textarea validates JSON', async ({ page }) => {
+    test('Discord step auto-expands after sign-in', async ({ page }) => {
       await goToWizard(page);
-
-      // Step 2 auto-expands after sign-in via useEffect — don't click the header
-      const textarea = page.getByPlaceholder(/service_account/);
-      await expect(textarea).toBeVisible({ timeout: 10000 });
-
-      // Invalid JSON — error appears on onChange (button stays disabled)
-      await textarea.fill('not valid json');
-      await expect(page.getByText('Invalid JSON')).toBeVisible();
-
-      // Valid JSON — button enables, click Continue
-      await textarea.fill(MOCK_SA_JSON);
-      await page.getByRole('button', { name: 'Continue', exact: true }).click();
-      // After Continue, step 2 completes — verify the textarea is no longer shown
-      // (step content collapses) and the step 3 content expands
-      await expect(page.getByText('Step 3: GCP Project')).toBeVisible({ timeout: 5000 });
+      // Step 1 (Discord) auto-expands on mount for everyone — token input visible
+      const tokenInput = page.getByPlaceholder(/MTE4/);
+      await expect(tokenInput).toBeVisible({ timeout: 10000 });
     });
 
     test('locked steps show correct message', async ({ page }) => {
       await goToWizard(page);
-      const lockMsg = page.getByText('Complete previous step first');
-      await expect(lockMsg.first()).toBeVisible({ timeout: 10000 });
+      // Step 3 is locked until GitHub (step 2) completes. Locked headers are
+      // not clickable — the lock note renders inline on the header.
+      await expect(page.getByText('(Complete previous step first)').first()).toBeVisible({ timeout: 10000 });
     });
 
     test('back to home link works', async ({ page }) => {
@@ -271,17 +228,21 @@ test.describe('Wizard E2E Regression', () => {
       // Navigate to wizard with e2e creds
       await navigateWithE2E(page);
 
-      // Wait for E2E injection to complete Steps 1-3
-      // The checkingCompletion effect collapses completed steps, so textarea should NOT be visible
-      await expect(page.getByPlaceholder(/service_account/)).not.toBeVisible({ timeout: 15000 });
+      // E2E injection completes Discord (step 1) + GitHub (step 2) — their
+      // bodies collapse, so the Discord token input should NOT be visible.
+      await expect(page.getByText('Discord Bot Token:')).not.toBeVisible({ timeout: 15000 });
 
-      // Steps 5-8 headers should be visible (always rendered, even when locked)
-      await expect(page.getByText('Step 5: Billing Account')).toBeVisible();
-      await expect(page.getByText('Step 6: GitHub Auth')).toBeVisible();
-      await expect(page.getByText('Step 7: Discord Bot')).toBeVisible();
-      await expect(page.getByText('Step 8: Create VM')).toBeVisible();
+      // All 4 headers always render (even when locked/complete)
+      await expect(page.getByText('Step 0: Sign In (Optional)')).toBeVisible();
+      await expect(page.getByText('Step 1: Discord Bot')).toBeVisible();
+      await expect(page.getByText('Step 2: GitHub')).toBeVisible();
+      await expect(page.getByText('Step 3: Google Cloud')).toBeVisible();
 
-      console.log('Wizard e2e injection test passed: Steps 1-3 auto-completed, Steps 5-8 visible');
+      // Step 3 is unlocked (GitHub pat injected) and its sections render
+      // once the e2e OIDC/vars setup dispatches EXPAND_STEP 3.
+      await expect(page.getByText('1. Connect Google Cloud & Service Account')).toBeVisible({ timeout: 15000 });
+
+      console.log('Wizard e2e injection test passed: Steps 1-2 auto-completed, Step 3 unlocked with sections');
     });
 
     test('creates VM and verifies wizard success', async ({ page }) => {
@@ -307,21 +268,28 @@ test.describe('Wizard E2E Regression', () => {
       // Navigate to wizard with e2e creds
       await navigateWithE2E(page);
 
-      // Wait for E2E injection to auto-complete Steps 1-3
-      await expect(page.getByPlaceholder(/service_account/)).not.toBeVisible({ timeout: 15000 });
+      // E2E injection auto-completes Discord + GitHub — Discord body collapses
+      await expect(page.getByText('Discord Bot Token:')).not.toBeVisible({ timeout: 15000 });
       await page.waitForTimeout(1000);
 
-      // Verify Step 8 is unlocked (E2E injection should complete Steps 1-7)
-      const step8Header = page.getByText('Step 8: Create VM').first();
-      await expect(step8Header).toBeVisible({ timeout: 10000 });
+      // Step 3 (Google Cloud) holds the Create VM section. The e2e auto-OIDC
+      // setup dispatches EXPAND_STEP 3 once all creds are injected, so the
+      // section usually appears on its own. If not, toggle the header (with
+      // a re-click guard in case the toggle collapsed it).
+      const sectionOne = page.getByText('1. Connect Google Cloud & Service Account');
+      if (!(await sectionOne.isVisible().catch(() => false))) {
+        await page.getByText('Step 3: Google Cloud').first().click();
+        await page.waitForTimeout(400);
+      }
+      if (!(await sectionOne.isVisible().catch(() => false))) {
+        await page.getByText('Step 3: Google Cloud').first().click();
+        await page.waitForTimeout(400);
+      }
+      await expect(sectionOne).toBeVisible({ timeout: 10000 });
 
       if (page.url().includes('/login')) {
         throw new Error('Redirected to /login — Firebase auth failed silently');
       }
-
-      // Go to Step 8: Create VM and click create
-      await step8Header.click();
-      await page.waitForTimeout(500);
 
       const createBtn = page.getByRole('button', { name: /Enable APIs & Create VM/i });
       await expect(createBtn).toBeVisible({ timeout: 5000 });
@@ -711,33 +679,33 @@ test.describe('Wizard E2E Regression', () => {
       }
     });
 
-    test('SA JSON upload flow works end-to-end', async ({ page }) => {
-      test.skip(!E2E_GCP_TOKEN || !process.env.E2E_FIREBASE_API_KEY,
-        'E2E_GCP_TOKEN and E2E_FIREBASE_API_KEY required');
+    test('GitHub PAT flow completes step 2 and unlocks step 3', async ({ page }) => {
+      test.skip(!process.env.E2E_GITHUB_PAT,
+        'E2E_GITHUB_PAT required — validates the PAT against the GitHub API');
+      test.skip(process.env.E2E_DISCORD_BOT_ADDED !== 'true',
+        'E2E_DISCORD_BOT_ADDED=true required — step 2 is locked until Discord completes');
+      test.skip(!process.env.E2E_GITHUB_OWNER || !process.env.E2E_PROJECT_NAME,
+        'E2E_GITHUB_OWNER and E2E_PROJECT_NAME required to derive the repo name');
 
       await signIn(page);
 
-      await goToWizard(page);
+      // Inject everything except the GitHub PAT so step 2 stays open for typing
+      await navigateWithE2E(page, { skipGithubPat: true });
 
-      // Step 2 auto-expands after sign-in — don't click the header
-      const textarea = page.getByPlaceholder(/service_account/);
-      await expect(textarea).toBeVisible({ timeout: 10000 });
+      // Discord (step 1) is completed via injection → GitHub (step 2) unlocks.
+      // Its body collapses, so expand the header to reach the PAT input.
+      await page.getByText('Step 2: GitHub').click();
+      await page.waitForTimeout(300);
 
-      const testSaJson = JSON.stringify({
-        type: 'service_account',
-        project_id: E2E_GCP_PROJECT_ID || 'e2e-test-project',
-        private_key_id: 'test-key-id',
-        private_key: '-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCy\n-----END PRIVATE KEY-----\n',
-        client_email: `e2e-test-runner@${E2E_GCP_PROJECT_ID || 'e2e-test-project'}.iam.gserviceaccount.com`,
-        client_id: '123456789',
-        auth_uri: 'https://accounts.google.com/o/oauth2/auth',
-        token_uri: 'https://oauth2.googleapis.com/token',
-      });
+      const patInput = page.getByPlaceholder(/ghp_/);
+      await expect(patInput).toBeVisible({ timeout: 10000 });
 
-      await textarea.fill(testSaJson);
-      await page.getByRole('button', { name: 'Continue', exact: true }).click();
-      // After Continue, step 2 completes and step 3 expands
-      await expect(page.getByText(E2E_GCP_PROJECT_ID || 'e2e-test-project')).toBeVisible({ timeout: 5000 });
+      await patInput.fill(process.env.E2E_GITHUB_PAT);
+      await page.getByRole('button', { name: 'Save GitHub Configuration' }).click();
+
+      // Save hits the GitHub API, derives owner/repo, and expands step 3
+      await expect(page.getByText('Step 3: Google Cloud')).toBeVisible({ timeout: 15000 });
+      await expect(page.getByText('1. Connect Google Cloud & Service Account')).toBeVisible({ timeout: 15000 });
     });
   });
 });
