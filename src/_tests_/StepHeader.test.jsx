@@ -29,19 +29,9 @@ describe('StepHeader', () => {
     expect(screen.queryByTestId('test-icon')).not.toBeInTheDocument();
   });
 
-  it('shows AlertTriangle when warning', () => {
-    render(<StepHeader {...defaultProps} isWarning />);
-    expect(screen.queryByTestId('test-icon')).not.toBeInTheDocument();
-  });
-
   it('shows locked text when locked', () => {
     render(<StepHeader {...defaultProps} isLocked />);
     expect(screen.getByText(/complete previous step first/i)).toBeInTheDocument();
-  });
-
-  it('shows re-authentication text when warning', () => {
-    render(<StepHeader {...defaultProps} isWarning />);
-    expect(screen.getByText(/re-authentication required/i)).toBeInTheDocument();
   });
 
   it('shows edit button when complete and onEdit provided', () => {
@@ -76,8 +66,5 @@ describe('StepHeader', () => {
 
     rerender(<StepHeader {...defaultProps} isComplete />);
     expect(container.firstChild.className).toContain('bg-green-50');
-
-    rerender(<StepHeader {...defaultProps} isWarning />);
-    expect(container.firstChild.className).toContain('bg-yellow-50');
   });
 });

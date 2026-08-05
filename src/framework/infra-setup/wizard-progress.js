@@ -1,22 +1,30 @@
 // wizard-progress — the deep module owning the wizard's progress invariant.
 //
-// State shape: { expandedSteps: number[], step3Complete: boolean }
+// State shape: { expandedSteps: number[] }
 //
-// Only `step3Complete` is owned here. Steps 1, 2, 4-8 are *derived* from
-// external signals (user, serviceAccountJson, firebase data, billing, etc.)
-// that the component already manages as the source of truth for inputs and
-// async results. Pulling those into the reducer would create a god-object;
-// the selectors below take them as a context arg instead.
+// The reducer owns ONLY the expanded-steps UI state. Step *completion* is
+// always derived from external signals the component already manages as the
+// source of truth (user, discordBotAdded, githubPat, vmIp, ...); the selectors
+// below take them as a context arg instead. There is deliberately no
+// completion flag in the reducer state (the legacy `step3Complete` flag was
+// removed in the 4-step consolidation — see map #27 / tickets #32-#33).
 //
-// The previous inline implementation had ~17 scattered setExpandedSteps
-// updater functions and ~12 setStep3Complete calls with no single place
-// defining "what advances a step." This module concentrates those rules:
-// callers dispatch named actions; the selectors are pure functions testable
-// without mounting the 5400-line component.
+// Step model (post-consolidation):
+//   step 0: OPTIONAL sign-in  — app auth = persistence only. Never locks the
+//                               next step (isStepLocked(1) is always false).
+//   step 1: Discord           — bot token + server invite. No GCP.
+//   step 2: GitHub            — PAT paste + repo vars. No GCP.
+//   step 3: GCP               — ONE Google consent powers all cloud work
+//                               (Firebase apps, deploy SAs + WIF, app-vm +
+//                               agent SA, billing link, secrets, create VM).
+//
+// The previous implementation had ~17 scattered setExpandedSteps updater
+// functions, ~12 setStep3Complete calls, and 8 completion cases; this module
+// concentrates the rules: callers dispatch named actions, and the selectors
+// are pure functions testable without mounting the 5400-line component.
 
 export const initialWizardProgress = {
-  expandedSteps: [1],
-  step3Complete: false,
+  expandedSteps: [0], // wizard opens on the optional sign-in card
 };
 
 export const wizardProgressReducer = (state, action) => {
@@ -45,19 +53,16 @@ export const wizardProgressReducer = (state, action) => {
     case 'EXPAND_NEXT': {
       const next = action.currentStepNum + 1;
       const filtered = state.expandedSteps.filter((s) => s !== action.currentStepNum);
-      if (next <= 9 && !filtered.includes(next)) return { ...state, expandedSteps: [...filtered, next] };
+      if (next <= 3 && !filtered.includes(next)) return { ...state, expandedSteps: [...filtered, next] };
       return { ...state, expandedSteps: filtered };
     }
     case 'CLEAR':
       return { ...state, expandedSteps: [] };
     case 'SET_EXPANDED':
       return { ...state, expandedSteps: action.steps };
-    case 'SET_STEP3_COMPLETE':
-      return { ...state, step3Complete: action.value };
     case 'REHYDRATE':
       return {
         expandedSteps: action.snapshot.expandedSteps ?? state.expandedSteps,
-        step3Complete: action.snapshot.step3Complete ?? state.step3Complete,
       };
     default:
       return state;
@@ -65,34 +70,29 @@ export const wizardProgressReducer = (state, action) => {
 };
 
 // Selectors take the external completion context so the reducer stays free
-// of inputs/async state. Mirrors the inline isStepCompleted at infra-setup.tsx.
+// of inputs/async state. All completion signals are derivable from ctx — no
+// flags, no step3Complete (map #27 / #32/#33).
 export const isStepCompleted = (state, ctx, step) => {
   switch (step) {
-    case 1: return !!ctx.user;
-    case 2: return !!ctx.serviceAccountJson;
-    case 3: return !!state.step3Complete;
-    case 4: return !!(ctx.firebaseStagingData?.projectId && ctx.firebaseProductionData?.projectId);
-    case 5: return ctx.billingEnabled === true;
-    case 6: return !!ctx.githubPat;
-    case 7: return !!ctx.discordBotAdded;
-    case 8: return !!ctx.vmIp;
+    case 0: return !!ctx.user; // optional sign-in (persistence only)
+    case 1: return !!ctx.discordBotAdded; // Discord
+    case 2: return !!ctx.githubPat; // GitHub
+    case 3: return !!ctx.vmIp; // GCP step done = VM created (or manual IP)
     default: return false;
   }
 };
 
+// Linear lock chain starts at Discord. Step 0 (optional sign-in) is excluded
+// from the chain entirely: isStepLocked(1) must be false even signed out.
 export const isStepLocked = (state, ctx, step) => {
-  if (step === 1) return false;
+  if (step === 0 || step === 1) return false;
   return !isStepCompleted(state, ctx, step - 1);
 };
 
+// Active = "the step the operator should currently be working on": the first
+// incomplete step of the linear chain. Step 0 is active only while nothing
+// else has been done (it offers sign-in, then yields to Discord).
 export const isStepActive = (state, ctx, step) => {
-  if (step === 1) return !isStepCompleted(state, ctx, 1);
+  if (step === 0) return !isStepCompleted(state, ctx, 0) && !isStepCompleted(state, ctx, 1);
   return isStepCompleted(state, ctx, step - 1) && !isStepCompleted(state, ctx, step);
-};
-
-export const isStepWarning = (state, ctx, step) => {
-  if (step === 2) {
-    return !!(ctx.projectId && ctx.gcpConnected && !ctx.serviceAccountJson);
-  }
-  return false;
 };

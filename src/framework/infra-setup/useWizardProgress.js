@@ -1,7 +1,7 @@
 // useWizardProgress — thin hook wrapping useReducer + the pure selectors.
 // Returns the reducer state, a bound dispatch, and the selectors bound to the
-// current state so JSX handlers stay terse (`isStepCompleted(3)` instead of
-// `isStepCompleted(state, ctx, 3)`). The completion context (external signals)
+// current state so JSX handlers stay terse (`isStepCompleted(1)` instead of
+// `isStepCompleted(state, ctx, 1)`). The completion context (external signals)
 // is passed once per render; the bound selectors close over it.
 import { useReducer, useCallback, useMemo } from 'react';
 import {
@@ -10,7 +10,6 @@ import {
   isStepCompleted as selectIsStepCompleted,
   isStepLocked as selectIsStepLocked,
   isStepActive as selectIsStepActive,
-  isStepWarning as selectIsStepWarning,
 } from './wizard-progress';
 
 export const useWizardProgress = (completionCtx) => {
@@ -31,10 +30,6 @@ export const useWizardProgress = (completionCtx) => {
     (step) => selectIsStepActive(state, completionCtx, step),
     [state, completionCtx]
   );
-  const isStepWarning = useCallback(
-    (step) => selectIsStepWarning(state, completionCtx, step),
-    [state, completionCtx]
-  );
 
   // Navigation helpers wrap dispatch so JSX onClick handlers stay one-liners.
   const toggleStep = useCallback((step) => dispatch({ type: 'TOGGLE_STEP', step }), []);
@@ -45,16 +40,14 @@ export const useWizardProgress = (completionCtx) => {
     () => ({
       state,
       expandedSteps: state.expandedSteps,
-      step3Complete: state.step3Complete,
       dispatch,
       isStepCompleted,
       isStepLocked,
       isStepActive,
-      isStepWarning,
       toggleStep,
       editStep,
       expandNextStep,
     }),
-    [state, isStepCompleted, isStepLocked, isStepActive, isStepWarning, toggleStep, editStep, expandNextStep]
+    [state, isStepCompleted, isStepLocked, isStepActive, toggleStep, editStep, expandNextStep]
   );
 };

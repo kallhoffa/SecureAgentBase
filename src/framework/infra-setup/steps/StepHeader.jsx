@@ -1,18 +1,13 @@
-import { Check, AlertTriangle } from 'lucide-react';
+import { Check } from 'lucide-react';
 
-const StepHeader = ({ stepNumber, title, icon, isComplete, isActive, isLocked, info, isWarning = false, onEdit = null, expandedSteps, toggleStep }) => {
+const StepHeader = ({ stepNumber, title, icon, isComplete, isActive, isLocked, info, onEdit = null, expandedSteps, toggleStep }) => {
   const baseClasses = "flex items-center justify-between w-full p-4 rounded-lg transition-all duration-200";
   let bgClasses = "bg-gray-50";
   let borderClasses = "border border-gray-200";
   let textClasses = "text-gray-500";
   let iconColor = "text-gray-400";
 
-  if (isWarning) {
-    bgClasses = "bg-yellow-50";
-    borderClasses = "border-2 border-yellow-500";
-    textClasses = "text-yellow-700";
-    iconColor = "text-yellow-600";
-  } else if (isComplete) {
+  if (isComplete) {
     bgClasses = "bg-green-50";
     borderClasses = "border-2 border-green-500";
     textClasses = "text-green-700";
@@ -39,9 +34,8 @@ const StepHeader = ({ stepNumber, title, icon, isComplete, isActive, isLocked, i
         disabled={isLocked}
         className={`flex items-center gap-3 flex-1 text-left ${isLocked ? 'cursor-not-allowed' : 'cursor-pointer'}`}
       >
-        {isComplete || isWarning ? (isWarning ? <AlertTriangle className={iconColor} size={24} /> : <Check className={iconColor} size={24} />) : icon}
+        {isComplete ? <Check className={iconColor} size={24} /> : icon}
         <span className={`font-semibold ${textClasses}`}>{title}</span>
-        {isWarning && <span className="text-xs text-yellow-600 ml-2">(Re-authentication required)</span>}
         {isLocked && <span className="text-xs text-gray-400 ml-2">(Complete previous step first)</span>}
         {info && (
           <div className="relative group">
