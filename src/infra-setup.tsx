@@ -6,7 +6,7 @@ import { doc, getDoc, collection, getDocs, query, where, serverTimestamp, Firest
 import { safeSet, safeDelete } from './guardrails/safe-firestore';
 import { validate } from './guardrails/validate';
 import { useRateLimit } from './guardrails/useRateLimit';
-import { Check, Copy, Upload, AlertTriangle, Trash2, ExternalLink, Shield, Server, Bot } from 'lucide-react';
+import { Check, AlertTriangle, Trash2, Shield, Server, Bot } from 'lucide-react';
 import { encryptData, decryptData } from './framework/infra-setup/crypto';
 import { CloudShellScript, getStartupScript } from './framework/infra-setup/scripts';
 import {
@@ -17,6 +17,32 @@ import {
 import { SCHEMAS } from './framework/infra-setup/schemas';
 import { StepHeader } from './framework/infra-setup/steps';
 import { useWizardProgress } from './framework/infra-setup/useWizardProgress';
+
+// URL builders. User-controlled values always flow through URLSearchParams or
+// encodeURIComponent so they are percent-encoded, never interpolated raw into
+// hrefs or request URLs (keeps CodeQL js/xss-through-dom and
+// js/client-side-request-forgery quiet and is genuinely safer).
+const buildDiscordInviteUrl = (clientId) => {
+  const url = new URL('https://discord.com/oauth2/authorize');
+  url.searchParams.set('client_id', clientId);
+  url.searchParams.set('permissions', '2147551248');
+  url.searchParams.set('integration_type', '0');
+  url.searchParams.set('scope', 'bot');
+  return url.toString();
+};
+
+const gcpConsoleUrl = (path, projectId) => {
+  const url = new URL(`https://console.cloud.google.com/${path}`);
+  if (projectId) url.searchParams.set('project', projectId);
+  return url.toString();
+};
+
+const gcpApiProjectUrl = (projectId, endpoint) => {
+  const url = new URL(
+    `https://cloudresourcemanager.googleapis.com/v1/projects/${encodeURIComponent(projectId)}:${endpoint}`
+  );
+  return url.toString();
+};
 
 interface Window {
   google?: {
@@ -117,7 +143,7 @@ const extractClientIdFromToken = (token) => {
 };
 
 const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
-  const { user } = useAuth();
+  const { user, signInWithGoogle } = useAuth();
   const navigate = useNavigate();
   const { addNotification } = useNotification();
 
@@ -128,6 +154,7 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
   const githubRateLimit = useRateLimit('upload-github-vars', 5);
   const firebaseRateLimit = useRateLimit('setup-firebase', 5);
   const discordRateLimit = useRateLimit('create-discord-bot', 5);
+  const githubSaveRateLimit = useRateLimit('save-github-pat', 5);
 
   const [projectId, setProjectId] = useState('');
   const [serviceAccountKey, setServiceAccountKey] = useState(null);
@@ -149,7 +176,6 @@ const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [mergeStatus, setMergeStatus] = useState(null);
   
   const [gcpConnected, setGcpConnected] = useState(false);
@@ -163,6 +189,8 @@ const [loading, setLoading] = useState(true);
   const [godSaEmail, setGodSaEmail] = useState(null);
 
   const [gcpConfigLost, setGcpConfigLost] = useState(false);
+  const [gcpConsentEmail, setGcpConsentEmail] = useState('');
+  const [gcpEmailMismatch, setGcpEmailMismatch] = useState(false);
   const [checkingCompletion, setCheckingCompletion] = useState(true);
 
   const [projects, setProjects] = useState([]);
@@ -243,8 +271,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   const [autoConfiguringFirebase, setAutoConfiguringFirebase] = useState(false);
   const [firebaseAutoConfigMessage, setFirebaseAutoConfigMessage] = useState('');
 
-  // Wizard progress reducer — owns { expandedSteps, step3Complete } and derives
-  // step completion from the external signals below. Replaces the legacy inline
+  // Wizard progress reducer — owns expandedSteps and derives step completion
+  // from the external signals below. Replaces the legacy inline
   // isStepCompleted/isStepLocked/isStepActive/isStepWarning + setExpandedSteps +
   // setStep3Complete scattered across the component. See wizard-progress.js.
   const wizard = useWizardProgress({
@@ -259,7 +287,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     projectId,
     gcpConnected,
   });
-  const { expandedSteps, step3Complete } = wizard;
+  const { expandedSteps } = wizard;
 
   const addStep3Log = (message) => {
     const timestamp = new Date().toLocaleTimeString();
@@ -476,7 +504,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
   const fetchFirebaseProjects = async () => {
     if (!gcpAccessToken) {
-      setError('Please sign in to Google (Step 1) to load Firebase projects.');
+      setError('Please sign in to Google (Step 3) to load Firebase projects.');
       return;
     }
     setLoadingFirebaseProjects(true);
@@ -536,20 +564,29 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     const token = useSaToken ? (await getServiceAccountToken()) : gcpAccessToken;
     if (!token) throw new Error('No auth token available');
 
-    const policyResp = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${projectIdVal}:getIamPolicy`, {
+    // Only ever send requests for a syntactically valid project ID.
+    const projectErr = validate({ projectId: projectIdVal }, { projectId: SCHEMAS.projectId });
+    if (projectErr) throw new Error(projectErr.projectId);
+
+    const policyResp = await fetch(gcpApiProjectUrl(projectIdVal, 'getIamPolicy'), {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${token}` }
     });
     if (policyResp.ok) {
       const policy = await policyResp.json();
       const bindings = policy.bindings || [];
-      addMemberToBinding(bindings, 'roles/firebase.admin', `user:${user?.email || ''}`);
-      await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${projectIdVal}:setIamPolicy`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ policy: { bindings, etag: policy.etag } })
-      });
-      await new Promise(r => setTimeout(r, 15000));
+      // Grant firebase.admin to the GCP consent account's email (the account
+      // that owns the OAuth token); fall back to the app-auth email.
+      const grantEmail = gcpConsentEmail || user?.email || '';
+      if (grantEmail) {
+        addMemberToBinding(bindings, 'roles/firebase.admin', `user:${grantEmail}`);
+        await fetch(gcpApiProjectUrl(projectIdVal, 'setIamPolicy'), {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ policy: { bindings, etag: policy.etag } })
+        });
+        await new Promise(r => setTimeout(r, 15000));
+      }
     }
 
     await addFirebaseToProject(token, projectIdVal);
@@ -597,7 +634,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
   const handleSetupExistingFirebase = async () => {
     if (!gcpAccessToken) {
-      setError('Please sign in to Google (Step 1) first.');
+      setError('Please sign in to Google (Step 3) first.');
       return;
     }
     if (!projectName && !selectedFirebaseStagingProject && !selectedFirebaseProductionProject) {
@@ -673,7 +710,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
       setFirebaseAutoConfigMessage('Firebase configuration complete!');
       addNotification('Firebase projects configured successfully!', 'success');
-      wizard.dispatch({ type: 'COLLAPSE_AND_EXPAND', remove: [4], add: 5 });
+      wizard.dispatch({ type: 'EXPAND_STEP', step: 3 });
       await saveConfig({ firebase_staging: stagingConfig, firebase_production: productionConfig }).catch(() => {});
     } catch (e) {
       console.error(e);
@@ -755,7 +792,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       if (err.message?.includes('401')) {
         setGcpAccessToken(null);
         setOidcSetupStep('Failed: Google Cloud session expired');
-        setError('Your Google Cloud session has expired. Click "Connect Google Cloud Account" in Step 4 to refresh, then try again.');
+        setError('Your Google Cloud session has expired. Click "Connect Google Cloud Account" in Step 3 to refresh, then try again.');
       } else {
         setOidcSetupStep(`Failed: ${err.message}`);
         setError('OIDC setup failed: ' + err.message);
@@ -1125,8 +1162,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
     console.warn('Billing API returned 403 on both user and SA tokens — cannot determine billing status.');
     
-    // Auto-fix: grant user billing role and poll with backoff
-    if (gcpAccessToken && projectId && user?.email) {
+    // Auto-fix: grant the GCP consent account's billing role and poll with backoff
+    if (gcpAccessToken && projectId && (gcpConsentEmail || user?.email)) {
       console.log('checkBillingStatus: trying grantUserBillingRole');
       const granted = await grantUserBillingRole();
       console.log('checkBillingStatus: grantUserBillingRole returned', granted);
@@ -1217,8 +1254,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       }
     }
 
-    // Fallback 3: grant user billing role and retry with backoff
-    if (gcpAccessToken && projectId && user?.email) {
+    // Fallback 3: grant the GCP consent account's billing role and retry with backoff
+    if (gcpAccessToken && projectId && (gcpConsentEmail || user?.email)) {
       console.log('fetchBillingAccounts: trying grantUserBillingRole');
       const granted = await grantUserBillingRole();
       console.log('fetchBillingAccounts: grantUserBillingRole returned', granted);
@@ -1491,8 +1528,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   };
 
   const grantUserBillingRole = async (maxRetries = 5) => {
-    if (!gcpAccessToken || !projectId || !user?.email) {
-      console.log('grantUserBillingRole: missing deps', { hasToken: !!gcpAccessToken, projectId, hasEmail: !!user?.email });
+    // Grant billing.projectManager to the GCP consent account's email (the
+    // account that owns the OAuth token). Falls back to the app-auth email.
+    const targetEmail = gcpConsentEmail || user?.email;
+    if (!gcpAccessToken || !projectId || !targetEmail) {
+      console.log('grantUserBillingRole: missing deps', { hasToken: !!gcpAccessToken, projectId, hasEmail: !!targetEmail });
       return false;
     }
     for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -1510,7 +1550,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         const policy = await policyResp.json();
         const bindings = policy.bindings || [];
         console.log('grantUserBillingRole: current bindings:', bindings.map(b => b.role));
-        addMemberToBinding(bindings, 'roles/billing.projectManager', `user:${user.email}`);
+        addMemberToBinding(bindings, 'roles/billing.projectManager', `user:${targetEmail}`);
         console.log('grantUserBillingRole: setting IAM policy (attempt', attempt + 1, ')');
         const setResp = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${projectId}:setIamPolicy`, {
           method: 'POST',
@@ -1539,15 +1579,17 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   };
 
   const grantGcpRolesProgrammatically = async (token, gcpProjectId, saEmail, userEmail) => {
+    // Minimal role set for the identity-only agent SA (#29): enough to create
+    // the VM, read billing/secret metadata, and impersonate — no project-level
+    // power (firebase.admin / workloadIdentityPoolAdmin / securityAdmin dropped).
     const roles = [
-      'roles/compute.admin',
+      'roles/compute.instanceAdmin.v1',
+      'roles/billing.user',
+      'roles/billing.viewer',
+      'roles/serviceusage.serviceUsageAdmin',
       'roles/iam.serviceAccountUser',
       'roles/iam.serviceAccountTokenCreator',
-      'roles/billing.projectManager',
-      'roles/serviceusage.serviceUsageAdmin',
-      'roles/iam.workloadIdentityPoolAdmin',
-      'roles/iam.securityAdmin',
-      'roles/firebase.admin'
+      'roles/secretmanager.secretAccessor',
     ];
 
     const policyResp = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${gcpProjectId}:getIamPolicy`, {
@@ -1698,7 +1740,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
   const handleAutoGenerateServiceAccount = async (targetProjectId) => {
     if (!gcpAccessToken) {
-      setError('Please sign in to Google (Step 1) to enable auto-generation.');
+      setError('Please sign in to Google (Step 3) to enable auto-generation.');
       return;
     }
     const errors = validate({ projectId: targetProjectId }, { projectId: SCHEMAS.projectId });
@@ -1719,29 +1761,25 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       const saEmail = await createServiceAccountProgrammatically(token, targetProjectId);
       
       setSaAutoProgress('Assigning IAM permissions (this takes a few seconds)...');
-      await grantGcpRolesProgrammatically(token, targetProjectId, saEmail, user?.email);
+      await grantGcpRolesProgrammatically(token, targetProjectId, saEmail, gcpConsentEmail || user?.email);
 
       setSaAutoProgress('Granting agent SA impersonation access...');
       await grantAgentSaTokenCreator(token, targetProjectId, saEmail);
-      
-      setSaAutoProgress('Generating security key file...');
-      const keyJson = await generateServiceAccountKeyProgrammatically(token, targetProjectId, saEmail);
 
+      // Identity-only agent service account: no key file is generated. The
+      // wizard operates entirely on the operator's Google OAuth token (the
+      // SA-key upload path is gone), so the agent SA is created for IAM
+      // purposes only and never produces a private key.
       setGodSaEmail(saEmail);
-      setServiceAccountJson(keyJson);
       setProjectId(targetProjectId);
-      wizard.dispatch({ type: 'SET_STEP3_COMPLETE', value: true });
-      
-      wizard.dispatch({ type: 'COLLAPSE_AND_EXPAND', remove: [2, 3], add: 4 });
       setSaAutoProgress('');
       
       await saveConfig({
         gcp_project_id: targetProjectId,
-        service_account_configured: true,
       });
       
-      addOidcLog('Service Account automatically generated and configured successfully!');
-      addNotification('Service Account automatically generated and configured successfully!', 'success');
+      addOidcLog('Agent service account created and configured successfully!');
+      addNotification('Agent service account created and configured successfully!', 'success');
     } catch (e) {
       console.error(e);
       setError('Auto-generation failed: ' + e.message);
@@ -1749,10 +1787,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     } finally {
       setAutoGeneratingSa(false);
     }
-  };
-
-  const hasGcpAccess = () => {
-    return !!(projectId && serviceAccountJson);
   };
 
   // Step navigation + completion selectors come from the wizardProgress hook
@@ -1763,7 +1797,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     isStepCompleted,
     isStepLocked,
     isStepActive,
-    isStepWarning,
     toggleStep,
     editStep,
     expandNextStep,
@@ -1819,7 +1852,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     if (!googleClient) return null;
     return googleClient.accounts.oauth2.initTokenClient({
       client_id: clientId,
-      scope: 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/cloud-billing.readonly',
+      scope: 'openid email https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/cloud-billing.readonly',
       prompt: 'consent select_account',
       callback: async (response) => {
         if (response.error) {
@@ -1832,13 +1865,19 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
             console.warn('cloud-platform scope not granted — token may be restricted');
             setError('Google OAuth did not grant cloud-platform access. Try reconnecting and selecting an account with GCP billing access.');
           }
+          // The consent account's email (granted via openid email) is the
+          // account we grant IAM roles to — NOT the app-auth account (which
+          // may be a different Google account or absent entirely).
+          const consentEmail = (response as any).email || '';
+          setGcpConsentEmail(consentEmail);
+          setGcpEmailMismatch(!!(user?.email && consentEmail && user.email !== consentEmail));
           setGcpAccessToken(response.access_token);
           setGcpTokenExpiry(Date.now() + (((response as any).expires_in || 3600) - 60) * 1000);
           setGcpConnected(true);
           setGcpConfigLost(false);
           
           const projects = await fetchGcpProjects(response.access_token);
-          expandNextStep(1);
+          expandNextStep(3);
           
           if (user) {
             try {
@@ -1882,7 +1921,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         const existingProject = listData.projects?.find(p => p.projectId === projectIdVal);
         if (existingProject) {
           setProjectId(projectIdVal);
-          wizard.dispatch({ type: 'SET_STEP3_COMPLETE', value: true });
           setBillingChecking(true);
           await checkBillingStatus();
           setBillingChecking(false);
@@ -1928,7 +1966,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         }
       }
       
-      wizard.dispatch({ type: 'SET_STEP3_COMPLETE', value: true });
       setBillingChecking(true);
       await checkBillingStatus();
       setBillingChecking(false);
@@ -2067,7 +2104,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       const checkData = await checkResponse.json();
       if (checkData.items?.length > 0) {
         setVmIp(checkData.items[0].networkInterfaces[0].accessConfigs[0].natIP);
-        wizard.dispatch({ type: 'SET_STEP3_COMPLETE', value: true });
         expandNextStep(5);
         setCreatingVm(false);
         return;
@@ -2127,10 +2163,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       
       if (ip) {
         setVmIp(ip);
-        wizard.dispatch({ type: 'SET_STEP3_COMPLETE', value: true });
         expandNextStep(5);
       } else {
-        wizard.dispatch({ type: 'SET_STEP3_COMPLETE', value: true });
         expandNextStep(5);
       }
     } catch (err) {
@@ -2178,7 +2212,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           setServiceAccountJson(saJson);
           setGodSaEmail(saJson.client_email || (saJson.project_id ? `secureagent@${saJson.project_id}.iam.gserviceaccount.com` : null));
           if (saJson.project_id) setProjectId(saJson.project_id);
-          wizard.dispatch({ type: 'SET_STEP3_COMPLETE', value: true });
         }
       } catch (e) {
         console.warn('E2E: Failed to parse __e2e_sa param:', e);
@@ -2186,7 +2219,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     }
     if (e2eProjectId) {
       setProjectId(e2eProjectId);
-      wizard.dispatch({ type: 'SET_STEP3_COMPLETE', value: true });
     }
     if (e2eToken) {
       try {
@@ -2409,14 +2441,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
         if (!isE2EMode && configData.god_sa_email) setGodSaEmail(configData.god_sa_email);
 
-        const formProgress = loadFormProgress();
-        
-        if (!formProgress?.step3Complete && (configData.step3_complete || (configData.gcp_project_id && configData.billing_enabled))) {
-          wizard.dispatch({ type: 'SET_STEP3_COMPLETE', value: true });
-        }
-        
-        if (configData.vm_ip && !expandedSteps.includes(8)) {
-          wizard.dispatch({ type: 'EXPAND_STEP', step: 8 });
+        if (configData.vm_ip && !expandedSteps.includes(3)) {
+          wizard.dispatch({ type: 'EXPAND_STEP', step: 3 });
         }
 
         if (configData.gcp_project_id && !configData.gcp_access_token) {
@@ -2478,10 +2504,14 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   }, [projectId, serviceAccountJson, discordBotToken, githubPat, firebaseConfigStaging, firebaseConfigProduction, vmIp, vmZone, useFirestore, user, projectName, passphrase, selectedProjectId]);
 
   useEffect(() => {
-    if (user && !expandedSteps.includes(2) && isStepLocked(2) === false) {
-      wizard.dispatch({ type: 'EXPAND_STEP', step: 2 });
+    // Auto-expand the first actionable step on mount. Step 0 (Sign In) is
+    // optional, so the Discord step is always the first unlocked step for
+    // signed-out users. Deliberately mount-only: no user dependency.
+    if (!expandedSteps.includes(1) && isStepLocked(1) === false) {
+      wizard.dispatch({ type: 'EXPAND_STEP', step: 1 });
     }
-  }, [user]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!vmIp) return;
@@ -2577,75 +2607,32 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     if (!discordBotToken || discordInviteUrl || !discordClientId) return;
 
     // Generate invite URL using manually entered Client ID
-    const perms = '2147551248';
-    const url = `https://discord.com/oauth2/authorize?client_id=${discordClientId}&permissions=${perms}&integration_type=0&scope=bot`;
+    const url = buildDiscordInviteUrl(discordClientId);
     setDiscordInviteUrl(url);
     console.log('Discord invite URL regenerated from saved token and client ID');
   }, [discordBotToken, discordClientId]);
 
-  // Check billing when Step 5 (Billing) opens
+  // Check billing when the GCP step opens
   useEffect(() => {
-    if (expandedSteps.includes(5) && isStepCompleted(4) && projectId && gcpAccessToken) {
+    if (expandedSteps.includes(3) && projectId && gcpAccessToken) {
       setBillingChecking(true);
       (async () => {
         await checkBillingStatus();
         await fetchBillingAccounts();
       })().catch(() => {}).finally(() => setBillingChecking(false));
     }
-  }, [expandedSteps, isStepCompleted(4), gcpAccessToken, projectId]);
-
-  const handleFileUpload = async (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    if (!file.name.endsWith('.json')) {
-      setError('Please upload a JSON file');
-      return;
-    }
-
-    setUploading(true);
-    setError(null);
-
-    try {
-      const text = await file.text();
-      const parsed = JSON.parse(text);
-
-      if (!parsed.private_key || !parsed.client_email) {
-        throw new Error('Invalid service account key format');
-      }
-
-      setServiceAccountKey(parsed);
-      setServiceAccountJson(parsed);
-      
-      if (user) {
-        try {
-          await safeSet(db, INFRA_COLLECTION, user.uid, {
-            service_account_email: parsed.client_email,
-            service_account_project_id: parsed.project_id,
-            service_account_configured: true,
-            updated_at: new Date().toISOString(),
-          }, user.uid, { allowFields: ['service_account_email', 'service_account_project_id', 'service_account_configured', 'updated_at'], merge: true });
-        } catch (err) {
-          console.error('Error auto-saving service account:', err);
-        }
-      }
-    } catch (err) {
-      setError('Invalid JSON or missing required fields');
-      console.error('Error parsing key file:', err);
-    }
-
-    setUploading(false);
-  };
+  }, [expandedSteps, gcpAccessToken, projectId]);
 
   const saveConfig = async (configData) => {
     const finalData = {
       ...configData,
       gcp_project_id: projectId.trim(),
       github_app_installed: githubAppInstalled,
-      service_account_configured: !!serviceAccountKey || !!serviceAccountJson || gcpConnected,
+      github_repo: githubRepoName,
       god_sa_email: godSaEmail,
-      vm_ip: vmIp,
-      step3_complete: step3Complete,
+      // Explicit vm_ip in configData wins over state — handleManualVMIP sets
+      // state asynchronously and would otherwise persist a stale/empty value.
+      vm_ip: configData.vm_ip !== undefined ? configData.vm_ip : vmIp,
       firebase_staging_project_id: firebaseStagingData?.projectId || null,
       firebase_production_project_id: firebaseProductionData?.projectId || null,
       updated_at: new Date().toISOString(),
@@ -2655,10 +2642,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       await safeSet(db, INFRA_COLLECTION, user.uid, finalData, user.uid, {
         allowFields: [
           'gcp_project_id', 'gcp_connected', 'gcp_token_expiry',
-          'service_account_email', 'service_account_project_id', 'service_account_configured',
-          'service_account_key',
-          'github_app_installed', 'god_sa_email', 'vm_ip',
-          'step3_complete',
+          'service_account_email', 'service_account_project_id', 'service_account_key',
+          'github_app_installed', 'god_sa_email', 'vm_ip', 'github_repo',
           'firebase_staging_project_id', 'firebase_production_project_id',
           'discord_bot_token', 'discord_client_id', 'discord_guild_id',
           'updated_at'
@@ -2857,8 +2842,9 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       setUseFirestore(false);
       setPendingDecryptProject(null);
       
-      wizard.dispatch({ type: 'SET_STEP3_COMPLETE', value: false });
       setGcpConfigLost(false);
+      setGcpConsentEmail('');
+      setGcpEmailMismatch(false);
       
       wizard.dispatch({ type: 'CLEAR' });
       setError(null);
@@ -2939,7 +2925,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       return;
     }
     
-    wizard.dispatch({ type: 'COLLAPSE_AND_EXPAND', remove: [4], add: 5 });
+    wizard.dispatch({ type: 'EXPAND_STEP', step: 3 });
     try {
       await saveConfig({
         firebase_staging: stagingConfig,
@@ -2975,8 +2961,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     const log = (msg) => addStep4Log(msg);
     const processLabel = isRecreate ? 'recreation' : 'creation';
 
-    if (!serviceAccountJson || !projectId) {
-      setError('Service account and project ID required');
+    if (!projectId || !gcpAccessToken) {
+      setError('GCP project and Google Cloud connection required');
       return;
     }
     if (!vmRateLimit.check()) {
@@ -3001,40 +2987,31 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     setStep4Message('Checking billing status...');
     log(`Starting VM ${processLabel} process...`);
 
-    // Check billing with user's OAuth token first
+    // Check billing with user's OAuth token first. Billing must be linked
+    // manually (or via the Billing section above) — the wizard never
+    // auto-links an account on the operator's behalf.
     const billingOk = await checkBillingStatus();
     if (billingOk === null) {
       log('Billing API not accessible, skipping auto-check');
     } else if (billingOk === true) {
       log('Billing is enabled');
     } else {
-      log('Billing not enabled - attempting to link billing account...');
-      const accounts = await fetchBillingAccounts();
-      if (accounts.length > 0 && gcpAccessToken) {
-        setSelectedBillingAccount(accounts[0].name);
-        setError(null);
-        await linkBillingAccount(accounts[0].name);
-      }
-      // Re-check billing after linking attempt
-      const stillOk = await checkBillingStatus();
-      if (!stillOk) {
-        setError(`Billing is required. Link a billing account at https://console.cloud.google.com/billing/linkedaccount?project=${projectId} then retry.`);
-        setStep4Status('error');
-        return;
-      }
-      log('Billing account linked successfully');
-    }
-
-    setStep4Message('Getting service account token...');
-    log('Authenticating service account...');
-
-    const token = await getServiceAccountToken();
-    if (!token) {
-      setError('Failed to authenticate with service account');
+      log('Billing not enabled - operator must link a billing account first');
+      setError(`Billing is required. Link a billing account at https://console.cloud.google.com/billing/linkedaccount?project=${projectId} then retry.`);
       setStep4Status('error');
       return;
     }
-    log('Service account authenticated');
+
+    setStep4Message('Getting Google Cloud access token...');
+    log('Authenticating with Google Cloud...');
+
+    const token = await getAccessToken();
+    if (!token) {
+      setError('Failed to authenticate with Google Cloud. Reconnect your Google account in Step 3.');
+      setStep4Status('error');
+      return;
+    }
+    log('Google Cloud authenticated');
 
     const apis = [
       { name: 'compute.googleapis.com', displayName: 'Compute Engine API' },
@@ -3201,6 +3178,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           if (ip) {
             setVmIp(ip);
             log(`VM ready at ${ip}`);
+            // Persist so a reload/rehydrate can restore step-3 completion.
+            await saveConfig({ vm_ip: ip }).catch(() => {});
           }
           vmCreated = true;
           setStep4Status('complete');
@@ -3209,7 +3188,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           setVmInitComplete(false);
           setKimakiInstallUrl('');
           setShowInitModal(true);
-          expandNextStep(8);
+          expandNextStep(3);
           break;
         } else {
           const err = await vmResponse.json();
@@ -3346,7 +3325,10 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     const ip = prompt('Enter your Kimaki VM IP address:');
     if (ip) {
       setVmIp(ip);
-      saveConfig({ vm_ip: ip });
+      saveConfig({ vm_ip: ip }).catch((err) => {
+        console.error('Failed to save manual VM IP:', err);
+        setError('VM IP saved in memory but failed to persist: ' + err.message);
+      });
     }
   };
 
@@ -3374,7 +3356,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
     const oidcData = await setupOidcInfrastructure(actualRepoName);
     if (!oidcData) {
-      throw new Error('Google Cloud session expired. Click "Connect Google Cloud Account" in Step 4 to refresh, then try again.');
+      throw new Error('Google Cloud session expired. Click "Connect Google Cloud Account" in Step 3 to refresh, then try again.');
     }
 
     await saveConfig({
@@ -3386,7 +3368,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     setGithubVarUploaded(true);
     setRepoCollision(null);
     setRepoCollisionChoice(null);
-    wizard.dispatch({ type: 'COLLAPSE_AND_EXPAND', remove: [7], add: 8 });
+    wizard.dispatch({ type: 'EXPAND_STEP', step: 3 });
   };
 
   const handleCreateDiscordBot = async () => {
@@ -3401,22 +3383,13 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       return;
     }
 
-    if (!hasGcpAccess()) {
-      const missing = [];
-      if (!projectId) missing.push('GCP Project ID');
-      if (!serviceAccountJson) missing.push('Service Account Key');
-      setError(`Missing: ${missing.join(', ')}. Complete Step 2 to configure.`);
-      return;
-    }
-
     setSaving(true);
     setError(null);
     setDiscordDetecting(true);
 
     try {
       // Generate invite URL using the manually entered Client ID
-      const perms = '2147551248'; // Send Messages, Read History, Manage Channels, Use Slash Commands
-      const inviteUrl = `https://discord.com/oauth2/authorize?client_id=${discordClientId}&permissions=${perms}&integration_type=0&scope=bot`;
+      const inviteUrl = buildDiscordInviteUrl(discordClientId);
       setDiscordInviteUrl(inviteUrl);
 
       // Discord guild detection now happens server-side on the VM
@@ -3447,7 +3420,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   const handleBotAdded = () => {
     setDiscordBotAdded(true);
     saveConfig({ discord_bot_added: true });
-    wizard.dispatch({ type: 'COLLAPSE_AND_EXPAND', remove: [7], add: 8 });
+    wizard.dispatch({ type: 'COLLAPSE_AND_EXPAND', remove: [1], add: 2 });
   };
 
   const pendingConfig = !user && loadFromLocalStorage();
@@ -3548,7 +3521,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
               setFirebaseConfigStaging('');
               setFirebaseConfigProduction('');
               setVmIp('');
-              wizard.dispatch({ type: 'SET_STEP3_COMPLETE', value: false });
             }}
             className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg flex items-center gap-1"
           >
@@ -3663,22 +3635,22 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                         setVmZone(decrypted.vm.zone || 'us-east1-b');
                       }
                       const hasProjectId = !!decrypted.gcp?.projectId;
-                      const hasServiceAccount = !!decrypted.gcp?.serviceAccountJson;
                       const hasFirebase = !!(decrypted.firebase?.staging && decrypted.firebase?.production);
                       const hasGithub = !!decrypted.github?.pat;
                       const hasDiscord = !!decrypted.gcp?.discordBotToken;
                       const hasVm = !!decrypted.vm?.ip;
+                      const hasGcp = hasFirebase || hasVm || hasProjectId;
                       
+                      // Resume into the 4-step structure: advance from Discord
+                      // (1) → GitHub (2) → Google Cloud (3) based on what the
+                      // decrypted project already has.
                       let nextStep = 1;
-                      if (user) nextStep = 2;
-                      if (hasServiceAccount) nextStep = 3;
-                      if (hasFirebase) nextStep = 4;
-                      if (hasGithub) nextStep = 5;
-                      if (hasDiscord) nextStep = 6;
-                      if (hasVm) nextStep = 7;
+                      if (hasDiscord) nextStep = 2;
+                      if (hasGithub) nextStep = 3;
+                      if (hasGcp) nextStep = 3;
                       
                       const newExpanded = [nextStep];
-                      if (hasVm && !newExpanded.includes(7)) newExpanded.push(7);
+                      if (hasGcp && !newExpanded.includes(3)) newExpanded.push(3);
                       wizard.dispatch({ type: 'SET_EXPANDED', steps: newExpanded });
                       setGcpConfigLost(false);
                       setPendingDecryptProject(null);
@@ -3820,10 +3792,12 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       )}
 
       <div className="space-y-4">
+
+        {/* Step 0: Sign In (Optional) */}
         <div className="space-y-2">
-          <StepHeader stepNumber={1} title="Step 1: Account" icon={<Shield className="text-blue-600" size={24} />} isComplete={isStepCompleted(1)} isActive={isStepActive(1)} isLocked={isStepLocked(1)} info="Sign in to continue." expandedSteps={expandedSteps} toggleStep={toggleStep} />
-          
-          {expandedSteps.includes(1) && (
+          <StepHeader stepNumber={0} title="Step 0: Sign In (Optional)" icon={<Shield className="text-blue-600" size={24} />} isComplete={isStepCompleted(0)} isActive={isStepActive(0)} isLocked={isStepLocked(0)} info="Optional - saves your configuration so you can resume later. All steps below work without an account." expandedSteps={expandedSteps} toggleStep={toggleStep} />
+        
+          {expandedSteps.includes(0) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
               {user ? (
                 <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
@@ -3831,30 +3805,251 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                   <span className="font-medium">Signed in as {user.email}</span>
                 </div>
               ) : (
-                <p className="text-gray-600">Please sign in to continue.</p>
+                <div className="space-y-3">
+                  <p className="text-gray-600">
+                    Signing in is optional - it only persists your configuration so you can resume later. All steps below work without an account.
+                  </p>
+                  <button
+                    onClick={async () => {
+                      setError(null);
+                      try {
+                        await signInWithGoogle();
+                      } catch (err) {
+                        setError('Sign-in failed: ' + err.message);
+                      }
+                    }}
+                    className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium"
+                  >
+                    Sign in with Google
+                  </button>
+                </div>
               )}
             </div>
           )}
         </div>
 
+        {/* Step 1: Discord Bot */}
         <div className="space-y-2">
-          <StepHeader stepNumber={2} title="Step 2: Service Account" icon={<Upload className="text-blue-600" size={24} />} isComplete={isStepCompleted(2)} isActive={isStepActive(2)} isLocked={isStepLocked(2)} info="Create a service account in your GCP project and paste the JSON key. This lets us create VMs without accessing your personal account." isWarning={isStepWarning(2)} onEdit={() => editStep(2)} expandedSteps={expandedSteps} toggleStep={toggleStep} />
-          
-          {expandedSteps.includes(2) && !isStepCompleted(1) && (
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
-              Complete Step 1 first to unlock this step.
-            </div>
-          )}
+          <StepHeader stepNumber={1} title="Step 1: Discord Bot" icon={<Bot className="text-blue-600" size={24} />} isComplete={isStepCompleted(1)} isActive={isStepActive(1)} isLocked={isStepLocked(1)} info="Configure your Discord bot token and server. The VM will use this to interact with Discord." onEdit={() => editStep(1)} expandedSteps={expandedSteps} toggleStep={toggleStep} />
+        
+          {expandedSteps.includes(1) && (
+            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
+                     <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                       <p className="text-blue-800 font-medium mb-2">Create a Discord bot:</p>
+                        <ol className="list-decimal list-inside space-y-2 text-blue-700 text-sm">
+                          <li>Go to <a href="https://discord.com/developers/applications" target="_blank" rel="noopener noreferrer" className="underline font-medium">Discord Developer Portal</a></li>
+                          <li>Click "New Application" → give it a name (e.g., "Kimaki") — a bot is created automatically</li>
+                          <li>Go to <strong>"Installation"</strong> → set <strong>"Install Link" to "None"</strong> (we generate our own invite link below)</li>
+                          <li>Go to "Bot" → disable <strong>"Public Bot"</strong></li>
+                          <li>In "Bot", scroll to "Privileged Gateway Intents" → enable <strong>Message Content Intent</strong> (required for Kimaki to read messages)</li>
+                          <li>Go to "Bot" → click "Reset Token" → copy the token</li>
+                          <li>Enter the token below — your Client ID will be extracted automatically, then click <strong>"Save Discord Bot"</strong></li>
+                          <li>Click the invite link below to add the bot to your server, then click <strong>"Bot Added"</strong> to proceed</li>
+                        </ol>
+                     </div>
 
-          {expandedSteps.includes(2) && isStepCompleted(1) && (
+                      <div className="mb-4">
+                        <label className="block text-sm font-medium text-gray-700 mb-2">Discord Bot Token:</label>
+                         <input
+                           type="password"
+                           value={discordBotTokenInput}
+                           onChange={(e) => {
+                             const token = e.target.value;
+                             setDiscordBotTokenInput(token);
+                             setDiscordInviteUrl('');
+                             const extractedId = extractClientIdFromToken(token);
+                             if (extractedId) {
+                               setDiscordClientId(extractedId);
+                             }
+                           }}
+                           placeholder="MTE4MzEyODU2MTc0ODQxMDA5OH.GxXxXx.xxxxxxxx"
+                           className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
+                         />
+                        <p className="text-gray-500 text-xs mt-1">
+                          Your bot token from Discord Developer Portal → Bot → Reset Token
+                        </p>
+                      </div>
+
+                      {discordBotTokenInput.trim() && !discordInviteUrl && (
+                        <div className="mb-4">
+                          <label className="block text-sm font-medium text-gray-700 mb-2">
+                            Discord Client ID {discordClientId ? '(auto-detected)' : ''}
+                          </label>
+                          <input
+                            type="text"
+                            value={discordClientId}
+                            onChange={(e) => setDiscordClientId(e.target.value)}
+                            placeholder={discordClientId ? '' : "Could not auto-detect — paste Client ID from OAuth2 → General"}
+                            className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
+                            readOnly={!!discordClientId}
+                          />
+                          {!discordClientId && (
+                            <p className="text-gray-500 text-xs mt-1">
+                              Enter your Discord Application Client ID manually (found in OAuth2 → General).
+                            </p>
+                          )}
+                        </div>
+                      )}
+
+                      {discordInviteUrl && (
+                      <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
+                        <p className="text-green-800 text-sm mb-2 font-medium">Invite link ready!</p>
+                        <a
+                          href={discordInviteUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-blue-600 underline text-sm break-all"
+                        >
+                          {discordInviteUrl}
+                        </a>
+                        <p className="text-green-700 text-xs mt-2">
+                          Open this link to invite your bot to your Discord server.
+                        </p>
+                      </div>
+                    )}
+
+                     {error && (
+                      <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                        {error}
+                      </div>
+                    )}
+                    <div className="flex gap-2 flex-wrap">
+                      {discordBotTokenInput.trim() && !discordInviteUrl && (
+                        <button
+                          onClick={handleCreateDiscordBot}
+                          disabled={discordDetecting}
+                          className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg flex items-center gap-2"
+                        >
+                          {discordDetecting ? (
+                            <>
+                              <span className="animate-spin">⟳</span>
+                              Saving...
+                            </>
+                          ) : (
+                            'Save Discord Bot'
+                          )}
+                        </button>
+                      )}
+                      {discordInviteUrl && (
+                        <button
+                          onClick={handleBotAdded}
+                          className="bg-green-600 hover:bg-green-700 text-white px-5 py-2 rounded-lg font-medium text-sm"
+                        >
+                          Bot Added — Continue
+                        </button>
+                      )}
+                    </div>
+          </div>
+          )}
+        </div>
+
+        {/* Step 2: GitHub */}
+        <div className="space-y-2">
+          <StepHeader stepNumber={2} title="Step 2: GitHub" icon={<svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>} isComplete={isStepCompleted(2)} isActive={isStepActive(2)} isLocked={isStepLocked(2)} info="Create a GitHub Personal Access Token for the VM to authenticate with GitHub." onEdit={() => editStep(2)} expandedSteps={expandedSteps} toggleStep={toggleStep} />
+        
+          {expandedSteps.includes(2) && !isStepLocked(2) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
               {(isStepCompleted(2) && !expandedSteps.includes(2)) ? (
                 <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
                   <Check size={20} />
-                  <span className="font-medium">Service account configured</span>
+                  <span className="font-medium">GitHub configured</span>
                 </div>
               ) : (
                 <>
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                    <p className="text-blue-800 font-medium mb-2">Create a GitHub Personal Access Token:</p>
+                    <p className="text-blue-700 text-sm mb-3">
+                      The VM needs this to push/pull code from your repo. Go to GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token.
+                    </p>
+                    <p className="text-blue-700 text-sm mb-2">
+                      <strong>Required scopes:</strong> <code className="bg-blue-100 px-1">repo</code>, <code className="bg-blue-100 px-1">workflow</code>, <code className="bg-blue-100 px-1">read:org</code>
+                    </p>
+                    <a 
+                      href="https://github.com/settings/tokens/new?scopes=repo,workflow,read:org" 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      className="text-blue-600 underline text-sm"
+                    >
+                      Create Token on GitHub
+                    </a>
+                  </div>
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Enter your GitHub PAT:</label>
+                    <input
+                      type="password"
+                      value={githubPat}
+                      onChange={(e) => setGithubPat(e.target.value)}
+                      placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                      className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
+                    />
+                    <p className="text-gray-500 text-xs mt-1">
+                      Will be encrypted and sent to your VM for GitHub authentication
+                    </p>
+                  </div>
+                  {error && (
+                    <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                      {error}
+                    </div>
+                  )}
+                          <button
+                            onClick={async () => {
+                              setError(null);
+                              if (!githubSaveRateLimit.check()) {
+                                setError(`Rate limit. Try again in ${Math.ceil(githubSaveRateLimit.resetIn / 1000)}s.`);
+                                return;
+                              }
+                              if (validate({ githubPat }, SCHEMAS.githubPat)) {
+                                setError('Please enter a valid GitHub PAT (starts with ghp_ or github_pat_)');
+                                return;
+                              }
+                              try {
+                                const userData = await githubApiFetch(githubPat, '/user');
+                                const owner = userData.login;
+                                const desiredRepoName = projectName || 'SecureAgentBase';
+                                const actualRepoName = `${owner}/${desiredRepoName}`;
+                                setGithubRepoName(actualRepoName);
+                                await saveConfig({ github_repo: actualRepoName });
+                                wizard.dispatch({ type: 'EXPAND_NEXT', currentStepNum: 2 });
+                              } catch (err) {
+                                setError('GitHub setup failed: ' + err.message);
+                              }
+                            }}
+                            disabled={!githubPat.trim()}
+                            className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg"
+                          >
+                            Save GitHub Configuration
+                          </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Step 3: Google Cloud */}
+        <div className="space-y-2">
+          <StepHeader stepNumber={3} title="Step 3: Google Cloud" icon={<Server className="text-blue-600" size={24} />} isComplete={isStepCompleted(3)} isActive={isStepActive(3)} isLocked={isStepLocked(3)} info="One Google sign-in powers everything: Firebase apps, CI deploy accounts (WIF), your VM, and the agent service account." onEdit={() => editStep(3)} expandedSteps={expandedSteps} toggleStep={toggleStep} />
+        
+          {expandedSteps.includes(3) && isStepLocked(3) && (
+            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
+              Complete Step 2 first to unlock this step.
+            </div>
+          )}
+        
+          {expandedSteps.includes(3) && !isStepLocked(3) && (
+            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 space-y-6">
+                      {gcpEmailMismatch && (
+                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                          <p className="text-yellow-800 font-medium mb-1">Different Google accounts detected</p>
+                          <p className="text-yellow-700 text-sm">
+                            You're signed in to the app as <strong>{user?.email}</strong> but connected Google Cloud as <strong>{gcpConsentEmail}</strong>.
+                            IAM roles are granted to the Google Cloud account (<strong>{gcpConsentEmail}</strong>) so its own automation works.
+                            This is fine if both accounts are you — just be aware your saved configuration lives under the app account.
+                          </p>
+                        </div>
+                      )}
+                      {/* 1. Connect Google Cloud & Service Account */}
+                      <section>
+                        <h3 className="font-semibold text-gray-700 text-sm mb-3">1. Connect Google Cloud & Service Account</h3>
                   {!gcpConnected ? (
                     <div className="bg-blue-50 border border-blue-200 rounded-xl p-5 mb-5 flex items-center justify-between gap-4">
                       <div className="flex-1">
@@ -3880,7 +4075,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                           Programmatic Auto-Generation (Recommended)
                         </h4>
                         <p className="text-green-700 text-xs mb-3">
-                          Since you connected your Google Account, we can programmatically create the service account, assign all 6 required roles, generate the JSON key, and configure Step 2 and 3 automatically in one click!
+                          Since you connected your Google Account, we can programmatically create the service account, assign all 6 required roles, and configure this step automatically in one click!
                         </p>
                         
                         <div className="space-y-3">
@@ -3951,128 +4146,15 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                       <li>Open the JSON file, copy all content, paste below</li>
                     </ol>
                   </div>
-                  
-                  <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Paste service account JSON key:</label>
-                    <textarea
-                      value={serviceAccountJson ? JSON.stringify(serviceAccountJson, null, 2) : ''}
-                      onChange={(e) => {
-                        setServiceAccountError(null);
-                        try {
-                          const parsed = JSON.parse(e.target.value);
-                          console.log('Parsed service account:', parsed ? 'valid' : 'null', parsed?.project_id);
-                          if (!parsed.private_key) throw new Error('Invalid - missing private_key');
-                          setServiceAccountJson(parsed);
-                          console.log('Service account JSON set successfully');
-                        } catch (err) {
-                          console.log('Service account parse error:', err.message);
-                          setServiceAccountError('Invalid JSON. Paste the complete service account JSON file.');
-                        }
-                      }}
-                      placeholder='{"type": "service_account", "project_id": "...", "private_key": "..."}'
-                      className="w-full h-40 px-4 py-2 border-2 border-gray-200 rounded-lg font-mono text-sm focus:outline-none focus:border-blue-400"
-                    />
-                    {serviceAccountError && <p className="text-red-600 text-sm mt-1">{serviceAccountError}</p>}
-                  </div>
-                  
-                  <button
-                    onClick={async () => {
-                      console.log('Continue clicked, serviceAccountJson:', !!serviceAccountJson, serviceAccountJson?.project_id);
-                      if (serviceAccountJson && serviceAccountJson.project_id) {
-                        await saveConfig({});
-                        wizard.dispatch({ type: 'EXPAND_STEP', step: 3 });
-                      } else {
-                        setServiceAccountError('Please paste a valid service account JSON');
-                      }
-                    }}
-                    disabled={!serviceAccountJson}
-                    className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg"
-                  >
-                    Continue
-                  </button>
-                  
-                  <div className="mt-4 pt-4 border-t">
-                    <p className="text-gray-600 text-sm">Don't want to create a service account?</p>
-                    <button
-                      onClick={() => { wizard.dispatch({ type: 'EXPAND_STEP', step: 3 }); }}
-                      className="text-blue-600 hover:text-blue-700 text-sm underline"
-                    >
-                      Skip to manual VM setup
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
-        </div>
+                      </section>
 
-        <div className="space-y-2">
-          <StepHeader stepNumber={3} title="Step 3: GCP Project" icon={<Server className="text-blue-600" size={24} />} isComplete={isStepCompleted(3)} isActive={isStepActive(3)} isLocked={isStepLocked(3)} info="Select or create a GCP project for your VM." onEdit={() => editStep(3)} expandedSteps={expandedSteps} toggleStep={toggleStep} />
-          
-          {expandedSteps.includes(3) && !isStepCompleted(2) && (
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
-              Complete Step 2 first to unlock this step.
-            </div>
-          )}
-
-          {expandedSteps.includes(3) && isStepCompleted(2) && (
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {isStepCompleted(3) ? (
-                <div className="space-y-4">
-                  <div className="bg-green-50 border border-green-200 text-green-800 p-4 rounded-lg flex items-center justify-between">
-                    <div>
-                      <p className="font-semibold text-sm flex items-center gap-1">
-                        <Check size={18} className="text-green-600" />
-                        GCP Project Configured
-                      </p>
-                      <p className="text-xs text-green-700 mt-1">
-                        Project ID: <code className="bg-green-100 px-1 font-mono rounded">{projectId}</code>
-                      </p>
-                      {billingChecking && (
-                        <p className="text-xs text-blue-600 mt-2 flex items-center gap-1">
-                          <span className="animate-spin text-sm">⟳</span> Checking billing...
-                        </p>
-                      )}
-                      {billingEnabled === false && (
-                        <p className="text-xs text-yellow-700 mt-2 font-medium">
-                          ⚠️ Billing is not linked yet. Configure it in Step 5 before creating your VM.
-                        </p>
-                      )}
-                      {billingEnabled === true && (
-                        <p className="text-xs text-green-600 mt-2 font-medium flex items-center gap-1">
-                          ✓ Billing is linked and active!
-                        </p>
-                      )}
-
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setProjectId('');
-                        wizard.dispatch({ type: 'SET_STEP3_COMPLETE', value: false });
-                      }}
-                      className="text-xs text-red-600 hover:text-red-800 underline font-semibold"
-                    >
-                      Clear & Reconfigure
-                    </button>
-                  </div>
-                  
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      wizard.dispatch({ type: 'COLLAPSE_AND_EXPAND', remove: [3], add: 4 });
-                    }}
-                    className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold"
-                  >
-                    Continue to Next Step
-                  </button>
-                </div>
-              ) : (
-                <>
+                      {/* 2. Project */}
+                      <section>
+                        <h3 className="font-semibold text-gray-700 text-sm mb-3">2. Project</h3>
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
                     <p className="text-blue-800 font-medium mb-2">Enter your GCP Project ID:</p>
                     <p className="text-blue-700 text-sm mb-3">
-                      This is the project where your VM will be created. It should match the <code className="bg-blue-100 px-1">project_id</code> in your service account JSON.
+                      This is the project where your VM will be created. Pick an existing project below, or create a new one.
                     </p>
                     <input
                       type="text"
@@ -4083,7 +4165,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                     />
                     {serviceAccountJson?.project_id && (
                       <p className="text-blue-600 text-sm mt-2">
-                        From your service account: <code className="bg-blue-100 px-1">{serviceAccountJson.project_id}</code>
+                        From saved config: <code className="bg-blue-100 px-1">{serviceAccountJson.project_id}</code>
                         <button
                           type="button"
                           onClick={() => setProjectId(serviceAccountJson.project_id)}
@@ -4118,7 +4200,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                         </div>
                         {!gcpAccessToken ? (
                           <div className="text-xs text-yellow-700">
-                            Connect your Google Cloud account in Step 2 to create projects programmatically.
+                            Connect your Google Cloud account below (section 1) to create projects programmatically.
                           </div>
                         ) : (
                           <>
@@ -4153,56 +4235,21 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                     <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
                       <p className="text-yellow-800 font-semibold text-xs mb-1">⚠️ Billing Not Linked</p>
                       <p className="text-yellow-700 text-xs">
-                        Billing configuration is now handled in Step 5. You can continue to Firebase setup and come back to link billing later.
+                        Billing is linked in the Billing section below. You can continue and come back to link it later.
                       </p>
                     </div>
                   )}
 
-                  <button
-                    onClick={async () => {
-                      if (projectId.trim()) {
-                        setError(null);
-                        wizard.dispatch({ type: 'SET_STEP3_COMPLETE', value: true });
-                        await saveConfig({});
-                        wizard.dispatch({ type: 'COLLAPSE_AND_EXPAND', remove: [3], add: 4 });
-                      } else {
-                        setError('Please enter a GCP project ID');
-                      }
-                    }}
-                    disabled={!projectId.trim()}
-                    className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg"
-                  >
-                    Continue
-                  </button>
-                </>
-              )}
-            </div>
-          )}
-        </div>
+                      </section>
 
-        <div className="space-y-2">
-          <StepHeader stepNumber={4} title="Step 4: Firebase Setup" icon={<svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M3.89 15.672L6.255.461A.542.542 0 0 1 7.27.288l2.543 4.771zm16.794 3.692l-2.25-14a.54.54 0 0 0-.919-.295L3.316 19.365l7.856 4.427a1.621 1.621 0 0 0 1.588 0zM14.3 7.147l-1.82-3.482a.542.542 0 0 0-.96 0L3.53 17.984z"/></svg>} isComplete={isStepCompleted(4)} isActive={isStepActive(4)} isLocked={isStepLocked(4)} info="Configure Firebase hosting for your staging and production environments." onEdit={() => editStep(4)} expandedSteps={expandedSteps} toggleStep={toggleStep} />
-          
-          {expandedSteps.includes(4) && !isStepCompleted(3) && (
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
-              Complete Step 3 first to unlock this step.
-            </div>
-          )}
-
-          {isStepCompleted(3) && (expandedSteps.includes(4) || isStepCompleted(4)) && (
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {(isStepCompleted(4) && !expandedSteps.includes(4)) ? (
-                <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
-                  <Check size={20} />
-                  <span className="font-medium">Firebase configured: Staging ({firebaseStagingData.projectId}), Production ({firebaseProductionData.projectId})</span>
-                </div>
-              ) : (
-                <>
+                      {/* 3. Firebase */}
+                      <section>
+                        <h3 className="font-semibold text-gray-700 text-sm mb-3">3. Firebase (staging + production)</h3>
                   {!gcpAccessToken && (
                     <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
                       <p className="text-yellow-800 font-medium mb-2">Google Cloud Connection Required</p>
                       <p className="text-yellow-700 text-sm mb-3">
-                        Please sign in to Google (Step 1) to enable automatic Firebase project discovery.
+                        Connect Google Cloud below to enable automatic Firebase project discovery.
                       </p>
                       <button
                         onClick={handleConnectGoogle}
@@ -4272,7 +4319,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
                             <p className="text-xs text-gray-500">
                               Staging uses {projectId ? `existing project "${projectId}"` : 'a new project'}.
-                              Production is always a new project via your service account.
+                              Production is always a new project.
                             </p>
 
                             <button
@@ -4332,59 +4379,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                       Configure Firebase Manually
                     </button>
                   </div>
-                </>
-              )}
-            </div>
-          )}
-        </div>
+                      </section>
 
-        <div className="space-y-2">
-          <StepHeader stepNumber={5} title="Step 5: Billing Account" icon={<svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4v-6h16v6zm0-10H4V6h16v2z"/></svg>} isComplete={isStepCompleted(5)} isActive={isStepActive(5)} isLocked={isStepLocked(5)} info="Link a Google Cloud billing account to your project so Compute Engine can provision your VM." onEdit={() => editStep(5)} expandedSteps={expandedSteps} toggleStep={toggleStep} />
-
-          {expandedSteps.includes(5) && !isStepCompleted(4) && (
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
-              Complete Step 4 first to unlock this step.
-            </div>
-          )}
-
-          {expandedSteps.includes(5) && isStepCompleted(4) && (
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {isStepCompleted(5) ? (
-                <div className="space-y-4">
-                  <div className="bg-green-50 border border-green-200 text-green-800 p-4 rounded-lg flex items-center justify-between">
-                    <div>
-                      <p className="font-semibold text-sm flex items-center gap-1">
-                        <Check size={18} className="text-green-600" />
-                        Billing Account Linked
-                      </p>
-                      <p className="text-xs text-green-700 mt-1">
-                        Project ID: <code className="bg-green-100 px-1 font-mono rounded">{projectId}</code>
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        setBillingChecking(true);
-                        await checkBillingStatus();
-                        await fetchBillingAccounts();
-                        setBillingChecking(false);
-                      }}
-                      className="text-xs text-blue-600 hover:text-blue-800 underline font-semibold"
-                    >
-                      Re-check
-                    </button>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={async () => {
-                      wizard.dispatch({ type: 'COLLAPSE_AND_EXPAND', remove: [5], add: 6 });
-                    }}
-                    className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold"
-                  >
-                    Continue to Next Step
-                  </button>
-                </div>
-              ) : (
+                      {/* 4. Billing */}
+                      <section>
+                        <h3 className="font-semibold text-gray-700 text-sm mb-3">4. Billing</h3>
                 <div className="space-y-4">
                   <p className="text-sm text-gray-600">
                     GCP requires an active billing account linked to your project to enable Compute Engine and create your VM. Select your Google Cloud billing account below to link it programmatically.
@@ -4474,7 +4473,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
                   {!billingChecking && billingAccounts.length === 0 && (billingApiError === 'api_error' || billingApiError === 'not_connected') && (
                     <div className="text-xs text-yellow-700">
-                      Could not connect to Google Cloud billing APIs. Please reconnect your Google Cloud account in Step 2 and try again.
+                      Could not connect to Google Cloud billing APIs. Please reconnect your Google Cloud account below and try again.
                     </div>
                   )}
 
@@ -4491,61 +4490,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                     Re-check Billing Status
                   </button>
                 </div>
-              )}
-            </div>
-          )}
-        </div>
+                      </section>
 
-        {/* Step 6: GitHub Auth */}
-        <div className="space-y-2">
-          <StepHeader stepNumber={6} title="Step 6: GitHub Auth" icon={<svg className="w-6 h-6 text-blue-600" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>} isComplete={isStepCompleted(6)} isActive={isStepActive(6)} isLocked={isStepLocked(6)} info="Create a GitHub Personal Access Token for the VM to authenticate with GitHub." onEdit={() => editStep(6)} expandedSteps={expandedSteps} toggleStep={toggleStep} />
-
-          {expandedSteps.includes(6) && !isStepCompleted(5) && (
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
-              Complete Step 5 first to unlock this step.
-            </div>
-          )}
-
-          {expandedSteps.includes(6) && isStepCompleted(5) && (
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {(isStepCompleted(6) && !expandedSteps.includes(6)) ? (
-                <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
-                  <Check size={20} />
-                  <span className="font-medium">GitHub auth configured</span>
-                </div>
-              ) : (
-                <>
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                    <p className="text-blue-800 font-medium mb-2">Create a GitHub Personal Access Token:</p>
-                    <p className="text-blue-700 text-sm mb-3">
-                      The VM needs this to push/pull code from your repo. Go to GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token.
-                    </p>
-                    <p className="text-blue-700 text-sm mb-2">
-                      <strong>Required scopes:</strong> <code className="bg-blue-100 px-1">repo</code>, <code className="bg-blue-100 px-1">workflow</code>, <code className="bg-blue-100 px-1">read:org</code>
-                    </p>
-                    <a 
-                      href="https://github.com/settings/tokens/new?scopes=repo,workflow,read:org" 
-                      target="_blank" 
-                      rel="noopener noreferrer"
-                      className="text-blue-600 underline text-sm"
-                    >
-                      Create Token on GitHub
-                    </a>
-                  </div>
-                  <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 mb-2">Enter your GitHub PAT:</label>
-                    <input
-                      type="password"
-                      value={githubPat}
-                      onChange={(e) => setGithubPat(e.target.value)}
-                      placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
-                      className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
-                    />
-                    <p className="text-gray-500 text-xs mt-1">
-                      Will be encrypted and sent to your VM for GitHub authentication
-                    </p>
-                  </div>
-                  
+                      {/* 5. CI Deployment (OIDC) */}
+                      <section>
+                        <h3 className="font-semibold text-gray-700 text-sm mb-3">5. CI Deployment (OIDC)</h3>
                   {!gcpAccessToken && (
                     <div className="mb-4 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                       <p className="text-yellow-800 font-medium mb-1">Google Cloud Connection Required</p>
@@ -4713,7 +4662,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                         Staging SA: {gcpSaStagingEmail} | Prod SA: {gcpSaProductionEmail}
                       </p>
                       <p className="text-green-600 text-xs mt-1">
-                        GitHub variables will be uploaded to your repo automatically when the VM is created in Step 8.
+                        GitHub variables will be uploaded to your repo automatically when the VM is created in Step 3.
                       </p>
                     </div>
                   )}
@@ -4724,155 +4673,12 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                       <span className="text-red-700 text-sm">{oidcSetupStep}</span>
                     </div>
                   )}
-                </>
-              )}
-            </div>
-          )}
-        </div>
+                      </section>
 
-        {/* Step 7: Discord Bot */}
-        <div className="space-y-2">
-          <StepHeader stepNumber={7} title="Step 7: Discord Bot" icon={<Bot className="text-blue-600" size={24} />} isComplete={isStepCompleted(7)} isActive={isStepActive(7)} isLocked={isStepLocked(7)} info="Configure your Discord bot token and server. The VM will use this to interact with Discord." onEdit={() => editStep(7)} expandedSteps={expandedSteps} toggleStep={toggleStep} />
-
-          {expandedSteps.includes(7) && !isStepCompleted(6) && (
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
-              Complete Step 6 first to unlock this step.
-            </div>
-          )}
-
-          {expandedSteps.includes(7) && isStepCompleted(6) && (
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {(isStepCompleted(7) && !expandedSteps.includes(7)) ? (
-                <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
-                  <Check size={20} />
-                  <span className="font-medium">Discord bot configured</span>
-                </div>
-              ) : (
-                   <>
-                     <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                       <p className="text-blue-800 font-medium mb-2">Create a Discord bot:</p>
-                        <ol className="list-decimal list-inside space-y-2 text-blue-700 text-sm">
-                          <li>Go to <a href="https://discord.com/developers/applications" target="_blank" rel="noopener noreferrer" className="underline font-medium">Discord Developer Portal</a></li>
-                          <li>Click "New Application" → give it a name (e.g., "Kimaki") — a bot is created automatically</li>
-                          <li>Go to <strong>"Installation"</strong> → set <strong>"Install Link" to "None"</strong> (we generate our own invite link below)</li>
-                          <li>Go to "Bot" → disable <strong>"Public Bot"</strong></li>
-                          <li>In "Bot", scroll to "Privileged Gateway Intents" → enable <strong>Message Content Intent</strong> (required for Kimaki to read messages)</li>
-                          <li>Go to "Bot" → click "Reset Token" → copy the token</li>
-                          <li>Enter the token below — your Client ID will be extracted automatically, then click <strong>"Save Discord Bot"</strong></li>
-                          <li>Click the invite link below to add the bot to your server, then click <strong>"Bot Added"</strong> to proceed</li>
-                        </ol>
-                     </div>
-
-                      <div className="mb-4">
-                        <label className="block text-sm font-medium text-gray-700 mb-2">Discord Bot Token:</label>
-                         <input
-                           type="password"
-                           value={discordBotTokenInput}
-                           onChange={(e) => {
-                             const token = e.target.value;
-                             setDiscordBotTokenInput(token);
-                             setDiscordInviteUrl('');
-                             const extractedId = extractClientIdFromToken(token);
-                             if (extractedId) {
-                               setDiscordClientId(extractedId);
-                             }
-                           }}
-                           placeholder="MTE4MzEyODU2MTc0ODQxMDA5OH.GxXxXx.xxxxxxxx"
-                           className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
-                         />
-                        <p className="text-gray-500 text-xs mt-1">
-                          Your bot token from Discord Developer Portal → Bot → Reset Token
-                        </p>
-                      </div>
-
-                      {discordBotTokenInput.trim() && !discordInviteUrl && (
-                        <div className="mb-4">
-                          <label className="block text-sm font-medium text-gray-700 mb-2">
-                            Discord Client ID {discordClientId ? '(auto-detected)' : ''}
-                          </label>
-                          <input
-                            type="text"
-                            value={discordClientId}
-                            onChange={(e) => setDiscordClientId(e.target.value)}
-                            placeholder={discordClientId ? '' : "Could not auto-detect — paste Client ID from OAuth2 → General"}
-                            className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
-                            readOnly={!!discordClientId}
-                          />
-                          {!discordClientId && (
-                            <p className="text-gray-500 text-xs mt-1">
-                              Enter your Discord Application Client ID manually (found in OAuth2 → General).
-                            </p>
-                          )}
-                        </div>
-                      )}
-
-                      {discordInviteUrl && (
-                      <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
-                        <p className="text-green-800 text-sm mb-2 font-medium">Invite link ready!</p>
-                        <a
-                          href={discordInviteUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-600 underline text-sm break-all"
-                        >
-                          {discordInviteUrl}
-                        </a>
-                        <p className="text-green-700 text-xs mt-2">
-                          Open this link to invite your bot to your Discord server.
-                        </p>
-                      </div>
-                    )}
-
-                     {error && (
-                      <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-                        {error}
-                      </div>
-                    )}
-                    <div className="flex gap-2 flex-wrap">
-                      {discordBotTokenInput.trim() && !discordInviteUrl && (
-                        <button
-                          onClick={handleCreateDiscordBot}
-                          disabled={discordDetecting}
-                          className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg flex items-center gap-2"
-                        >
-                          {discordDetecting ? (
-                            <>
-                              <span className="animate-spin">⟳</span>
-                              Saving...
-                            </>
-                          ) : (
-                            'Save Discord Bot'
-                          )}
-                        </button>
-                      )}
-                      {discordInviteUrl && (
-                        <button
-                          onClick={handleBotAdded}
-                          className="bg-green-600 hover:bg-green-700 text-white px-5 py-2 rounded-lg font-medium text-sm"
-                        >
-                          Bot Added — Continue
-                        </button>
-                      )}
-                    </div>
-                  </>
-               )}
-            </div>
-          )}
-        </div>
-
-        {/* Step 8: Create VM */}
-        <div className="space-y-2">
-          <StepHeader stepNumber={8} title="Step 8: Create VM" icon={<Server className="text-blue-600" size={24} />} isComplete={isStepCompleted(8)} isActive={isStepActive(8)} isLocked={isStepLocked(8)} info="Create a GCP VM that will fork SecureAgentBase, set up GitHub Actions, download Kimaki, and configure your Discord bot." onEdit={() => editStep(8)} expandedSteps={expandedSteps} toggleStep={toggleStep} />
-
-          {expandedSteps.includes(8) && !isStepCompleted(7) && (
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 text-center text-gray-500">
-              Complete Step 7 first to unlock this step.
-            </div>
-          )}
-
-          {expandedSteps.includes(8) && isStepCompleted(7) && (
-             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-               {isStepCompleted(8) && !showRecreateOptions ? (
+                      {/* 6. Create VM */}
+                      <section>
+                        <h3 className="font-semibold text-gray-700 text-sm mb-3">6. Create VM</h3>
+                        {isStepCompleted(3) && !showRecreateOptions ? (
                  <div className="space-y-4">
                    <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
                      <Check size={20} />
@@ -4937,8 +4743,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                        </button>
                     </div>
                  </div>
-               ) : (
-                <>
+                        ) : (
+                          <>
                   <p className="text-gray-600 mb-4">
                     Enable required APIs and create a VM. The VM will automatically fork SecureAgentBase, set up GitHub Actions, download Kimaki, and create a Discord channel.
                   </p>
@@ -5028,7 +4834,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                      <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
                        <p className="text-yellow-800 font-semibold text-xs mb-1">⚠️ Billing Required</p>
                        <p className="text-yellow-700 text-xs mb-3">
-                         Compute Engine requires an active billing account. Select one below or it will be linked automatically when you click Create VM.
+                         Compute Engine requires an active billing account. Select one below before creating your VM.
                        </p>
                        {billingAccounts.length > 0 ? (
                          <div className="space-y-3">
@@ -5063,7 +4869,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                         ) : (
                           <div className="text-xs text-yellow-700 space-y-2">
                             <p>No billing accounts found via API. You can enable billing at{' '}
-                              <a href={`https://console.cloud.google.com/billing/linkedaccount?project=${projectId}`} target="_blank" rel="noopener noreferrer" className="underline font-semibold">Cloud Console</a>, then click{' '}
+                              <a href={gcpConsoleUrl('billing/linkedaccount', projectId)} target="_blank" rel="noopener noreferrer" className="underline font-semibold">Cloud Console</a>, then click{' '}
                               <button
                                 type="button"
                                 onClick={async () => {
@@ -5110,19 +4916,28 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                      </div>
                    )}
                    
-                   {step4Status === 'idle' && (
-                    <div className="flex gap-2 flex-wrap">
-                      <button
-                        id="recreate-vm-trigger"
-                        onClick={async () => {
-                          createVmWithSetup({ isRecreate: false });
-                        }}
-                        className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
-                      >
-                        Enable APIs & Create VM
-                      </button>
-                    </div>
-                  )}
+                    {step4Status === 'idle' && (
+                     <div className="flex gap-2 flex-wrap">
+                       <button
+                         id="recreate-vm-trigger"
+                         onClick={async () => {
+                           createVmWithSetup({ isRecreate: false });
+                         }}
+                         disabled={billingEnabled === false}
+                         title={billingEnabled === false ? 'Enable billing on this project first (section 4 above)' : undefined}
+                         className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg disabled:bg-gray-400 disabled:cursor-not-allowed"
+                       >
+                         Enable APIs & Create VM
+                       </button>
+                       <button
+                         type="button"
+                         onClick={handleManualVMIP}
+                         className="border border-gray-300 hover:bg-gray-100 text-gray-700 px-4 py-2 rounded-lg text-sm"
+                       >
+                         I already have a VM — enter its IP
+                       </button>
+                     </div>
+                   )}
                   
                   {(step4Status === 'enabling' || step4Status === 'complete') && (
                     <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mt-3">
@@ -5164,8 +4979,9 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                       </button>
                     </div>
                   )}
-                </>
-              )}
+                          </>
+                        )}
+                      </section>
             </div>
           )}
         </div>
@@ -5198,7 +5014,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           <h2 className="text-lg font-semibold text-gray-800 mb-4">Resources</h2>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
             <a
-              href={`https://console.cloud.google.com/compute/instances?project=${projectId}`}
+              href={gcpConsoleUrl('compute/instances', projectId)}
               target="_blank"
               rel="noopener noreferrer"
               className="flex items-center gap-2 p-3 bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 text-sm text-gray-700"
