@@ -162,6 +162,8 @@ const [loading, setLoading] = useState(true);
   const [godSaEmail, setGodSaEmail] = useState(null);
 
   const [gcpConfigLost, setGcpConfigLost] = useState(false);
+  const [gcpConsentEmail, setGcpConsentEmail] = useState('');
+  const [gcpEmailMismatch, setGcpEmailMismatch] = useState(false);
   const [checkingCompletion, setCheckingCompletion] = useState(true);
 
   const [projects, setProjects] = useState([]);
@@ -475,7 +477,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
   const fetchFirebaseProjects = async () => {
     if (!gcpAccessToken) {
-      setError('Please sign in to Google (Step 1) to load Firebase projects.');
+      setError('Please sign in to Google (Step 3) to load Firebase projects.');
       return;
     }
     setLoadingFirebaseProjects(true);
@@ -542,13 +544,18 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     if (policyResp.ok) {
       const policy = await policyResp.json();
       const bindings = policy.bindings || [];
-      addMemberToBinding(bindings, 'roles/firebase.admin', `user:${user?.email || ''}`);
-      await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${projectIdVal}:setIamPolicy`, {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ policy: { bindings, etag: policy.etag } })
-      });
-      await new Promise(r => setTimeout(r, 15000));
+      // Grant firebase.admin to the GCP consent account's email (the account
+      // that owns the OAuth token); fall back to the app-auth email.
+      const grantEmail = gcpConsentEmail || user?.email || '';
+      if (grantEmail) {
+        addMemberToBinding(bindings, 'roles/firebase.admin', `user:${grantEmail}`);
+        await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${projectIdVal}:setIamPolicy`, {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ policy: { bindings, etag: policy.etag } })
+        });
+        await new Promise(r => setTimeout(r, 15000));
+      }
     }
 
     await addFirebaseToProject(token, projectIdVal);
@@ -596,7 +603,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
   const handleSetupExistingFirebase = async () => {
     if (!gcpAccessToken) {
-      setError('Please sign in to Google (Step 1) first.');
+      setError('Please sign in to Google (Step 3) first.');
       return;
     }
     if (!projectName && !selectedFirebaseStagingProject && !selectedFirebaseProductionProject) {
@@ -754,7 +761,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       if (err.message?.includes('401')) {
         setGcpAccessToken(null);
         setOidcSetupStep('Failed: Google Cloud session expired');
-        setError('Your Google Cloud session has expired. Click "Connect Google Cloud Account" in Step 4 to refresh, then try again.');
+        setError('Your Google Cloud session has expired. Click "Connect Google Cloud Account" in Step 3 to refresh, then try again.');
       } else {
         setOidcSetupStep(`Failed: ${err.message}`);
         setError('OIDC setup failed: ' + err.message);
@@ -1124,8 +1131,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
     console.warn('Billing API returned 403 on both user and SA tokens — cannot determine billing status.');
     
-    // Auto-fix: grant user billing role and poll with backoff
-    if (gcpAccessToken && projectId && user?.email) {
+    // Auto-fix: grant the GCP consent account's billing role and poll with backoff
+    if (gcpAccessToken && projectId && (gcpConsentEmail || user?.email)) {
       console.log('checkBillingStatus: trying grantUserBillingRole');
       const granted = await grantUserBillingRole();
       console.log('checkBillingStatus: grantUserBillingRole returned', granted);
@@ -1216,8 +1223,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       }
     }
 
-    // Fallback 3: grant user billing role and retry with backoff
-    if (gcpAccessToken && projectId && user?.email) {
+    // Fallback 3: grant the GCP consent account's billing role and retry with backoff
+    if (gcpAccessToken && projectId && (gcpConsentEmail || user?.email)) {
       console.log('fetchBillingAccounts: trying grantUserBillingRole');
       const granted = await grantUserBillingRole();
       console.log('fetchBillingAccounts: grantUserBillingRole returned', granted);
@@ -1490,8 +1497,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   };
 
   const grantUserBillingRole = async (maxRetries = 5) => {
-    if (!gcpAccessToken || !projectId || !user?.email) {
-      console.log('grantUserBillingRole: missing deps', { hasToken: !!gcpAccessToken, projectId, hasEmail: !!user?.email });
+    // Grant billing.projectManager to the GCP consent account's email (the
+    // account that owns the OAuth token). Falls back to the app-auth email.
+    const targetEmail = gcpConsentEmail || user?.email;
+    if (!gcpAccessToken || !projectId || !targetEmail) {
+      console.log('grantUserBillingRole: missing deps', { hasToken: !!gcpAccessToken, projectId, hasEmail: !!targetEmail });
       return false;
     }
     for (let attempt = 0; attempt < maxRetries; attempt++) {
@@ -1509,7 +1519,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         const policy = await policyResp.json();
         const bindings = policy.bindings || [];
         console.log('grantUserBillingRole: current bindings:', bindings.map(b => b.role));
-        addMemberToBinding(bindings, 'roles/billing.projectManager', `user:${user.email}`);
+        addMemberToBinding(bindings, 'roles/billing.projectManager', `user:${targetEmail}`);
         console.log('grantUserBillingRole: setting IAM policy (attempt', attempt + 1, ')');
         const setResp = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${projectId}:setIamPolicy`, {
           method: 'POST',
@@ -1697,7 +1707,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
   const handleAutoGenerateServiceAccount = async (targetProjectId) => {
     if (!gcpAccessToken) {
-      setError('Please sign in to Google (Step 1) to enable auto-generation.');
+      setError('Please sign in to Google (Step 3) to enable auto-generation.');
       return;
     }
     const errors = validate({ projectId: targetProjectId }, { projectId: SCHEMAS.projectId });
@@ -1718,7 +1728,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       const saEmail = await createServiceAccountProgrammatically(token, targetProjectId);
       
       setSaAutoProgress('Assigning IAM permissions (this takes a few seconds)...');
-      await grantGcpRolesProgrammatically(token, targetProjectId, saEmail, user?.email);
+      await grantGcpRolesProgrammatically(token, targetProjectId, saEmail, gcpConsentEmail || user?.email);
 
       setSaAutoProgress('Granting agent SA impersonation access...');
       await grantAgentSaTokenCreator(token, targetProjectId, saEmail);
@@ -1814,7 +1824,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     if (!googleClient) return null;
     return googleClient.accounts.oauth2.initTokenClient({
       client_id: clientId,
-      scope: 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/cloud-billing.readonly',
+      scope: 'openid email https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/cloud-billing.readonly',
       prompt: 'consent select_account',
       callback: async (response) => {
         if (response.error) {
@@ -1827,6 +1837,12 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
             console.warn('cloud-platform scope not granted — token may be restricted');
             setError('Google OAuth did not grant cloud-platform access. Try reconnecting and selecting an account with GCP billing access.');
           }
+          // The consent account's email (granted via openid email) is the
+          // account we grant IAM roles to — NOT the app-auth account (which
+          // may be a different Google account or absent entirely).
+          const consentEmail = (response as any).email || '';
+          setGcpConsentEmail(consentEmail);
+          setGcpEmailMismatch(!!(user?.email && consentEmail && user.email !== consentEmail));
           setGcpAccessToken(response.access_token);
           setGcpTokenExpiry(Date.now() + (((response as any).expires_in || 3600) - 60) * 1000);
           setGcpConnected(true);
@@ -2798,6 +2814,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       setPendingDecryptProject(null);
       
       setGcpConfigLost(false);
+      setGcpConsentEmail('');
+      setGcpEmailMismatch(false);
       
       wizard.dispatch({ type: 'CLEAR' });
       setError(null);
@@ -3304,7 +3322,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
     const oidcData = await setupOidcInfrastructure(actualRepoName);
     if (!oidcData) {
-      throw new Error('Google Cloud session expired. Click "Connect Google Cloud Account" in Step 4 to refresh, then try again.');
+      throw new Error('Google Cloud session expired. Click "Connect Google Cloud Account" in Step 3 to refresh, then try again.');
     }
 
     await saveConfig({
@@ -3584,22 +3602,22 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                         setVmZone(decrypted.vm.zone || 'us-east1-b');
                       }
                       const hasProjectId = !!decrypted.gcp?.projectId;
-                      const hasServiceAccount = !!decrypted.gcp?.serviceAccountJson;
                       const hasFirebase = !!(decrypted.firebase?.staging && decrypted.firebase?.production);
                       const hasGithub = !!decrypted.github?.pat;
                       const hasDiscord = !!decrypted.gcp?.discordBotToken;
                       const hasVm = !!decrypted.vm?.ip;
+                      const hasGcp = hasFirebase || hasVm || hasProjectId;
                       
+                      // Resume into the 4-step structure: advance from Discord
+                      // (1) → GitHub (2) → Google Cloud (3) based on what the
+                      // decrypted project already has.
                       let nextStep = 1;
-                      if (user) nextStep = 2;
-                      if (hasServiceAccount) nextStep = 3;
-                      if (hasFirebase) nextStep = 4;
-                      if (hasGithub) nextStep = 5;
-                      if (hasDiscord) nextStep = 6;
-                      if (hasVm) nextStep = 7;
+                      if (hasDiscord) nextStep = 2;
+                      if (hasGithub) nextStep = 3;
+                      if (hasGcp) nextStep = 3;
                       
                       const newExpanded = [nextStep];
-                      if (hasVm && !newExpanded.includes(7)) newExpanded.push(7);
+                      if (hasGcp && !newExpanded.includes(3)) newExpanded.push(3);
                       wizard.dispatch({ type: 'SET_EXPANDED', steps: newExpanded });
                       setGcpConfigLost(false);
                       setPendingDecryptProject(null);
@@ -3982,6 +4000,16 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         
           {expandedSteps.includes(3) && !isStepLocked(3) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 space-y-6">
+                      {gcpEmailMismatch && (
+                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                          <p className="text-yellow-800 font-medium mb-1">Different Google accounts detected</p>
+                          <p className="text-yellow-700 text-sm">
+                            You're signed in to the app as <strong>{user?.email}</strong> but connected Google Cloud as <strong>{gcpConsentEmail}</strong>.
+                            IAM roles are granted to the Google Cloud account (<strong>{gcpConsentEmail}</strong>) so its own automation works.
+                            This is fine if both accounts are you — just be aware your saved configuration lives under the app account.
+                          </p>
+                        </div>
+                      )}
                       {/* 1. Connect Google Cloud & Service Account */}
                       <section>
                         <h3 className="font-semibold text-gray-700 text-sm mb-3">1. Connect Google Cloud & Service Account</h3>
@@ -4135,7 +4163,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                         </div>
                         {!gcpAccessToken ? (
                           <div className="text-xs text-yellow-700">
-                            Connect your Google Cloud account in Step 2 to create projects programmatically.
+                            Connect your Google Cloud account below (section 1) to create projects programmatically.
                           </div>
                         ) : (
                           <>
