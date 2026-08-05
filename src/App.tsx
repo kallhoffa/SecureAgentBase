@@ -78,7 +78,7 @@ const App: React.FC<AppProps> = ({ db }) => {
           <Route path="/privacy" element={<Privacy />} />
             <Route path="/profile" element={<RequireAuth><Profile db={db} /></RequireAuth>} />
             {isAppMode && (
-              <Route path="/infra-setup" element={<RequireAuth><InfraSetup db={db} /></RequireAuth>} />
+              <Route path="/infra-setup" element={<InfraSetup db={db} />} />
             )}
             {isAppMode && (
               <Route path="/create-app" element={<RequireAuth><CreateApp db={db} /></RequireAuth>} />
