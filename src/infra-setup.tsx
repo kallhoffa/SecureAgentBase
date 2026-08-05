@@ -128,6 +128,7 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
   const githubRateLimit = useRateLimit('upload-github-vars', 5);
   const firebaseRateLimit = useRateLimit('setup-firebase', 5);
   const discordRateLimit = useRateLimit('create-discord-bot', 5);
+  const githubSaveRateLimit = useRateLimit('save-github-pat', 5);
 
   const [projectId, setProjectId] = useState('');
   const [serviceAccountKey, setServiceAccountKey] = useState(null);
@@ -1548,15 +1549,17 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   };
 
   const grantGcpRolesProgrammatically = async (token, gcpProjectId, saEmail, userEmail) => {
+    // Minimal role set for the identity-only agent SA (#29): enough to create
+    // the VM, read billing/secret metadata, and impersonate — no project-level
+    // power (firebase.admin / workloadIdentityPoolAdmin / securityAdmin dropped).
     const roles = [
-      'roles/compute.admin',
+      'roles/compute.instanceAdmin.v1',
+      'roles/billing.user',
+      'roles/billing.viewer',
+      'roles/serviceusage.serviceUsageAdmin',
       'roles/iam.serviceAccountUser',
       'roles/iam.serviceAccountTokenCreator',
-      'roles/billing.projectManager',
-      'roles/serviceusage.serviceUsageAdmin',
-      'roles/iam.workloadIdentityPoolAdmin',
-      'roles/iam.securityAdmin',
-      'roles/firebase.admin'
+      'roles/secretmanager.secretAccessor',
     ];
 
     const policyResp = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${gcpProjectId}:getIamPolicy`, {
@@ -1743,7 +1746,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       
       await saveConfig({
         gcp_project_id: targetProjectId,
-        service_account_configured: true,
       });
       
       addOidcLog('Agent service account created and configured successfully!');
@@ -1755,10 +1757,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     } finally {
       setAutoGeneratingSa(false);
     }
-  };
-
-  const hasGcpAccess = () => {
-    return !!(projectId && serviceAccountJson);
   };
 
   // Step navigation + completion selectors come from the wizardProgress hook
@@ -2476,12 +2474,14 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   }, [projectId, serviceAccountJson, discordBotToken, githubPat, firebaseConfigStaging, firebaseConfigProduction, vmIp, vmZone, useFirestore, user, projectName, passphrase, selectedProjectId]);
 
   useEffect(() => {
-    // Auto-expand the first actionable step. Step 0 (Sign In) is optional, so
-    // the Discord step is always the first unlocked step for signed-out users.
+    // Auto-expand the first actionable step on mount. Step 0 (Sign In) is
+    // optional, so the Discord step is always the first unlocked step for
+    // signed-out users. Deliberately mount-only: no user dependency.
     if (!expandedSteps.includes(1) && isStepLocked(1) === false) {
       wizard.dispatch({ type: 'EXPAND_STEP', step: 1 });
     }
-  }, [user]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!vmIp) return;
@@ -2600,7 +2600,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       gcp_project_id: projectId.trim(),
       github_app_installed: githubAppInstalled,
       github_repo: githubRepoName,
-      service_account_configured: !!godSaEmail || gcpConnected,
       god_sa_email: godSaEmail,
       // Explicit vm_ip in configData wins over state — handleManualVMIP sets
       // state asynchronously and would otherwise persist a stale/empty value.
@@ -2614,8 +2613,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       await safeSet(db, INFRA_COLLECTION, user.uid, finalData, user.uid, {
         allowFields: [
           'gcp_project_id', 'gcp_connected', 'gcp_token_expiry',
-          'service_account_email', 'service_account_project_id', 'service_account_configured',
-          'service_account_key',
+          'service_account_email', 'service_account_project_id', 'service_account_key',
           'github_app_installed', 'god_sa_email', 'vm_ip', 'github_repo',
           'firebase_staging_project_id', 'firebase_production_project_id',
           'discord_bot_token', 'discord_client_id', 'discord_guild_id',
@@ -3298,7 +3296,10 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     const ip = prompt('Enter your Kimaki VM IP address:');
     if (ip) {
       setVmIp(ip);
-      saveConfig({ vm_ip: ip });
+      saveConfig({ vm_ip: ip }).catch((err) => {
+        console.error('Failed to save manual VM IP:', err);
+        setError('VM IP saved in memory but failed to persist: ' + err.message);
+      });
     }
   };
 
@@ -3965,20 +3966,24 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                           <button
                             onClick={async () => {
                               setError(null);
-                              if (githubPat.trim() && githubPat.startsWith('ghp_')) {
-                                try {
-                                  const userData = await githubApiFetch(githubPat, '/user');
-                                  const owner = userData.login;
-                                  const desiredRepoName = projectName || 'SecureAgentBase';
-                                  const actualRepoName = `${owner}/${desiredRepoName}`;
-                                  setGithubRepoName(actualRepoName);
-                                  await saveConfig({ github_repo: actualRepoName });
-                                  wizard.dispatch({ type: 'EXPAND_NEXT', currentStepNum: 2 });
-                                } catch (err) {
-                                  setError('GitHub setup failed: ' + err.message);
-                                }
-                              } else {
-                                setError('Please enter a valid GitHub PAT (starts with ghp_)');
+                              if (!githubSaveRateLimit.check()) {
+                                setError(`Rate limit. Try again in ${Math.ceil(githubSaveRateLimit.resetIn / 1000)}s.`);
+                                return;
+                              }
+                              if (validate({ githubPat }, SCHEMAS.githubPat)) {
+                                setError('Please enter a valid GitHub PAT (starts with ghp_ or github_pat_)');
+                                return;
+                              }
+                              try {
+                                const userData = await githubApiFetch(githubPat, '/user');
+                                const owner = userData.login;
+                                const desiredRepoName = projectName || 'SecureAgentBase';
+                                const actualRepoName = `${owner}/${desiredRepoName}`;
+                                setGithubRepoName(actualRepoName);
+                                await saveConfig({ github_repo: actualRepoName });
+                                wizard.dispatch({ type: 'EXPAND_NEXT', currentStepNum: 2 });
+                              } catch (err) {
+                                setError('GitHub setup failed: ' + err.message);
                               }
                             }}
                             disabled={!githubPat.trim()}
@@ -4121,7 +4126,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
                     <p className="text-blue-800 font-medium mb-2">Enter your GCP Project ID:</p>
                     <p className="text-blue-700 text-sm mb-3">
-                      This is the project where your VM will be created. It should match the <code className="bg-blue-100 px-1">project_id</code> in your service account JSON.
+                      This is the project where your VM will be created. Pick an existing project below, or create a new one.
                     </p>
                     <input
                       type="text"
@@ -4132,7 +4137,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                     />
                     {serviceAccountJson?.project_id && (
                       <p className="text-blue-600 text-sm mt-2">
-                        From your service account: <code className="bg-blue-100 px-1">{serviceAccountJson.project_id}</code>
+                        From saved config: <code className="bg-blue-100 px-1">{serviceAccountJson.project_id}</code>
                         <button
                           type="button"
                           onClick={() => setProjectId(serviceAccountJson.project_id)}
@@ -4890,7 +4895,9 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                          onClick={async () => {
                            createVmWithSetup({ isRecreate: false });
                          }}
-                         className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg"
+                         disabled={billingEnabled === false}
+                         title={billingEnabled === false ? 'Enable billing on this project first (section 4 above)' : undefined}
+                         className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg disabled:bg-gray-400 disabled:cursor-not-allowed"
                        >
                          Enable APIs & Create VM
                        </button>

@@ -55,7 +55,8 @@ const CreateApp: React.FC<CreateAppProps> = ({ db }) => {
         if (infraSnap.exists()) {
           const data = infraSnap.data();
           setGithubConnected(data.github_app_installed || false);
-          setGcpConnected(!!data.service_account_configured);
+          // Legacy service_account_configured fallback kept for old data.
+          setGcpConnected(!!(data.gcp_connected || data.service_account_configured));
           setGcpProjectId(data.gcp_project_id || '');
         }
       } catch (err) {
