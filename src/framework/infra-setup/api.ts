@@ -365,6 +365,83 @@ export const grantFirebaseRoles = async (token: string, firebaseProjectId: strin
   }
 };
 
+// ---------------------------------------------------------------------------
+// Secret Manager helpers (map #36) — the credential store for the VM boot.
+// Secrets are per-secret IAM-gated: accessors are the operator (via Google
+// OAuth) and the identity-only agent SA (VM boot via metadata server).
+// The web app writes here using the operator's token; Firestore keeps
+// references only (`sm_secrets`), never secret values.
+// ---------------------------------------------------------------------------
+
+const SM_BASE = 'https://secretmanager.googleapis.com/v1';
+
+const base64Encode = (value: string) => {
+  const bytes = new TextEncoder().encode(value);
+  let binary = '';
+  bytes.forEach((b) => { binary += String.fromCharCode(b); });
+  return btoa(binary);
+};
+
+export const smEnsureSecret = async (token: string, projectId: string, secretId: string) => {
+  try {
+    const secret = await gcpApiFetch(
+      `${SM_BASE}/projects/${projectId}/secrets?secretId=${secretId}`,
+      token,
+      { method: 'POST', body: JSON.stringify({ replication: { automatic: {} } }) }
+    );
+    return secret.name;
+  } catch (e) {
+    // 409 ALREADY_EXISTS — fetch the existing secret instead.
+    if (!e.message?.includes('409')) throw e;
+    const existing = await gcpApiFetch(
+      `${SM_BASE}/projects/${projectId}/secrets/${secretId}`,
+      token
+    );
+    return existing.name;
+  }
+};
+
+export const smAddVersion = async (token: string, projectId: string, secretId: string, value: string) => {
+  const added = await gcpApiFetch(
+    `${SM_BASE}/projects/${projectId}/secrets/${secretId}:addVersion`,
+    token,
+    { method: 'POST', body: JSON.stringify({ payload: { data: base64Encode(value) } }) }
+  );
+  return added.name;
+};
+
+export const smSetSecretAccess = async (token: string, projectId: string, secretId: string, members: string[]) => {
+  const policy = await gcpApiFetch(
+    `${SM_BASE}/projects/${projectId}/secrets/${secretId}:getIamPolicy`,
+    token
+  );
+  const bindings = policy.bindings || [];
+  let binding = bindings.find((b) => b.role === 'roles/secretmanager.secretAccessor');
+  if (!binding) {
+    binding = { role: 'roles/secretmanager.secretAccessor', members: [] };
+    bindings.push(binding);
+  }
+  for (const member of members) {
+    if (!binding.members.includes(member)) binding.members.push(member);
+  }
+  await gcpApiFetch(
+    `${SM_BASE}/projects/${projectId}/secrets/${secretId}:setIamPolicy`,
+    token,
+    { method: 'POST', body: JSON.stringify({ policy: { bindings, etag: policy.etag } }) }
+  );
+};
+
+// Idempotent write: create-or-get the secret, add a new version, and bind the
+// per-secret accessors (operator + agent SA). Returns the secret resource name
+// used as a Firestore reference (`sm_secrets`).
+export const smWriteSecret = async (token: string, projectId: string, secretId: string, value: string, members: string[], log?: (msg: string) => void) => {
+  const secretName = await smEnsureSecret(token, projectId, secretId);
+  await smAddVersion(token, projectId, secretId, value);
+  await smSetSecretAccess(token, projectId, secretId, members);
+  log?.(`Secret ${secretId} stored in Secret Manager (${secretName})`);
+  return secretName;
+};
+
 export const grantPoolAccessToSA = async (token: string, gcpProjectId: string, saEmail: string, poolName: string, repoFullName: string, log: (msg: string) => void) => {
   log(`Granting pool access to impersonate ${saEmail}...`);
   const member = `principalSet://iam.googleapis.com/${poolName}/attribute.repository/${repoFullName}`;

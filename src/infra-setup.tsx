@@ -12,7 +12,8 @@ import { CloudShellScript, getStartupScript } from './framework/infra-setup/scri
 import {
   gcpApiFetch, githubApiFetch, setGitHubVariable, ensureGitHubRepo,
   createWorkloadIdentityPool, createWorkloadIdentityProvider,
-  createDeployServiceAccount, grantFirebaseRoles, grantPoolAccessToSA
+  createDeployServiceAccount, grantFirebaseRoles, grantPoolAccessToSA,
+  smWriteSecret
 } from './framework/infra-setup/api';
 import { SCHEMAS } from './framework/infra-setup/schemas';
 import { StepHeader } from './framework/infra-setup/steps';
@@ -1611,6 +1612,9 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     if (userEmail) {
       addMemberToBinding(bindings, 'roles/firebase.admin', `user:${userEmail}`);
       addMemberToBinding(bindings, 'roles/billing.projectManager', `user:${userEmail}`);
+      // Operator needs full Secret Manager control to create secrets, add
+      // versions, and bind per-secret accessors during the VM setup (map #36).
+      addMemberToBinding(bindings, 'roles/secretmanager.admin', `user:${userEmail}`);
     }
 
     const setResp = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${gcpProjectId}:setIamPolicy`, {
@@ -2538,6 +2542,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       vm_ip: configData.vm_ip !== undefined ? configData.vm_ip : vmIp,
       firebase_staging_project_id: firebaseStagingData?.projectId || null,
       firebase_production_project_id: firebaseProductionData?.projectId || null,
+      // Map #36: references to Secret Manager secrets only — never values.
+      sm_secrets: configData.sm_secrets || null,
       updated_at: new Date().toISOString(),
     };
 
@@ -2545,10 +2551,10 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       await safeSet(db, INFRA_COLLECTION, user.uid, finalData, user.uid, {
         allowFields: [
           'gcp_project_id', 'gcp_connected', 'gcp_token_expiry',
-          'service_account_email', 'service_account_project_id', 'service_account_key',
+          'service_account_email', 'service_account_project_id',
           'github_app_installed', 'god_sa_email', 'vm_ip', 'github_repo',
           'firebase_staging_project_id', 'firebase_production_project_id',
-          'discord_bot_token', 'discord_client_id', 'discord_guild_id',
+          'discord_client_id', 'discord_guild_id', 'sm_secrets',
           'updated_at'
         ],
         merge: true
@@ -2859,6 +2865,23 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     return { items };
   };
 
+  // Map #36: persist GitHub PAT + Discord bot token to Secret Manager (never
+  // Firestore) so the VM can boot with secrets fetched via the metadata server
+  // identity. Returns the secret resource names for Firestore refs only.
+  const writeSecretsToSecretManager = async (token, log) => {
+    const refs: Record<string, string> = {};
+    const members = [];
+    if (gcpConsentEmail) members.push(`user:${gcpConsentEmail}`);
+    if (godSaEmail) members.push(`serviceAccount:${godSaEmail}`);
+    if (githubPat) {
+      refs.github_pat = await smWriteSecret(token, projectId, 'github-pat', githubPat, members, log);
+    }
+    if (discordBotToken) {
+      refs.discord_bot_token = await smWriteSecret(token, projectId, 'discord-bot-token', discordBotToken, members, log);
+    }
+    return refs;
+  };
+
   const createVmWithSetup = async ({ isRecreate = false } = {}) => {
     const log = (msg) => addStep4Log(msg);
     const processLabel = isRecreate ? 'recreation' : 'creation';
@@ -2997,6 +3020,20 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       if (!activated && api.name === 'compute.googleapis.com') {
         log('Compute Engine API did not activate yet, will attempt VM creation anyway');
       }
+    }
+
+    setStep4Message('Storing secrets in Secret Manager...');
+    log('Storing secrets in Secret Manager...');
+    let smRefs = {};
+    try {
+      smRefs = await writeSecretsToSecretManager(token, log);
+      if (Object.keys(smRefs).length > 0) {
+        await saveConfig({ sm_secrets: smRefs }).catch(() => {});
+      }
+    } catch (e) {
+      // Metadata fallback still carries the secrets in this slice; the failure
+      // is logged but must not block VM creation.
+      log(`WARNING: Secret Manager write failed (continuing with metadata fallback): ${e.message}`);
     }
 
     setStep4Message('Creating VM...');
