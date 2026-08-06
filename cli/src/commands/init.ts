@@ -1,4 +1,3 @@
-import * as fs from 'node:fs';
 import * as crypto from 'node:crypto';
 import inquirer from 'inquirer';
 import { AuthClient, createAuth } from '../lib/auth.js';
@@ -23,7 +22,6 @@ import { CLIError } from '../utils/errors.js';
 import { getStartupScript } from '../lib/startup-script.js';
 
 export interface InitArgs {
-  saKey?: string;
   projectId?: string;
   autoSa?: boolean;
   firebase?: boolean;
@@ -40,8 +38,8 @@ export interface InitArgs {
 export async function runInit(args: InitArgs): Promise<void> {
   heading('SecureAgentBase Init');
 
-  // Auth
-  const auth = await createAuth(args.saKey);
+  // Auth (ADC-only — map #36 decision #6: no service account key support)
+  const auth = createAuth();
   const saEmail = await auth.getClientEmail();
   info(`Authenticated as ${saEmail || 'unknown (ADC)'}`);
 
@@ -138,86 +136,34 @@ async function stepProject(auth: AuthClient, config: any, args: InitArgs): Promi
   success(`Project: ${config.gcpProjectId}`);
 }
 
-async function stepServiceAccount(auth: AuthClient, config: any, args: InitArgs): Promise<void> {
+async function stepServiceAccount(auth: AuthClient, config: any, _args: InitArgs): Promise<void> {
   heading('Step 2: Service Account');
 
-  if (args.autoSa) {
-    // Auto-create SA (no user interaction)
-    const projectId = config.gcpProjectId!;
-    const accountId = 'secureagent-manager';
+  // Identity-only SA (map #36 decision #6): no key file is ever created or
+  // stored — the SA authenticates via ADC at runtime and via metadata server
+  // on the VM, so we always create it programmatically.
+  const projectId = config.gcpProjectId!;
+  const accountId = 'secureagent-manager';
 
-    info('Creating service account...');
-    const { email } = await createServiceAccount(auth, projectId, accountId, 'SecureAgent Manager');
-    config.saEmail = email;
-    info(`SA created: ${email}`);
+  info('Creating service account...');
+  const { email } = await createServiceAccount(auth, projectId, accountId, 'SecureAgent Manager');
+  config.saEmail = email;
+  info(`SA created: ${email}`);
 
-    const roles = [
-      'roles/compute.admin',
-      'roles/iam.serviceAccountUser',
-      'roles/iam.serviceAccountTokenCreator',
-      'roles/billing.projectManager',
-      'roles/serviceusage.serviceUsageAdmin',
-      'roles/iam.workloadIdentityPoolAdmin',
-      'roles/iam.securityAdmin',
-      'roles/firebase.admin',
-    ];
+  const roles = [
+    'roles/compute.admin',
+    'roles/iam.serviceAccountUser',
+    'roles/iam.serviceAccountTokenCreator',
+    'roles/billing.projectManager',
+    'roles/serviceusage.serviceUsageAdmin',
+    'roles/iam.workloadIdentityPoolAdmin',
+    'roles/iam.securityAdmin',
+    'roles/firebase.admin',
+  ];
 
-    for (const role of roles) {
-      await grantRole(auth, `projects/${projectId}`, `serviceAccount:${email}`, role);
-      info(`  Granted ${role}`);
-    }
-
-    saveConfig(config);
-    success('Service account configured');
-    return;
-  }
-
-  const { choice } = await inquirer.prompt([
-    {
-      type: 'list',
-      name: 'choice',
-      message: 'Service account setup:',
-      choices: [
-        { name: 'Create service account programmatically', value: 'auto' },
-        { name: 'Use existing service account key file', value: 'manual' },
-      ],
-    },
-  ]);
-
-  if (choice === 'manual') {
-    const { keyPath } = await inquirer.prompt([
-      {
-        type: 'input',
-        name: 'keyPath',
-        message: 'Path to service account JSON key:',
-        validate: (v: string) => fs.existsSync(v) || 'File not found',
-      },
-    ]);
-    config.saKeyPath = keyPath;
-  } else {
-    const projectId = config.gcpProjectId!;
-    const accountId = 'secureagent-manager';
-
-    info('Creating service account...');
-    const { email } = await createServiceAccount(auth, projectId, accountId, 'SecureAgent Manager');
-    config.saEmail = email;
-    info(`SA created: ${email}`);
-
-    const roles = [
-      'roles/compute.admin',
-      'roles/iam.serviceAccountUser',
-      'roles/iam.serviceAccountTokenCreator',
-      'roles/billing.projectManager',
-      'roles/serviceusage.serviceUsageAdmin',
-      'roles/iam.workloadIdentityPoolAdmin',
-      'roles/iam.securityAdmin',
-      'roles/firebase.admin',
-    ];
-
-    for (const role of roles) {
-      await grantRole(auth, `projects/${projectId}`, `serviceAccount:${email}`, role);
-      info(`  Granted ${role}`);
-    }
+  for (const role of roles) {
+    await grantRole(auth, `projects/${projectId}`, `serviceAccount:${email}`, role);
+    info(`  Granted ${role}`);
   }
 
   saveConfig(config);

@@ -5,7 +5,6 @@ import * as os from 'node:os';
 export interface Config {
   gcpProjectId?: string;
   saEmail?: string;
-  saKeyPath?: string;
   firebaseStaging?: Record<string, string>;
   firebaseProduction?: Record<string, string>;
   githubPat?: string;

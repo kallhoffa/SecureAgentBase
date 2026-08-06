@@ -18,7 +18,6 @@ program
 program
   .command('init')
   .description('Run the setup wizard')
-  .option('--sa-key <path>', 'Path to a service account JSON key')
   .option('--project-id <id>', 'GCP project ID (skips project selection)')
   .option('--auto-sa', 'Create service account automatically (skips SA prompt)')
   .option('--no-firebase', 'Skip Firebase setup')
@@ -33,7 +32,6 @@ program
   .action(async (opts) => {
     try {
       await runInit({
-        saKey: opts.saKey,
         projectId: opts.projectId,
         autoSa: opts.autoSa,
         firebase: opts.firebase !== false,
@@ -66,10 +64,9 @@ program
   .command('destroy')
   .description('Delete VM and clear configuration')
   .option('-y, --yes', 'Skip confirmation')
-  .option('--sa-key <path>', 'Path to a service account JSON key')
   .action(async (opts) => {
     try {
-      await runDestroy({ yes: opts.yes, saKey: opts.saKey });
+      await runDestroy({ yes: opts.yes });
     } catch (err) {
       handleError(err);
     }

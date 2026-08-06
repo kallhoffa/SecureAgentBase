@@ -3,7 +3,7 @@ import { deleteVm } from '../lib/gcp.js';
 import { loadConfig, clearConfig } from '../utils/config.js';
 import { heading, info, success, warn } from '../utils/output.js';
 
-export async function runDestroy(args: { yes?: boolean; saKey?: string }): Promise<void> {
+export async function runDestroy(args: { yes?: boolean }): Promise<void> {
   heading('Destroy SecureAgentBase');
 
   const config = loadConfig();
@@ -27,7 +27,7 @@ export async function runDestroy(args: { yes?: boolean; saKey?: string }): Promi
     }
   }
 
-  const auth = await createAuth(args.saKey);
+  const auth = createAuth();
 
   if (config.vmZone && config.vmIp) {
     info(`Deleting VM (${config.vmIp}) in ${config.vmZone}...`);
