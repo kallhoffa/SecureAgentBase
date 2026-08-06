@@ -60,10 +60,6 @@ export const wizardProgressReducer = (state, action) => {
       return { ...state, expandedSteps: [] };
     case 'SET_EXPANDED':
       return { ...state, expandedSteps: action.steps };
-    case 'REHYDRATE':
-      return {
-        expandedSteps: action.snapshot.expandedSteps ?? state.expandedSteps,
-      };
     default:
       return state;
   }
