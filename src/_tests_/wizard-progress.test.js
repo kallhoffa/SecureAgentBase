@@ -94,18 +94,7 @@ describe('wizardProgressReducer — expandedSteps operations', () => {
   });
 });
 
-describe('wizardProgressReducer — REHYDRATE (expandedSteps only, no completion flags)', () => {
-  it('REHYDRATE merges a persisted snapshot', () => {
-    const s = wizardProgressReducer(
-      { expandedSteps: [1, 2] },
-      { type: 'REHYDRATE', snapshot: { expandedSteps: [0, 3] } }
-    );
-    expect(s).toEqual({ expandedSteps: [0, 3] });
-  });
-  it('REHYDRATE ignores undefined fields', () => {
-    const s = wizardProgressReducer(initialWizardProgress, { type: 'REHYDRATE', snapshot: {} });
-    expect(s.expandedSteps).toEqual([0]);
-  });
+describe('wizardProgressReducer — no completion flags (legacy flag is dead)', () => {
   it('reducer has no step3Complete state (flag is dead)', () => {
     const s = wizardProgressReducer(initialWizardProgress, { type: 'TOGGLE_STEP', step: 1 });
     expect(s).not.toHaveProperty('step3Complete');

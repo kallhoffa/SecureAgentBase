@@ -157,7 +157,6 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
   const githubSaveRateLimit = useRateLimit('save-github-pat', 5);
 
   const [projectId, setProjectId] = useState('');
-  const [serviceAccountKey, setServiceAccountKey] = useState(null);
   const [githubAppInstalled, setGithubAppInstalled] = useState(false);
   const [vmIp, setVmIp] = useState('');
   const [kimakiBotInvited, setKimakiBotInvited] = useState(false);
@@ -1806,7 +1805,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
   const [creatingProject, setCreatingProject] = useState(false);
   const [enablingApis, setEnablingApis] = useState(false);
-  const [creatingVm, setCreatingVm] = useState(false);
   const [deletingVm, setDeletingVm] = useState(false);
 
   const fetchGcpProjects = async (token) => {
@@ -2077,101 +2075,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       }
     } finally {
       setEnablingApis(false);
-    }
-  };
-
-  const createVm = async () => {
-    if (!projectId || !gcpAccessToken) {
-      setError('Project not configured');
-      return;
-    }
-
-    setCreatingVm(true);
-    setError(null);
-
-    const zone = vmZone;
-    const instanceName = 'kimaki-manager';
-    const startupScript = getStartupScript(useOptimizedBundle);
-
-    try {
-      const checkResponse = await fetch(
-        `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances?filter=name="${instanceName}"`,
-        {
-          headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
-        }
-      );
-      
-      const checkData = await checkResponse.json();
-      if (checkData.items?.length > 0) {
-        setVmIp(checkData.items[0].networkInterfaces[0].accessConfigs[0].natIP);
-        expandNextStep(5);
-        setCreatingVm(false);
-        return;
-      }
-
-      const response = await fetch(
-        `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${gcpAccessToken}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({
-            name: instanceName,
-            machineType: `zones/${zone}/machineTypes/${vmMachineType}`,
-            disks: [{
-              boot: true,
-              autoDelete: true,
-              initializeParams: {
-                diskSizeGb: '10',
-                sourceImage: 'projects/debian-cloud/global/images/family/debian-11',
-              },
-            }],
-            networkInterfaces: [{
-              network: 'global/networks/default',
-              accessConfigs: [{
-                type: 'ONE_TO_ONE_NAT',
-              }],
-            }],
-            metadata: {
-              items: [
-                { key: 'startup-script', value: startupScript },
-                ...(serviceAccountKey ? [{ key: 'gcp_sa_key', value: JSON.stringify(serviceAccountKey) }] : [])
-              ]
-            }
-          })
-        }
-      );
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({ error: { message: response.statusText } }));
-        throw new Error(err.error?.message || `Failed to create VM (${response.status})`);
-      }
-
-      await new Promise(resolve => setTimeout(resolve, 10000));
-
-      const instanceResponse = await fetch(
-        `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances/${instanceName}`,
-        {
-          headers: { 'Authorization': `Bearer ${gcpAccessToken}` }
-        }
-      );
-      
-      const instanceData = await instanceResponse.json();
-      const ip = instanceData.networkInterfaces?.[0]?.accessConfigs?.[0]?.natIP;
-      
-      if (ip) {
-        setVmIp(ip);
-        expandNextStep(5);
-      } else {
-        expandNextStep(5);
-      }
-    } catch (err) {
-      console.error('Error creating VM:', err);
-      setError(err.message || 'Failed to create VM');
-    } finally {
-      setCreatingVm(false);
     }
   };
 
@@ -2819,7 +2722,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       setProjectId('');
       setGcpConnected(false);
       setGcpAccessToken(null);
-      setServiceAccountKey(null);
       setServiceAccountJson(null);
       setServiceAccountError(null);
       setVmIp('');
@@ -3233,92 +3135,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       setError('All zones are out of capacity. Please try again later.');
       setStep4Status('error');
     }
-  };
-
-  const handleCreateVM = async () => {
-    if (!serviceAccountKey || !projectId) {
-      setError('Please configure GCP project and service account first');
-      return;
-    }
-
-    if (!vmRateLimit.check()) {
-      setError('Rate limit reached for VM creation. Try again in a minute.');
-      return;
-    }
-
-    const errors = validate({ projectId, vmMachineType }, { projectId: SCHEMAS.projectId, vmMachineType: SCHEMAS.vmMachineType });
-    if (errors) {
-      setError(errors.projectId || errors.vmMachineType);
-      return;
-    }
-
-    if (!vmIp) {
-      setError('No VM IP configured. For initial setup, please manually create the VM via Cloud Console or gcloud CLI, then enter the IP below.');
-      return;
-    }
-
-    if (!/^[A-Za-z0-9._-]+$/.test(vmIp)) {
-      setError('Invalid VM IP. Only an IP address or hostname is allowed (no paths, ports, or query characters).');
-      return;
-    }
-
-    setSaving(true);
-    setError(null);
-
-    try {
-      const token = await getAccessToken();
-      if (!token) {
-        throw new Error('GCP access token required. Please reconnect Google Cloud.');
-      }
-
-      const instanceName = 'kimaki-manager';
-      const zone = vmZone || 'us-east1-b';
-
-      const metaResp = await fetch(
-        `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances/${instanceName}`,
-        { headers: { 'Authorization': `Bearer ${token}` } }
-      );
-      if (!metaResp.ok) throw new Error('Failed to fetch VM metadata fingerprint');
-      const meta = await metaResp.json();
-      const fingerprint = meta.metadata?.fingerprint || '';
-      const existingItems = meta.metadata?.items || [];
-      const newItems = existingItems.filter(i => i.key !== 'gcp_sa_key');
-      newItems.push({ key: 'gcp_sa_key', value: JSON.stringify(serviceAccountKey) });
-
-      const setMetaResp = await fetch(
-        `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances/${instanceName}/setMetadata`,
-        {
-          method: 'POST',
-          headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
-          body: JSON.stringify({ fingerprint, items: newItems }),
-        }
-      );
-      if (!setMetaResp.ok) {
-        const err = await setMetaResp.json().catch(() => ({ error: { message: setMetaResp.statusText } }));
-        throw new Error(err.error?.message || 'Failed to set VM metadata for SA key');
-      }
-
-      const response = await fetch(`http://${vmIp}:3000/api/provision-manager-vm`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ projectId }),
-      });
-
-      if (!response.ok) {
-        const err = await response.json().catch(() => ({ message: response.statusText }));
-        throw new Error(err.message || 'Failed to create VM');
-      }
-
-      const result = await response.json().catch(() => ({}));
-      setVmInitComplete(false);
-      setKimakiInstallUrl('');
-      setShowInitModal(true);
-    } catch (err) {
-      console.error('Error creating VM:', err);
-      setError(err.message);
-    }
-
-    setSaving(false);
   };
 
   const handleManualVMIP = () => {
