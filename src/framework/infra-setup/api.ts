@@ -74,60 +74,6 @@ export const setGitHubVariable = async (pat: string, repoFull: string, name: str
   }
 };
 
-const importPrivateKey = async (pem: string) => {
-  const pemHeader = '-----BEGIN PRIVATE KEY-----';
-  const pemFooter = '-----END PRIVATE KEY-----';
-  const pemContents = pem.substring(pemHeader.length, pem.length - pemFooter.length).replace(/\n/g, '');
-  const binaryDer = Uint8Array.from(atob(pemContents), c => c.charCodeAt(0));
-  return crypto.subtle.importKey('pkcs8', binaryDer, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign']);
-};
-
-export const getServiceAccountToken = async (serviceAccountJson: any) => {
-  if (!serviceAccountJson) return null;
-  if (!serviceAccountJson.private_key) return null;
-
-  const now = Math.floor(Date.now() / 1000);
-  const payload = {
-    iss: serviceAccountJson.client_email,
-    sub: serviceAccountJson.client_email,
-    aud: 'https://oauth2.googleapis.com/token',
-    iat: now,
-    exp: now + 3600,
-    scope: 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/compute https://www.googleapis.com/auth/devstorage.read_write'
-  };
-
-  const header = { alg: 'RS256', typ: 'JWT' };
-  const encodeBase64Url = (str: any) => {
-    return btoa(JSON.stringify(str)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  };
-
-  const encodedHeader = encodeBase64Url(header);
-  const encodedPayload = encodeBase64Url(payload);
-  const signatureInput = `${encodedHeader}.${encodedPayload}`;
-  const encoder = new TextEncoder();
-  const data = encoder.encode(signatureInput);
-
-  try {
-    const privateKey = serviceAccountJson.private_key.replace(/\\n/g, '\n');
-    const keyData = await importPrivateKey(privateKey);
-    const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', keyData, data);
-    const signatureBase64 = btoa(String.fromCharCode(...new Uint8Array(signature))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    const jwt = `${signatureInput}.${signatureBase64}`;
-
-    const response = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`
-    });
-
-    const tokenData = await response.json();
-    return tokenData.access_token;
-  } catch (e) {
-    console.error('Error getting service account token:', e);
-    return null;
-  }
-};
-
 export const generateShortLivedToken = async (userToken: string, saEmail: string): Promise<string | null> => {
   try {
     const resp = await fetch(
@@ -363,6 +309,83 @@ export const grantFirebaseRoles = async (token: string, firebaseProjectId: strin
       return;
     }
   }
+};
+
+// ---------------------------------------------------------------------------
+// Secret Manager helpers (map #36) — the credential store for the VM boot.
+// Secrets are per-secret IAM-gated: accessors are the operator (via Google
+// OAuth) and the identity-only agent SA (VM boot via metadata server).
+// The web app writes here using the operator's token; Firestore keeps
+// references only (`sm_secrets`), never secret values.
+// ---------------------------------------------------------------------------
+
+const SM_BASE = 'https://secretmanager.googleapis.com/v1';
+
+const base64Encode = (value: string) => {
+  const bytes = new TextEncoder().encode(value);
+  let binary = '';
+  bytes.forEach((b) => { binary += String.fromCharCode(b); });
+  return btoa(binary);
+};
+
+export const smEnsureSecret = async (token: string, projectId: string, secretId: string) => {
+  try {
+    const secret = await gcpApiFetch(
+      `${SM_BASE}/projects/${projectId}/secrets?secretId=${secretId}`,
+      token,
+      { method: 'POST', body: JSON.stringify({ replication: { automatic: {} } }) }
+    );
+    return secret.name;
+  } catch (e) {
+    // 409 ALREADY_EXISTS — fetch the existing secret instead.
+    if (!e.message?.includes('409')) throw e;
+    const existing = await gcpApiFetch(
+      `${SM_BASE}/projects/${projectId}/secrets/${secretId}`,
+      token
+    );
+    return existing.name;
+  }
+};
+
+export const smAddVersion = async (token: string, projectId: string, secretId: string, value: string) => {
+  const added = await gcpApiFetch(
+    `${SM_BASE}/projects/${projectId}/secrets/${secretId}:addVersion`,
+    token,
+    { method: 'POST', body: JSON.stringify({ payload: { data: base64Encode(value) } }) }
+  );
+  return added.name;
+};
+
+export const smSetSecretAccess = async (token: string, projectId: string, secretId: string, members: string[]) => {
+  const policy = await gcpApiFetch(
+    `${SM_BASE}/projects/${projectId}/secrets/${secretId}:getIamPolicy`,
+    token
+  );
+  const bindings = policy.bindings || [];
+  let binding = bindings.find((b) => b.role === 'roles/secretmanager.secretAccessor');
+  if (!binding) {
+    binding = { role: 'roles/secretmanager.secretAccessor', members: [] };
+    bindings.push(binding);
+  }
+  for (const member of members) {
+    if (!binding.members.includes(member)) binding.members.push(member);
+  }
+  await gcpApiFetch(
+    `${SM_BASE}/projects/${projectId}/secrets/${secretId}:setIamPolicy`,
+    token,
+    { method: 'POST', body: JSON.stringify({ policy: { bindings, etag: policy.etag } }) }
+  );
+};
+
+// Idempotent write: create-or-get the secret, add a new version, and bind the
+// per-secret accessors (operator + agent SA). Returns the secret resource name
+// used as a Firestore reference (`sm_secrets`).
+export const smWriteSecret = async (token: string, projectId: string, secretId: string, value: string, members: string[], log?: (msg: string) => void) => {
+  const secretName = await smEnsureSecret(token, projectId, secretId);
+  await smAddVersion(token, projectId, secretId, value);
+  await smSetSecretAccess(token, projectId, secretId, members);
+  log?.(`Secret ${secretId} stored in Secret Manager (${secretName})`);
+  return secretName;
 };
 
 export const grantPoolAccessToSA = async (token: string, gcpProjectId: string, saEmail: string, poolName: string, repoFullName: string, log: (msg: string) => void) => {

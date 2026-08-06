@@ -1,12 +1,7 @@
-import { GoogleAuth, ExternalAccountClient } from 'google-auth-library';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
+import { GoogleAuth } from 'google-auth-library';
 
 // Least-privilege scope policy — must stay in sync with the web wizard's SA
 // impersonation scopes (src/infra-setup.tsx, src/framework/infra-setup/api.ts).
-// devstorage.read_write (not full_control): the SA key only uploads/overwrites
-// the app bundle in GCS; it never lists/deletes buckets. See architecture
-// review finding #6 — full_control was narrowed to match the web flow.
 const SCOPES = [
   'https://www.googleapis.com/auth/cloud-platform',
   'https://www.googleapis.com/auth/compute',
@@ -60,98 +55,10 @@ class ADCAuthClient implements AuthClient {
   }
 }
 
-class SAKeyAuthClient implements AuthClient {
-  private saKey: any;
-  private tokenCache: { token: string; expiresAt: number } | null = null;
-
-  constructor(private keyPath: string) {
-    const raw = fs.readFileSync(keyPath, 'utf-8');
-    this.saKey = JSON.parse(raw);
-    if (!this.saKey.private_key || !this.saKey.client_email) {
-      throw new Error('Invalid service account key file');
-    }
-  }
-
-  async getToken(): Promise<string> {
-    if (this.tokenCache && Date.now() < this.tokenCache.expiresAt) {
-      return this.tokenCache.token;
-    }
-    const token = await signJwtAndGetToken(this.saKey, SCOPES.join(' '));
-    this.tokenCache = { token, expiresAt: Date.now() + 55 * 60 * 1000 };
-    return token;
-  }
-
-  async getProjectId(): Promise<string | null> {
-    return this.saKey.project_id || null;
-  }
-
-  async getClientEmail(): Promise<string | null> {
-    return this.saKey.client_email || null;
-  }
-}
-
-async function signJwtAndGetToken(saKey: any, scope: string): Promise<string> {
-  const now = Math.floor(Date.now() / 1000);
-  const payload = {
-    iss: saKey.client_email,
-    sub: saKey.client_email,
-    aud: 'https://oauth2.googleapis.com/token',
-    iat: now,
-    exp: now + 3600,
-    scope,
-  };
-
-  const header = { alg: 'RS256', typ: 'JWT' };
-  const encodeBase64Url = (obj: any) => {
-    return Buffer.from(JSON.stringify(obj))
-      .toString('base64')
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_')
-      .replace(/=+$/, '');
-  };
-
-  const encodedHeader = encodeBase64Url(header);
-  const encodedPayload = encodeBase64Url(payload);
-  const signatureInput = `${encodedHeader}.${encodedPayload}`;
-
-  const crypto = await import('node:crypto');
-  const sign = crypto.createSign('RSA-SHA256');
-  sign.update(signatureInput);
-  const signature = sign.sign(saKey.private_key.replace(/\\n/g, '\n'), 'base64url');
-
-  const jwt = `${signatureInput}.${signature}`;
-
-  const response = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`,
-  });
-
-  if (!response.ok) {
-    const err = await response.text();
-    throw new Error(`Failed to exchange JWT for token: ${err}`);
-  }
-
-  const data = await response.json() as any;
-  return data.access_token;
-}
-
-export async function createAuth(saKeyPath?: string): Promise<AuthClient> {
-  if (saKeyPath) {
-    return new SAKeyAuthClient(saKeyPath);
-  }
-
-  const adcPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-  if (adcPath && fs.existsSync(adcPath)) {
-    try {
-      const key = JSON.parse(fs.readFileSync(adcPath, 'utf-8'));
-      if (key.private_key) {
-        return new SAKeyAuthClient(adcPath);
-      }
-    } catch {
-      // Not a SA key, try ADC
-    }
-  }
-
+// ADC-only (map #36 decision #6): service-account-key auth is gone. The CLI
+// authenticates purely via Application Default Credentials (gcloud auth
+// application-default login, Workload Identity Federation, or
+// GOOGLE_APPLICATION_CREDENTIALS pointing at an ADC/authorized-user file).
+export function createAuth(): AuthClient {
   return new ADCAuthClient();
 }

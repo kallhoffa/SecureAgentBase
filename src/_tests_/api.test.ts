@@ -3,6 +3,10 @@ import {
   gcpApiFetch,
   githubApiFetch,
   setGitHubVariable,
+  smEnsureSecret,
+  smAddVersion,
+  smSetSecretAccess,
+  smWriteSecret,
 } from '../framework/infra-setup/api';
 
 const ok = (status: number, body: unknown) =>
@@ -180,5 +184,153 @@ describe('setGitHubVariable', () => {
     fetchMock.mockResolvedValue(ok(201, {}));
     await setGitHubVariable(pat, repoFull, 'UNDEF', undefined as any);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('smEnsureSecret', () => {
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('creates the secret with automatic replication when new', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValue(ok(200, { name: 'projects/p-1/secrets/github-pat' }));
+    const name = await smEnsureSecret('tok', 'p-1', 'github-pat');
+
+    expect(name).toBe('projects/p-1/secrets/github-pat');
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('https://secretmanager.googleapis.com/v1/projects/p-1/secrets?secretId=github-pat');
+    expect((init as any).method).toBe('POST');
+    expect(JSON.parse((init as any).body)).toEqual({ replication: { automatic: {} } });
+  });
+
+  it('fetches the existing secret on 409 already-exists', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock
+      .mockResolvedValueOnce(Promise.resolve(new Response('{"error":{"message":"already exists"}}', { status: 409 })))
+      .mockResolvedValueOnce(ok(200, { name: 'projects/p-1/secrets/github-pat' }));
+
+    const name = await smEnsureSecret('tok', 'p-1', 'github-pat');
+
+    expect(name).toBe('projects/p-1/secrets/github-pat');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [url, init] = fetchMock.mock.calls[1];
+    expect(url).toBe('https://secretmanager.googleapis.com/v1/projects/p-1/secrets/github-pat');
+    expect((init as any).method).toBe('GET');
+  });
+
+  it('propagates non-409 errors', async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      Promise.resolve(new Response('{"error":{"message":"permission denied"}}', { status: 403 }))
+    );
+    await expect(smEnsureSecret('tok', 'p-1', 'github-pat')).rejects.toThrow(
+      /GCP API error \(403\)/
+    );
+  });
+});
+
+describe('smAddVersion', () => {
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('POSTs the value base64-encoded as a new version', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValue(ok(200, { name: 'projects/p-1/secrets/github-pat/versions/3' }));
+    const name = await smAddVersion('tok', 'p-1', 'github-pat', 'ghp_abc123');
+
+    expect(name).toBe('projects/p-1/secrets/github-pat/versions/3');
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('https://secretmanager.googleapis.com/v1/projects/p-1/secrets/github-pat:addVersion');
+    expect((init as any).method).toBe('POST');
+    const body = JSON.parse((init as any).body);
+    expect(body.payload.data).toBe(btoa('ghp_abc123'));
+  });
+
+  it('encodes non-ASCII values safely (no btoa latin1 blowup)', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValue(ok(200, { name: 'projects/p-1/secrets/discord-bot-token/versions/1' }));
+    await smAddVersion('tok', 'p-1', 'discord-bot-token', 'MTAköztié×1');
+    const body = JSON.parse((fetchMock.mock.calls[0][1] as any).body);
+    expect(body.payload.data).toBe(btoa(String.fromCharCode(...new TextEncoder().encode('MTAköztié×1'))));
+  });
+});
+
+describe('smSetSecretAccess', () => {
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('merges accessor members into the existing policy and keeps the etag', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock
+      .mockResolvedValueOnce(ok(200, {
+        etag: 'ETAG1',
+        bindings: [{ role: 'roles/secretmanager.secretAccessor', members: ['serviceAccount:sa@x.iam.gserviceaccount.com'] }],
+      }))
+      .mockResolvedValueOnce(ok(200, {}));
+
+    await smSetSecretAccess('tok', 'p-1', 'github-pat', ['user:ops@example.com', 'serviceAccount:sa@x.iam.gserviceaccount.com']);
+
+    const [getUrl, getInit] = fetchMock.mock.calls[0];
+    expect(getUrl).toBe('https://secretmanager.googleapis.com/v1/projects/p-1/secrets/github-pat:getIamPolicy');
+    expect((getInit as any).method).toBe('GET');
+
+    const [setUrl, setInit] = fetchMock.mock.calls[1];
+    expect(setUrl).toBe('https://secretmanager.googleapis.com/v1/projects/p-1/secrets/github-pat:setIamPolicy');
+    const body = JSON.parse((setInit as any).body);
+    expect(body.policy.etag).toBe('ETAG1');
+    const accessor = body.policy.bindings.find((b) => b.role === 'roles/secretmanager.secretAccessor');
+    expect(accessor.members).toEqual([
+      'serviceAccount:sa@x.iam.gserviceaccount.com',
+      'user:ops@example.com',
+    ]);
+  });
+
+  it('creates the accessor binding when the policy has none', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock
+      .mockResolvedValueOnce(ok(200, { etag: 'ETAG2', bindings: [] }))
+      .mockResolvedValueOnce(ok(200, {}));
+
+    await smSetSecretAccess('tok', 'p-1', 'discord-bot-token', ['user:ops@example.com']);
+
+    const body = JSON.parse((fetchMock.mock.calls[1][1] as any).body);
+    expect(body.policy.bindings).toEqual([
+      { role: 'roles/secretmanager.secretAccessor', members: ['user:ops@example.com'] },
+    ]);
+  });
+});
+
+describe('smWriteSecret', () => {
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('orchestrates ensure + addVersion + access and returns the secret name', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock
+      .mockResolvedValueOnce(ok(200, { name: 'projects/p-1/secrets/github-pat' })) // ensure POST
+      .mockResolvedValueOnce(ok(200, { name: 'projects/p-1/secrets/github-pat/versions/1' })) // addVersion
+      .mockResolvedValueOnce(ok(200, { etag: 'E', bindings: [] })) // getIamPolicy
+      .mockResolvedValueOnce(ok(200, {})); // setIamPolicy
+
+    const log = vi.fn();
+    const name = await smWriteSecret('tok', 'p-1', 'github-pat', 'ghp_secret', ['user:ops@example.com'], log);
+
+    expect(name).toBe('projects/p-1/secrets/github-pat');
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('github-pat'));
+  });
+
+  it('reuses the secret name on 409 instead of double-creating', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock
+      .mockResolvedValueOnce(Promise.resolve(new Response('{"error":{"message":"already exists"}}', { status: 409 })))
+      .mockResolvedValueOnce(ok(200, { name: 'projects/p-1/secrets/discord-bot-token' })) // ensure GET fallback
+      .mockResolvedValueOnce(ok(200, { name: 'projects/p-1/secrets/discord-bot-token/versions/2' }))
+      .mockResolvedValueOnce(ok(200, { etag: 'E', bindings: [] }))
+      .mockResolvedValueOnce(ok(200, {}));
+
+    const name = await smWriteSecret('tok', 'p-1', 'discord-bot-token', 'tok2', ['serviceAccount:sa@x.iam.gserviceaccount.com']);
+
+    expect(name).toBe('projects/p-1/secrets/discord-bot-token');
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 });

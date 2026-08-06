@@ -12,7 +12,7 @@ export async function runStatus(): Promise<void> {
   }
 
   kv('GCP Project', config.gcpProjectId || '-');
-  kv('Service Account', config.saEmail || config.saKeyPath || '-');
+  kv('Service Account', config.saEmail || '-');
   kv('Staging Firebase', config.firebaseStaging?.projectId || '-');
   kv('Production Firebase', config.firebaseProduction?.projectId || '-');
   kv('GitHub Repo', config.githubRepo || '-');

@@ -108,6 +108,12 @@ jobs:
             --role="roles/billing.projectManager" \
             --condition=None 2>&1 || true
 
+          echo "Granting secretmanager.admin to e2e-runner SA..."
+          gcloud projects add-iam-policy-binding "${PROJECT}" \
+            --member="serviceAccount:${E2E_SA}" \
+            --role="roles/secretmanager.admin" \
+            --condition=None 2>&1 || true
+
           echo "Granting iam.workloadIdentityPoolAdmin to e2e-runner SA..."
           gcloud projects add-iam-policy-binding "${PROJECT}" \
             --member="serviceAccount:${E2E_SA}" \

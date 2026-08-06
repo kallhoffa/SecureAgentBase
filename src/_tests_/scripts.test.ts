@@ -115,13 +115,12 @@ describe('getStartupScript', () => {
       expect(script).not.toContain('SUFFIX=$(echo $RANDOM');
     });
 
-    it('fetches all 8 metadata attributes', () => {
+    it('fetches all non-secret metadata attributes', () => {
       const script = getStartupScript(false);
       const attributes = [
         'github_repo',
         'firebase_staging',
         'firebase_production',
-        'discord_bot_token',
         'discord_guild_id',
         'gcp_wif_provider',
         'gcp_sa_staging',
@@ -133,6 +132,29 @@ describe('getStartupScript', () => {
       for (const attr of attributes) {
         expect(script).toContain(attr);
       }
+    });
+
+    it('does not fetch github_pat or discord_bot_token from metadata', () => {
+      const script = getStartupScript(false);
+      expect(script).not.toContain('instance/attributes/github_pat');
+      expect(script).not.toContain('instance/attributes/discord_bot_token');
+    });
+
+    it('fetches secrets from Secret Manager via the metadata-server identity', () => {
+      const script = getStartupScript(false);
+      expect(script).toContain('fetch_sm_secret');
+      expect(script).toContain('project/project-id');
+      expect(script).toContain('instance/service-accounts/default/token');
+      expect(script).toContain('secretmanager.googleapis.com/v1/projects/${GCP_PROJECT_ID}/secrets/${secret_id}/versions/latest:access');
+      expect(script).toContain('fetch_sm_secret "github-pat"');
+      expect(script).toContain('fetch_sm_secret "discord-bot-token"');
+    });
+
+    it('retries with backoff but fails fast on 404 (secret not configured)', () => {
+      const script = getStartupScript(false);
+      expect(script).toContain('for i in $(seq 1 14)');
+      expect(script).toContain('sleep $((i * 3))');
+      expect(script).toContain('if [ "$code" = "404" ]; then');
     });
   });
 
