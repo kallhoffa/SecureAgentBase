@@ -885,6 +885,10 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   const getServiceAccountToken = async () => {
     const saEmail = godSaEmail || serviceAccountJson?.client_email;
 
+    // Identity-only (map #36): the operator's Google OAuth token impersonates
+    // the agent SA — no SA key is ever held or signed with. Returns null when
+    // there is no operator token (legacy SA-key-only flows must reconnect via
+    // "Connect Google Cloud Account").
     if (gcpAccessToken && saEmail) {
       try {
         const resp = await fetch(
@@ -906,13 +910,10 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           return data.accessToken;
         }
       } catch (e) {
-        console.warn('generateAccessToken failed, falling back to JWT signing:', e);
+        console.warn('generateAccessToken failed:', e);
       }
     }
-    
-    if (serviceAccountJson) {
-      return signJwtAssertion(serviceAccountJson, 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/compute https://www.googleapis.com/auth/devstorage.read_write https://www.googleapis.com/auth/cloud-billing.readonly');
-    }
+
     return null;
   };
 
@@ -1017,24 +1018,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       addStep4Log(`Error: ${e.message}`);
     }
     setDeletingVm(false);
-  };
-
-  const importPrivateKey = async (pem) => {
-    const pemHeader = '-----BEGIN PRIVATE KEY-----';
-    const pemFooter = '-----END PRIVATE KEY-----';
-    const pemContents = pem.substring(pem.indexOf(pemHeader) + pemHeader.length, pem.indexOf(pemFooter));
-    const binaryDerString = atob(pemContents.replace(/\s/g, ''));
-    const binaryDer = strToBuf(binaryDerString);
-    return binaryDer;
-  };
-
-  const strToBuf = (str) => {
-    const buf = new ArrayBuffer(str.length);
-    const bufView = new Uint8Array(buf);
-    for (let i = 0, strLen = str.length; i < strLen; i++) {
-      bufView[i] = str.charCodeAt(i);
-    }
-    return buf;
   };
 
   const tryEnableBillingApi = async () => {
@@ -1468,62 +1451,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       bindings.push({ role, members: [member] });
     } else if (!binding.members.includes(member)) {
       binding.members.push(member);
-    }
-  };
-
-  const signJwtAssertion = async (jsonKey, scopes) => {
-    if (!jsonKey.private_key) {
-      console.error('Service account private key is missing');
-      return null;
-    }
-
-    const now = Math.floor(Date.now() / 1000);
-    const payload = {
-      iss: jsonKey.client_email,
-      sub: jsonKey.client_email,
-      aud: 'https://oauth2.googleapis.com/token',
-      iat: now,
-      exp: now + 3600,
-      scope: scopes
-    };
-
-    const header = { alg: 'RS256', typ: 'JWT' };
-    const encodeBase64Url = (str) => {
-      return btoa(JSON.stringify(str)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    };
-
-    const encodedHeader = encodeBase64Url(header);
-    const encodedPayload = encodeBase64Url(payload);
-    const signatureInput = `${encodedHeader}.${encodedPayload}`;
-
-    const encoder = new TextEncoder();
-    const data = encoder.encode(signatureInput);
-
-    try {
-      const privateKey = jsonKey.private_key.replace(/\\n/g, '\n');
-      const keyData = await crypto.subtle.importKey(
-        'pkcs8',
-        await importPrivateKey(privateKey),
-        { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
-        false,
-        ['sign']
-      );
-
-      const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', keyData, data);
-      const signatureBase64 = btoa(String.fromCharCode(...new Uint8Array(signature))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-      const jwt = `${signatureInput}.${signatureBase64}`;
-
-      const response = await fetch('https://oauth2.googleapis.com/token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`
-      });
-
-      const tokenData = await response.json();
-      return tokenData.access_token;
-    } catch (e) {
-      console.error('Error getting service account token:', e);
-      return null;
     }
   };
 
@@ -2847,9 +2774,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   const buildVmMetadata = (startupScript: string) => {
     const items = [
       { key: 'startup-script', value: startupScript },
-      { key: 'github_pat', value: githubPat },
       { key: 'github_repo', value: githubRepoName || projectName || 'SecureAgentBase' },
-      { key: 'discord_bot_token', value: discordBotToken || '' },
       { key: 'discord_guild_id', value: discordGuildId || '' },
       { key: 'firebase_staging', value: firebaseStagingData?.projectId || '' },
       { key: 'firebase_production', value: firebaseProductionData?.projectId || '' },
@@ -2868,11 +2793,31 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   // Map #36: persist GitHub PAT + Discord bot token to Secret Manager (never
   // Firestore) so the VM can boot with secrets fetched via the metadata server
   // identity. Returns the secret resource names for Firestore refs only.
+  // Accessors are per-secret and least-privilege: the operator's Google
+  // account, the identity-only agent SA (the VM's intended identity), and the
+  // project's default compute SA (fallback identity for VMs created without an
+  // explicit SA — legacy/e2e flows).
+  const projectNumberRef = useRef<string | null>(null);
+  const getProjectNumber = async (token) => {
+    if (projectNumberRef.current) return projectNumberRef.current;
+    try {
+      const proj = await gcpApiFetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${projectId}`, token);
+      if (proj.projectNumber) {
+        projectNumberRef.current = String(proj.projectNumber);
+      }
+    } catch (e) {
+      console.warn('Failed to fetch project number:', e.message);
+    }
+    return projectNumberRef.current;
+  };
+
   const writeSecretsToSecretManager = async (token, log) => {
     const refs: Record<string, string> = {};
     const members = [];
     if (gcpConsentEmail) members.push(`user:${gcpConsentEmail}`);
     if (godSaEmail) members.push(`serviceAccount:${godSaEmail}`);
+    const projectNumber = await getProjectNumber(token);
+    if (projectNumber) members.push(`serviceAccount:${projectNumber}-compute@developer.gserviceaccount.com`);
     if (githubPat) {
       refs.github_pat = await smWriteSecret(token, projectId, 'github-pat', githubPat, members, log);
     }
@@ -3049,6 +2994,14 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         setStep4Message(`Creating VM in ${tryZone}...`);
         log(`Attempting VM creation in ${tryZone}...`);
 
+        // Map #36: the VM runs as the identity-only agent SA (cloud-platform
+        // scope) so the startup script can fetch the GitHub PAT + Discord
+        // token from Secret Manager via the metadata server. When no agent SA
+        // exists (legacy/e2e), fall back to the project's default compute SA —
+        // it is granted per-secret secretAccessor at write time.
+        const vmSaEmail = godSaEmail || serviceAccountJson?.client_email ||
+          (projectNumberRef.current ? `${projectNumberRef.current}-compute@developer.gserviceaccount.com` : null);
+
         const vmResponse = await fetch(
           `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${tryZone}/instances`,
           {
@@ -3072,6 +3025,9 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                 network: 'global/networks/default',
                 accessConfigs: [{ type: 'ONE_TO_ONE_NAT' }],
               }],
+              ...(vmSaEmail ? {
+                serviceAccounts: [{ email: vmSaEmail, scopes: ['https://www.googleapis.com/auth/cloud-platform'] }]
+              } : {}),
               metadata: buildVmMetadata(startupScript)
             })
           }

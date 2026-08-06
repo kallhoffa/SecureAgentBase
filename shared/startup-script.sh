@@ -22,8 +22,6 @@ else
 fi
 FIREBASE_STAGING=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_staging" -H "Metadata-Flavor: Google")
 FIREBASE_PRODUCTION=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_production" -H "Metadata-Flavor: Google")
-GITHUB_PAT=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/github_pat" -H "Metadata-Flavor: Google")
-DISCORD_BOT_TOKEN=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/discord_bot_token" -H "Metadata-Flavor: Google")
 DISCORD_GUILD_ID=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/discord_guild_id" -H "Metadata-Flavor: Google")
 GCP_WIF_PROVIDER=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/gcp_wif_provider" -H "Metadata-Flavor: Google")
 GCP_SA_STAGING=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/gcp_sa_staging" -H "Metadata-Flavor: Google")
@@ -32,9 +30,11 @@ FIREBASE_STAGING_CONFIG=$(curl -sf "http://metadata.google.internal/computeMetad
 FIREBASE_PRODUCTION_CONFIG=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_production_config" -H "Metadata-Flavor: Google")
 VITE_APP_NAME=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/vite_app_name" -H "Metadata-Flavor: Google")
 GCP_SA_KEY=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/gcp_sa_key" -H "Metadata-Flavor: Google")
+# Secret values (GITHUB_PAT / DISCORD_BOT_TOKEN) are NOT carried in VM metadata —
+# they are fetched from Secret Manager below via the metadata-server identity.
 
 # Clean up any potential HTML responses from failed requests or unconfigured metadata
-for var in FIREBASE_STAGING FIREBASE_PRODUCTION GITHUB_PAT DISCORD_BOT_TOKEN DISCORD_GUILD_ID GCP_WIF_PROVIDER GCP_SA_STAGING GCP_SA_PRODUCTION FIREBASE_STAGING_CONFIG FIREBASE_PRODUCTION_CONFIG VITE_APP_NAME GCP_SA_KEY; do
+for var in FIREBASE_STAGING FIREBASE_PRODUCTION DISCORD_GUILD_ID GCP_WIF_PROVIDER GCP_SA_STAGING GCP_SA_PRODUCTION FIREBASE_STAGING_CONFIG FIREBASE_PRODUCTION_CONFIG VITE_APP_NAME GCP_SA_KEY; do
   val=${!var}
   if [[ "$val" =~ "<html" || "$val" =~ "<!" || "$val" =~ "<HTML" ]]; then
     eval "$var=\"\""
@@ -65,6 +65,43 @@ check_disk
 
 sudo apt-get update -y > /dev/null 2>&1 || true
 sudo apt-get install -y curl git jq apt-transport-https ca-certificates gnupg2 ufw unzip > /dev/null 2>&1 || true
+
+# Fetch secrets from Secret Manager via the metadata-server identity (map #36).
+# No secret values ride in VM metadata; the VM's attached service account holds
+# per-secret roles/secretmanager.secretAccessor. IAM grants are eventually
+# consistent — fresh grants can 403 for several minutes, so retry with backoff.
+# A missing secret (404) fails fast: provisioning continues without it, exactly
+# as it did when the metadata value was absent.
+GCP_PROJECT_ID=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/project/project-id" -H "Metadata-Flavor: Google")
+fetch_sm_secret() {
+  local secret_id="$1"
+  [ -z "$GCP_PROJECT_ID" ] && return 1
+  local token
+  for i in $(seq 1 14); do
+    token=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" -H "Metadata-Flavor: Google" | jq -r '.access_token // empty')
+    if [ -n "$token" ]; then
+      local resp code body
+      resp=$(curl -s -w '\n%{http_code}' -H "Authorization: Bearer $token" \
+        "https://secretmanager.googleapis.com/v1/projects/${GCP_PROJECT_ID}/secrets/${secret_id}/versions/latest:access")
+      code=$(printf '%s' "$resp" | tail -n1)
+      body=$(printf '%s' "$resp" | head -n -1)
+      if [ "$code" = "200" ]; then
+        printf '%s' "$body" | jq -r '.payload.data // empty' | base64 -d 2>/dev/null
+        return 0
+      fi
+      if [ "$code" = "404" ]; then
+        # Secret not configured — do not stall the boot waiting for it.
+        return 1
+      fi
+      # 403/5xx — IAM propagation or transient error, retry with backoff.
+    fi
+    sleep $((i * 3))
+  done
+  return 1
+}
+GITHUB_PAT=$(fetch_sm_secret "github-pat")
+DISCORD_BOT_TOKEN=$(fetch_sm_secret "discord-bot-token")
+echo "Secrets fetched from Secret Manager: GITHUB_PAT=$([ -n "$GITHUB_PAT" ] && echo set || echo missing) DISCORD_BOT_TOKEN=$([ -n "$DISCORD_BOT_TOKEN" ] && echo set || echo missing)"
 
 # Install Node.js 20.x — pinned binary release with checksum verification
 NODE_VERSION="20.18.0"

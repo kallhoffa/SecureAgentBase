@@ -74,60 +74,6 @@ export const setGitHubVariable = async (pat: string, repoFull: string, name: str
   }
 };
 
-const importPrivateKey = async (pem: string) => {
-  const pemHeader = '-----BEGIN PRIVATE KEY-----';
-  const pemFooter = '-----END PRIVATE KEY-----';
-  const pemContents = pem.substring(pemHeader.length, pem.length - pemFooter.length).replace(/\n/g, '');
-  const binaryDer = Uint8Array.from(atob(pemContents), c => c.charCodeAt(0));
-  return crypto.subtle.importKey('pkcs8', binaryDer, { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' }, false, ['sign']);
-};
-
-export const getServiceAccountToken = async (serviceAccountJson: any) => {
-  if (!serviceAccountJson) return null;
-  if (!serviceAccountJson.private_key) return null;
-
-  const now = Math.floor(Date.now() / 1000);
-  const payload = {
-    iss: serviceAccountJson.client_email,
-    sub: serviceAccountJson.client_email,
-    aud: 'https://oauth2.googleapis.com/token',
-    iat: now,
-    exp: now + 3600,
-    scope: 'https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/compute https://www.googleapis.com/auth/devstorage.read_write'
-  };
-
-  const header = { alg: 'RS256', typ: 'JWT' };
-  const encodeBase64Url = (str: any) => {
-    return btoa(JSON.stringify(str)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  };
-
-  const encodedHeader = encodeBase64Url(header);
-  const encodedPayload = encodeBase64Url(payload);
-  const signatureInput = `${encodedHeader}.${encodedPayload}`;
-  const encoder = new TextEncoder();
-  const data = encoder.encode(signatureInput);
-
-  try {
-    const privateKey = serviceAccountJson.private_key.replace(/\\n/g, '\n');
-    const keyData = await importPrivateKey(privateKey);
-    const signature = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', keyData, data);
-    const signatureBase64 = btoa(String.fromCharCode(...new Uint8Array(signature))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-    const jwt = `${signatureInput}.${signatureBase64}`;
-
-    const response = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `grant_type=urn:ietf:params:oauth:grant-type:jwt-bearer&assertion=${jwt}`
-    });
-
-    const tokenData = await response.json();
-    return tokenData.access_token;
-  } catch (e) {
-    console.error('Error getting service account token:', e);
-    return null;
-  }
-};
-
 export const generateShortLivedToken = async (userToken: string, saEmail: string): Promise<string | null> => {
   try {
     const resp = await fetch(
