@@ -226,6 +226,20 @@ describe('smEnsureSecret', () => {
       /GCP API error \(403\)/
     );
   });
+
+  it('retries on SERVICE_DISABLED until the API activates', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock
+      .mockResolvedValueOnce(
+        Promise.resolve(new Response('{"error":{"reason":"SERVICE_DISABLED"}}', { status: 403 }))
+      )
+      .mockResolvedValueOnce(ok(200, { name: 'projects/p-1/secrets/github-pat' }));
+
+    const name = await smEnsureSecret('tok', 'p-1', 'github-pat');
+
+    expect(name).toBe('projects/p-1/secrets/github-pat');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  }, 15000);
 });
 
 describe('smAddVersion', () => {

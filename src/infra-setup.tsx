@@ -2903,6 +2903,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       { name: 'compute.googleapis.com', displayName: 'Compute Engine API' },
       { name: 'cloudresourcemanager.googleapis.com', displayName: 'Cloud Resource Manager API' },
       { name: 'serviceusage.googleapis.com', displayName: 'Service Usage API' },
+      { name: 'secretmanager.googleapis.com', displayName: 'Secret Manager API' },
       { name: 'cloudbilling.googleapis.com', displayName: 'Cloud Billing API' },
       { name: 'iamcredentials.googleapis.com', displayName: 'IAM Service Account Credentials API' }
     ];

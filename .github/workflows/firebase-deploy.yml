@@ -60,6 +60,7 @@ jobs:
             gcloud services enable cloudbilling.googleapis.com --project "$proj" 2>/dev/null || true
             gcloud services enable compute.googleapis.com --project "$proj" 2>/dev/null || true
             gcloud services enable cloudresourcemanager.googleapis.com --project "$proj" 2>/dev/null || true
+            gcloud services enable secretmanager.googleapis.com --project "$proj" 2>/dev/null || true
           done
           # Grant WIF pool admin to both deploy SA and e2e-runner SA
           DEPLOY_SA="firebase-deploy-staging@${PROJECT}.iam.gserviceaccount.com"
