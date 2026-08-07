@@ -314,7 +314,7 @@ test.describe('Wizard E2E Regression', () => {
 
       const initModal = page.getByText('VM is initializing...');
       const errorText = page.getByText(
-        /Billing is required|Failed to authenticate|Failed to enable|Failed to create|out of capacity|All zones|VM terminated|VM is in "|Permission denied|billing.*linkedaccount/i
+        /Billing is required|Failed to authenticate|Failed to enable|Failed to create|Failed to store secrets|out of capacity|All zones|VM terminated|VM is in "|Permission denied|billing.*linkedaccount/i
       );
       const retryBtn = page.getByRole('button', { name: /Enable APIs & Create VM/i });
 
@@ -572,8 +572,25 @@ test.describe('Wizard E2E Regression', () => {
                   const sd = await serialResp.json();
                   const tail = (sd.contents || '').slice(-3000);
                   console.log(`[diag ${elapsed}s] Serial port (last 3000 chars):\n${tail}`);
+                  // Fail fast: if the startup script already completed but the
+                  // secrets were missing (or the push failed), no deployment
+                  // will ever land — don't burn the full 10-minute poll.
+                  const patMissing = /GITHUB_PAT=missing/i.test(tail);
+                  const scriptDone = /SCRIPT_COMPLETE/i.test(tail);
+                  const pushFailed = /PUSH_RESULT=(PUSH_FAILED|ALL_PUSH_FAILED)/i.test(tail);
+                  if (pushFailed) {
+                    throw new Error(`Staging deploy test: VM startup script finished with ${tail.match(/PUSH_RESULT=\w+/i)[0]} — GitHub push failed, deploy will not trigger.`);
+                  }
+                  if (patMissing && scriptDone) {
+                    throw new Error('Staging deploy test: VM startup script completed but GITHUB_PAT is missing — Secret Manager fetch failed on the VM, deploy will not trigger.');
+                  }
+                } else {
+                  console.log(`[diag ${elapsed}s] Serial port fetch failed: HTTP ${serialResp.status} (zone ${serialZone || 'us-east1-b'})`);
                 }
-              } catch (_) {}
+              } catch (e) {
+                if (e.message?.startsWith('Staging deploy test:')) throw e;
+                console.log(`[diag ${elapsed}s] Serial port fetch error: ${e.message}`);
+              }
             }
             const gpat = process.env.E2E_GITHUB_PAT || '';
             if (gpat) {

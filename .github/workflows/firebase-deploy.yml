@@ -60,7 +60,11 @@ jobs:
           DEPLOY_SA="firebase-deploy-staging@${PROJECT}.iam.gserviceaccount.com"
           E2E_SA="e2e-test-runner@${PROJECT}.iam.gserviceaccount.com"
           for sa in "$DEPLOY_SA" "$E2E_SA"; do
-            for role in roles/iam.workloadIdentityPoolAdmin roles/iam.securityAdmin roles/serviceusage.serviceUsageAdmin roles/iam.serviceAccountUser roles/iam.serviceAccountTokenCreator roles/billing.projectManager roles/secretmanager.admin; do
+            # cloudresourcemanager.projectViewer: lets the wizard's getProjectNumber()
+            # resolve the default compute SA (projectNumber-compute@...), which is
+            # the identity the e2e VM runs as and MUST be granted SM secretAccessor
+            # at write time or the VM can never fetch github-pat/discord-bot-token.
+            for role in roles/iam.workloadIdentityPoolAdmin roles/iam.securityAdmin roles/serviceusage.serviceUsageAdmin roles/iam.serviceAccountUser roles/iam.serviceAccountTokenCreator roles/billing.projectManager roles/secretmanager.admin roles/cloudresourcemanager.projectViewer; do
               gcloud projects add-iam-policy-binding "$PROJECT" \
                 --member="serviceAccount:${sa}" \
                 --role="${role}" 2>/dev/null || true
