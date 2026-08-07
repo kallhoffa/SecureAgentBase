@@ -328,8 +328,13 @@ test.describe('Wizard E2E Regression', () => {
       // 3. Retry button reappears — creation failed silently
 
       const initModal = page.getByText('VM is initializing...');
+      // NOTE: 'out of capacity' alone must NOT match — the wizard logs
+      // "Zone X may be out of capacity, trying next zone..." as a normal
+      // zone-fallback recovery line while still creating the VM. Only the
+      // fatal "All zones are out of capacity" (matched via 'All zones') is
+      // a real failure.
       const errorText = page.getByText(
-        /Billing is required|Failed to authenticate|Failed to enable|Failed to create|Failed to store secrets|out of capacity|All zones|VM terminated|VM is in "|Permission denied|billing.*linkedaccount/i
+        /Billing is required|Failed to authenticate|Failed to enable|Failed to create|Failed to store secrets|All zones|VM terminated|VM is in "|Permission denied|billing.*linkedaccount/i
       );
       const retryBtn = page.getByRole('button', { name: /Enable APIs & Create VM/i });
 
