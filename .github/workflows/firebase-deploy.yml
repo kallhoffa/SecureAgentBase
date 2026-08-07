@@ -1,8 +1,13 @@
 name: Deploy to Production
 
 on:
+  # NOTE: 'published' fires exactly once per release publish. Do NOT add
+  # 'released' — both fire on the same event and produce TWO gate runs
+  # (concurrency queues the second, causing a duplicate prod deploy + npm
+  # publish ~35 min later). Use workflow_dispatch to re-trigger after a
+  # failed/cancelled run instead.
   release:
-    types: [published, released]
+    types: [published]
   workflow_dispatch:
 
 concurrency:
