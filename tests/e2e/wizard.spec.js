@@ -308,10 +308,14 @@ test.describe('Wizard E2E Regression', () => {
       // view (Delete VM / Recreate VM) instead of the Create button. The app
       // now ignores vm_ip on load in E2E mode, but handle it here too so a
       // retry after a same-run VM creation can't hide the button.
-      const recreateBtn = page.getByRole('button', { name: /Recreate VM/i });
-      if (await recreateBtn.isVisible().catch(() => false)) {
+      // NOTE: the create section itself ALSO contains a "Recreate VM" button
+      // (starts creation with isRecreate:true), so gate on the ready-view
+      // text, NOT the button name — clicking the wrong one kicks off VM
+      // creation and hides the Create button.
+      const readyView = page.getByText('VM created and ready');
+      if (await readyView.isVisible().catch(() => false)) {
         console.log('E2E: stale VM state detected, clicking Recreate VM to reveal create button');
-        await recreateBtn.click();
+        await page.getByRole('button', { name: /Recreate VM/i }).first().click();
         await page.waitForTimeout(400);
       }
       await expect(createBtn).toBeVisible({ timeout: 5000 });
