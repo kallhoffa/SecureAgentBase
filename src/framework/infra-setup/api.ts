@@ -329,22 +329,36 @@ const base64Encode = (value: string) => {
 };
 
 export const smEnsureSecret = async (token: string, projectId: string, secretId: string) => {
-  try {
-    const secret = await gcpApiFetch(
-      `${SM_BASE}/projects/${projectId}/secrets?secretId=${secretId}`,
-      token,
-      { method: 'POST', body: JSON.stringify({ replication: { automatic: {} } }) }
-    );
-    return secret.name;
-  } catch (e) {
-    // 409 ALREADY_EXISTS — fetch the existing secret instead.
-    if (!e.message?.includes('409')) throw e;
-    const existing = await gcpApiFetch(
-      `${SM_BASE}/projects/${projectId}/secrets/${secretId}`,
-      token
-    );
-    return existing.name;
+  // The API-enable loop activates secretmanager.googleapis.com before writing,
+  // but GCP can lag a few seconds past the status poll (same behavior as
+  // cloudbilling). Retry briefly on SERVICE_DISABLED so a brand-new project
+  // whose SM API was just enabled doesn't 403 on the very first write.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const secret = await gcpApiFetch(
+        `${SM_BASE}/projects/${projectId}/secrets?secretId=${secretId}`,
+        token,
+        { method: 'POST', body: JSON.stringify({ replication: { automatic: {} } }) }
+      );
+      return secret.name;
+    } catch (e) {
+      if (e.message?.includes('SERVICE_DISABLED')) {
+        if (attempt < 2) {
+          await new Promise(r => setTimeout(r, 5000));
+          continue;
+        }
+        throw new Error(`Secret Manager API is not active for project ${projectId}: ${e.message}`);
+      }
+      // 409 ALREADY_EXISTS — fetch the existing secret instead.
+      if (!e.message?.includes('409')) throw e;
+      const existing = await gcpApiFetch(
+        `${SM_BASE}/projects/${projectId}/secrets/${secretId}`,
+        token
+      );
+      return existing.name;
+    }
   }
+  throw new Error(`Secret Manager API did not activate for project ${projectId}`);
 };
 
 export const smAddVersion = async (token: string, projectId: string, secretId: string, value: string) => {
