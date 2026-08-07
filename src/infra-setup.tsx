@@ -2818,6 +2818,16 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     if (godSaEmail) members.push(`serviceAccount:${godSaEmail}`);
     const projectNumber = await getProjectNumber(token);
     if (projectNumber) members.push(`serviceAccount:${projectNumber}-compute@developer.gserviceaccount.com`);
+    if (githubPat || discordBotToken) {
+      // The VM boots with a service account and fetches these secrets via the
+      // metadata-server identity. If NO ONE has secretAccessor, the VM silently
+      // gets empty secrets and never pushes — fail fast instead of creating a
+      // broken VM. (e2e/legacy flows have no Google sign-in or god SA, so the
+      // default compute SA below is their only accessor — it must resolve.)
+      if (members.length === 0) {
+        throw new Error('Cannot store secrets in Secret Manager: no service account granted access. Sign in with Google (Step 0) or connect a service account (Step 3) first.');
+      }
+    }
     if (githubPat) {
       refs.github_pat = await smWriteSecret(token, projectId, 'github-pat', githubPat, members, log);
     }
@@ -2976,9 +2986,14 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         await saveConfig({ sm_secrets: smRefs }).catch(() => {});
       }
     } catch (e) {
-      // Metadata fallback still carries the secrets in this slice; the failure
-      // is logged but must not block VM creation.
-      log(`WARNING: Secret Manager write failed (continuing with metadata fallback): ${e.message}`);
+      // Map #36: there is no metadata fallback anymore — the VM fetches secrets
+      // from Secret Manager via its attached identity. A failed write (e.g. no
+      // accessor granted) produces a VM that silently never pushes and never
+      // deploys. Abort VM creation with a visible error instead.
+      log(`ERROR: Secret Manager write failed: ${e.message}`);
+      setStep4Status('error');
+      setError(`Failed to store secrets in Secret Manager: ${e.message}`);
+      return;
     }
 
     setStep4Message('Creating VM...');

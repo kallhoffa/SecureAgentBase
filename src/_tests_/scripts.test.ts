@@ -156,6 +156,12 @@ describe('getStartupScript', () => {
       expect(script).toContain('sleep $((i * 3))');
       expect(script).toContain('if [ "$code" = "404" ]; then');
     });
+
+    it('bounds SM/metadata curls with --max-time so a stalled API cannot hang boot', () => {
+      const script = getStartupScript(false);
+      expect(script).toContain('curl -sf --max-time 15');
+      expect(script).toContain("curl -s --max-time 15 -w '\\n%{http_code}'");
+    });
   });
 
   describe('HTML sanitization', () => {
@@ -178,9 +184,11 @@ describe('getStartupScript', () => {
       expect(script).toContain('/etc/systemd/system/kimaki.service');
     });
 
-    it('sets ExecStart without "start" subcommand', () => {
+    it('sets ExecStart without "start" subcommand and resolves the node binary', () => {
       const script = getStartupScript(false);
-      expect(script).toContain('ExecStart=/usr/bin/node $KIMAKI_PATH');
+      expect(script).toContain('ExecStart=$NODE_PATH $KIMAKI_PATH');
+      expect(script).toContain('NODE_PATH=$(command -v node || true)');
+      expect(script).not.toContain('ExecStart=/usr/bin/node $KIMAKI_PATH');
     });
 
     it('sets KIMAKI_BOT_TOKEN environment variable', () => {
@@ -303,8 +311,10 @@ describe('getStartupScript', () => {
     it('falls back when KIMAKI_PATH is empty and verifies ExecStart', () => {
       const script = getStartupScript(false);
       expect(script).toContain('KIMAKI_PATH=$(command -v kimaki || true)');
+      expect(script).toContain('NODE_PATH=$(command -v node || true)');
       expect(script).toContain('KIMAKI_MISSING');
       expect(script).toContain('defaulting to /usr/bin/kimaki');
+      expect(script).toContain('defaulting to /usr/bin/node');
       expect(script).toContain('ExecStart may be broken');
     });
 

@@ -78,10 +78,12 @@ fetch_sm_secret() {
   [ -z "$GCP_PROJECT_ID" ] && return 1
   local token
   for i in $(seq 1 14); do
-    token=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" -H "Metadata-Flavor: Google" | jq -r '.access_token // empty')
+    # --max-time bounds each attempt: a stalled metadata/API endpoint must
+    # not hang the boot indefinitely (the retry loop below covers flakes).
+    token=$(curl -sf --max-time 15 "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token" -H "Metadata-Flavor: Google" | jq -r '.access_token // empty')
     if [ -n "$token" ]; then
       local resp code body
-      resp=$(curl -s -w '\n%{http_code}' -H "Authorization: Bearer $token" \
+      resp=$(curl -s --max-time 15 -w '\n%{http_code}' -H "Authorization: Bearer $token" \
         "https://secretmanager.googleapis.com/v1/projects/${GCP_PROJECT_ID}/secrets/${secret_id}/versions/latest:access")
       code=$(printf '%s' "$resp" | tail -n1)
       body=$(printf '%s' "$resp" | head -n -1)
@@ -368,10 +370,18 @@ fi
 
 # Create systemd service for Kimaki (no-clobber — never overwrite a running unit)
 KIMAKI_PATH=$(command -v kimaki || true)
+# Resolve node explicitly: the pinned tarball installs to /usr/local/bin while
+# the apt fallback uses /usr/bin — hardcoding /usr/bin/node breaks the unit on
+# tarball VMs (203/EXEC, "Failed to locate executable /usr/bin/node").
+NODE_PATH=$(command -v node || true)
 if [ -z "$KIMAKI_PATH" ] || [ ! -x "$KIMAKI_PATH" ]; then
   echo "KIMAKI_MISSING" > /dev/ttyS0 2>/dev/null || true
   echo "WARNING: kimaki binary not found, defaulting to /usr/bin/kimaki" >&2
   KIMAKI_PATH=/usr/bin/kimaki
+fi
+if [ -z "$NODE_PATH" ] || [ ! -x "$NODE_PATH" ]; then
+  echo "WARNING: node binary not found, defaulting to /usr/bin/node" >&2
+  NODE_PATH=/usr/bin/node
 fi
 if [ ! -f /etc/systemd/system/kimaki.service ]; then
   cat > /etc/systemd/system/kimaki.service << SERVICEEOF
@@ -383,7 +393,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/root/.kimaki/projects/$REPO_NAME
-ExecStart=/usr/bin/node $KIMAKI_PATH
+ExecStart=$NODE_PATH $KIMAKI_PATH
 Restart=on-failure
 RestartSec=10
 EnvironmentFile=/root/.kimaki/env
@@ -393,9 +403,10 @@ Environment=NODE_ENV=production
 WantedBy=multi-user.target
 SERVICEEOF
 
-  # Verify the ExecStart line actually references a script (an empty KIMAKI_PATH
-  # would write `ExecStart=/usr/bin/node` and exit status=0 in ~30ms).
-  grep -q "ExecStart=/usr/bin/node $KIMAKI_PATH" /etc/systemd/system/kimaki.service \
+  # Verify the ExecStart line actually references a script (an empty
+  # NODE_PATH/KIMAKI_PATH would write `ExecStart= ` and exit status=0 in
+  # ~30ms with no error — the defaults above prevent that).
+  grep -q "ExecStart=$NODE_PATH $KIMAKI_PATH" /etc/systemd/system/kimaki.service \
     || echo "WARNING: kimaki.service ExecStart may be broken" >&2
 
   systemctl daemon-reload
