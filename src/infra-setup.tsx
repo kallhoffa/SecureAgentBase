@@ -2245,7 +2245,12 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         // tell if it's valid. The user clicks "Connect Google Cloud Account"
         // to get a fresh token when needed.
         setGithubAppInstalled(configData.github_app_installed || false);
-        setVmIp(configData.vm_ip || '');
+        // vm_ip is NOT restored in E2E mode: it marks step 3 complete and
+        // replaces the "Create VM" button with the VM-management view. The
+        // shared e2e user's Firestore doc carries a stale vm_ip from earlier
+        // runs, which would hide the Create button and fail the wizard test.
+        // E2E mode always creates a fresh VM, so the IP is never needed on load.
+        if (!isE2EMode) setVmIp(configData.vm_ip || '');
         // discord_bot_token intentionally NOT restored from Firestore (GHSA-x49w).
         // User must re-enter after page reload — same pattern as SA key and GCP token.
         setDiscordGuildId(configData.discord_guild_id || configData.discordGuildId || '');
@@ -2275,7 +2280,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
         if (!isE2EMode && configData.god_sa_email) setGodSaEmail(configData.god_sa_email);
 
-        if (configData.vm_ip && !expandedSteps.includes(3)) {
+        // Stale vm_ip must not expand step 3 in E2E mode either (see above).
+        if (!isE2EMode && configData.vm_ip && !expandedSteps.includes(3)) {
           wizard.dispatch({ type: 'EXPAND_STEP', step: 3 });
         }
 

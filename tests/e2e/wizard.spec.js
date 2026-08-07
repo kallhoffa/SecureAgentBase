@@ -303,6 +303,17 @@ test.describe('Wizard E2E Regression', () => {
       }
 
       const createBtn = page.getByRole('button', { name: /Enable APIs & Create VM/i });
+      // Defensive: the shared e2e user's Firestore config can carry a stale
+      // vm_ip from an earlier run, which renders the "VM created and ready"
+      // view (Delete VM / Recreate VM) instead of the Create button. The app
+      // now ignores vm_ip on load in E2E mode, but handle it here too so a
+      // retry after a same-run VM creation can't hide the button.
+      const recreateBtn = page.getByRole('button', { name: /Recreate VM/i });
+      if (await recreateBtn.isVisible().catch(() => false)) {
+        console.log('E2E: stale VM state detected, clicking Recreate VM to reveal create button');
+        await recreateBtn.click();
+        await page.waitForTimeout(400);
+      }
       await expect(createBtn).toBeVisible({ timeout: 5000 });
       await createBtn.click();
 
