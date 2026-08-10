@@ -92,6 +92,16 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ vars.GCP_SA_STAGING }}
 
+      - name: Grant deploy SA secretmanager.admin (CLI SM writes)
+        # The CLI runs as the deploy SA (ADC/WIF) and slice 4 (map #36) writes
+        # SM secrets during init. The deploy SA holds projectIamAdmin on the
+        # test project, so it can bind this role to itself; the earlier
+        # best-effort loop (e2e SA) is not a reliable source of the grant.
+        run: |
+          gcloud projects add-iam-policy-binding agentbase-test-staging \
+            --member="serviceAccount:${{ vars.GCP_SA_STAGING }}" \
+            --role="roles/secretmanager.admin"
+
       - name: Build
         run: npm run build
         env:
