@@ -26,7 +26,7 @@ program
   .option('--repo-name <name>', 'GitHub repo name (requires --github-pat)')
   .option('--discord-token <token>', 'Discord bot token')
   .option('--discord-guild <id>', 'Discord guild ID')
-  .option('--vm-zone <zone>', 'VM zone (default: us-central1-a)')
+  .option('--vm-zone <zone>', 'VM zone (default: us-central1-a, falls back across regions)')
   .option('--no-vm', 'Skip VM creation')
   .option('-y, --yes', 'Skip all confirmations (non-interactive mode)')
   .action(async (opts) => {
@@ -40,7 +40,7 @@ program
         repoName: opts.repoName,
         discordToken: opts.discordToken,
         discordGuild: opts.discordGuild,
-        vmZone: opts.vmZone || 'us-central1-a',
+        vmZone: opts.vmZone,
         yes: opts.yes,
         vm: opts.vm,
       });
