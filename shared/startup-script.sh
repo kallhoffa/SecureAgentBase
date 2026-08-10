@@ -29,12 +29,13 @@ GCP_SA_PRODUCTION=$(curl -sf "http://metadata.google.internal/computeMetadata/v1
 FIREBASE_STAGING_CONFIG=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_staging_config" -H "Metadata-Flavor: Google")
 FIREBASE_PRODUCTION_CONFIG=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_production_config" -H "Metadata-Flavor: Google")
 VITE_APP_NAME=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/vite_app_name" -H "Metadata-Flavor: Google")
-GCP_SA_KEY=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/gcp_sa_key" -H "Metadata-Flavor: Google")
 # Secret values (GITHUB_PAT / DISCORD_BOT_TOKEN) are NOT carried in VM metadata —
 # they are fetched from Secret Manager below via the metadata-server identity.
+# The agent SA is identity-only (map #36 decision #6): no gcp_sa_key
+# metadata, no key file on disk — the SA authenticates via the metadata server.
 
 # Clean up any potential HTML responses from failed requests or unconfigured metadata
-for var in FIREBASE_STAGING FIREBASE_PRODUCTION DISCORD_GUILD_ID GCP_WIF_PROVIDER GCP_SA_STAGING GCP_SA_PRODUCTION FIREBASE_STAGING_CONFIG FIREBASE_PRODUCTION_CONFIG VITE_APP_NAME GCP_SA_KEY; do
+for var in FIREBASE_STAGING FIREBASE_PRODUCTION DISCORD_GUILD_ID GCP_WIF_PROVIDER GCP_SA_STAGING GCP_SA_PRODUCTION FIREBASE_STAGING_CONFIG FIREBASE_PRODUCTION_CONFIG VITE_APP_NAME; do
   val=${!var}
   if [[ "$val" =~ "<html" || "$val" =~ "<!" || "$val" =~ "<HTML" ]]; then
     eval "$var=\"\""
@@ -361,12 +362,6 @@ FIREBASE_PRODUCTION=$FIREBASE_PRODUCTION
 NODE_ENV=production
 ENVEOF
 chmod 600 /root/.kimaki/env
-
-# Write GCP service account key from metadata (if provided) to a restricted file
-if [ -n "$GCP_SA_KEY" ]; then
-  echo "$GCP_SA_KEY" > /root/.kimaki/gcp-sa-key.json
-  chmod 600 /root/.kimaki/gcp-sa-key.json
-fi
 
 # Create systemd service for Kimaki (no-clobber — never overwrite a running unit)
 KIMAKI_PATH=$(command -v kimaki || true)

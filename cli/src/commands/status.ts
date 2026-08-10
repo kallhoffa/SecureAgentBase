@@ -16,6 +16,10 @@ export async function runStatus(): Promise<void> {
   kv('Staging Firebase', config.firebaseStaging?.projectId || '-');
   kv('Production Firebase', config.firebaseProduction?.projectId || '-');
   kv('GitHub Repo', config.githubRepo || '-');
+  kv('Discord Guild', config.discordGuildId || '-');
   kv('VM IP', config.vmIp || '-');
   kv('VM Zone', config.vmZone || '-');
+  // Secret references only — never values (map #36 decision #8).
+  kv('GitHub PAT (SM)', config.smSecrets?.githubPat || 'not stored');
+  kv('Discord Bot Token (SM)', config.smSecrets?.discordBotToken || 'not stored');
 }

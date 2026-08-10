@@ -7,9 +7,15 @@ export interface Config {
   saEmail?: string;
   firebaseStaging?: Record<string, string>;
   firebaseProduction?: Record<string, string>;
-  githubPat?: string;
+  // References only (map #36 decision #8): secret VALUES never live in this
+  // file. smSecrets holds the Secret Manager resource names so `status` can
+  // show where each secret is stored; the names are fixed
+  // ('projects/{id}/secrets/github-pat' | '.../discord-bot-token').
+  smSecrets?: {
+    githubPat?: string;
+    discordBotToken?: string;
+  };
   githubRepo?: string;
-  discordBotToken?: string;
   discordGuildId?: string;
   vmIp?: string;
   vmZone?: string;

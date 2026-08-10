@@ -142,11 +142,14 @@ export async function createVm(
   projectId: string,
   zone: string,
   instanceName: string,
-  metadata: Record<string, string>
+  metadata: Record<string, string>,
+  saEmail?: string
 ): Promise<{ ip: string; zone: string }> {
   const url = `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances`;
 
-  const body = {
+  // The VM boots with the identity-only agent SA (map #36 decision #3) so the
+  // startup script can fetch the 2 secrets via the metadata-server identity.
+  const body: Record<string, any> = {
     name: instanceName,
     // Default to e2-small — same default as the web wizard (see
     // infra-setup.tsx). 1GB e2-micro is too tight for bot + agent; 4GB
@@ -175,6 +178,11 @@ export async function createVm(
       })),
     },
   };
+  if (saEmail) {
+    body.serviceAccounts = [
+      { email: saEmail, scopes: ['https://www.googleapis.com/auth/cloud-platform'] },
+    ];
+  }
 
   // Try to delete any existing VM with this name in the target zone
   const existingUrl = `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances/${instanceName}`;
@@ -301,3 +309,107 @@ export async function fetchVmLogs(
   );
   return (result.contents || '').split('\n').map((l: string) => atob(l)).join('\n');
 }
+
+// ---------------------------------------------------------------------------
+// Secret Manager helpers (map #36 decision #7). The CLI writes the 2 secrets
+// (github-pat, discord-bot-token) to the SAME SM store the web wizard uses, at
+// prompt time. The operator (ADC identity) must have roles/secretmanager.admin
+// — granted in stepServiceAccount — and per-secret secretAccessor is bound to
+// the operator + the identity-only agent SA (the VM's metadata identity).
+// Mirrors src/framework/infra-setup/api.ts.
+// ---------------------------------------------------------------------------
+
+const SM_BASE = 'https://secretmanager.googleapis.com/v1';
+
+const base64Encode = (value: string) => Buffer.from(value, 'utf-8').toString('base64');
+
+// Project-level member prefix: service accounts end in *.gserviceaccount.com,
+// everything else (gcloud ADC user, WIF-federated user) is a `user:`.
+export const smMember = (email: string): string =>
+  email.endsWith('.gserviceaccount.com') ? `serviceAccount:${email}` : `user:${email}`;
+
+export const smEnsureSecret = async (auth: AuthClient, projectId: string, secretId: string): Promise<string> => {
+  // The API-enable loop activates secretmanager.googleapis.com before writing,
+  // but GCP can lag a few seconds past the status poll. Retry briefly on
+  // SERVICE_DISABLED so a brand-new project doesn't 403 on the first write.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const secret = await gcpFetch(auth, `${SM_BASE}/projects/${projectId}/secrets?secretId=${encodeURIComponent(secretId)}`, {
+        method: 'POST',
+        body: { replication: { automatic: {} } },
+      });
+      return secret.name;
+    } catch (e: any) {
+      if (e.message?.includes('SERVICE_DISABLED')) {
+        if (attempt < 2) {
+          await new Promise((r) => setTimeout(r, 5000));
+          continue;
+        }
+        throw new Error(`Secret Manager API is not active for project ${projectId}: ${e.message}`);
+      }
+      // 409 ALREADY_EXISTS — fetch the existing secret instead.
+      if (!e.message?.includes('409')) throw e;
+      const existing = await gcpFetch(auth, `${SM_BASE}/projects/${projectId}/secrets/${encodeURIComponent(secretId)}`);
+      return existing.name;
+    }
+  }
+  throw new Error(`Secret Manager API did not activate for project ${projectId}`);
+};
+
+export const smAddVersion = async (auth: AuthClient, projectId: string, secretId: string, value: string): Promise<string> => {
+  const added = await gcpFetch(auth, `${SM_BASE}/projects/${projectId}/secrets/${encodeURIComponent(secretId)}:addVersion`, {
+    method: 'POST',
+    body: { payload: { data: base64Encode(value) } },
+  });
+  return added.name;
+};
+
+export const smSetSecretAccess = async (auth: AuthClient, projectId: string, secretId: string, members: string[]): Promise<void> => {
+  const policy = await gcpFetch(auth, `${SM_BASE}/projects/${projectId}/secrets/${encodeURIComponent(secretId)}:getIamPolicy`);
+  const bindings = policy.bindings || [];
+  let binding = bindings.find((b: any) => b.role === 'roles/secretmanager.secretAccessor');
+  if (!binding) {
+    binding = { role: 'roles/secretmanager.secretAccessor', members: [] };
+    bindings.push(binding);
+  }
+  for (const member of members) {
+    if (!binding.members.includes(member)) binding.members.push(member);
+  }
+  await gcpFetch(auth, `${SM_BASE}/projects/${projectId}/secrets/${encodeURIComponent(secretId)}:setIamPolicy`, {
+    method: 'POST',
+    body: { policy: { bindings, etag: policy.etag } },
+  });
+};
+
+// Idempotent write: create-or-get the secret, add a new version, and bind the
+// per-secret accessors (operator + agent SA). Returns the secret resource name
+// used as a config reference.
+export const smWriteSecret = async (
+  auth: AuthClient,
+  projectId: string,
+  secretId: string,
+  value: string,
+  members: string[],
+  log?: (msg: string) => void
+): Promise<string> => {
+  const secretName = await smEnsureSecret(auth, projectId, secretId);
+  await smAddVersion(auth, projectId, secretId, value);
+  await smSetSecretAccess(auth, projectId, secretId, members);
+  log?.(`Secret ${secretId} stored in Secret Manager (${secretName})`);
+  return secretName;
+};
+
+// Read the latest version on demand (decision #7). Used for re-runs that need
+// the in-memory value (e.g. re-validate a PAT). Returns null if the secret
+// does not exist (404) so callers can fall back to a prompt.
+export const smFetchSecret = async (auth: AuthClient, projectId: string, secretId: string): Promise<string | null> => {
+  try {
+    const result = await gcpFetch(auth, `${SM_BASE}/projects/${projectId}/secrets/${encodeURIComponent(secretId)}/versions/latest:access`);
+    const b64 = result?.payload?.data;
+    if (!b64) return null;
+    return Buffer.from(b64, 'base64').toString('utf-8');
+  } catch (e: any) {
+    if (e.message?.includes('404') || e.message?.includes('403')) return null;
+    throw e;
+  }
+};

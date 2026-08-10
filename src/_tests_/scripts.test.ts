@@ -140,6 +140,13 @@ describe('getStartupScript', () => {
       expect(script).not.toContain('instance/attributes/discord_bot_token');
     });
 
+    it('does not carry or write the GCP service account key (identity-only SA)', () => {
+      const script = getStartupScript(false);
+      // No gcp_sa_key metadata carrier, no gcp-sa-key.json materialization.
+      expect(script).not.toContain('instance/attributes/gcp_sa_key');
+      expect(script).not.toContain('gcp-sa-key.json');
+    });
+
     it('fetches secrets from Secret Manager via the metadata-server identity', () => {
       const script = getStartupScript(false);
       expect(script).toContain('fetch_sm_secret');

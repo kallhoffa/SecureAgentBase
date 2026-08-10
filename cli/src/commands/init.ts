@@ -12,6 +12,9 @@ import {
   deleteVm,
   fetchVmLogs,
   cleanupVmByName,
+  smWriteSecret,
+  smFetchSecret,
+  smMember,
 } from '../lib/gcp.js';
 import { setupFirebaseProject } from '../lib/firebase.js';
 import { ensureRepo, setGitHubVariable, setupOidc, validatePat } from '../lib/github.js';
@@ -62,17 +65,17 @@ export async function runInit(args: InitArgs): Promise<void> {
   await stepBilling(auth, config, args);
 
   // Step 5: GitHub + OIDC
-  if (args.githubPat) {
+  if (args.githubPat || !args.yes) {
     await stepGitHub(auth, config, args);
   } else {
-    info('Skipping GitHub setup (no --github-pat provided)');
+    info('Skipping GitHub setup (use --github-pat or interactive mode)');
   }
 
   // Step 6: Discord bot
-  if (args.discordToken) {
-    await stepDiscord(config, args);
+  if (args.discordToken || !args.yes) {
+    await stepDiscord(auth, config, args);
   } else {
-    info('Skipping Discord setup (no --discord-token provided)');
+    info('Skipping Discord setup (use --discord-token or interactive mode)');
   }
 
   // Step 7: Create VM
@@ -159,11 +162,26 @@ async function stepServiceAccount(auth: AuthClient, config: any, _args: InitArgs
     'roles/iam.workloadIdentityPoolAdmin',
     'roles/iam.securityAdmin',
     'roles/firebase.admin',
+    // Agent SA must read the 2 SM secrets via the metadata-server identity at
+    // VM boot (map #36 decision #7). Per-secret accessors are also bound at
+    // write time, but the project role covers the legacy default-compute-SA
+    // fallback and any re-run that re-fetches secrets.
+    'roles/secretmanager.secretAccessor',
   ];
 
   for (const role of roles) {
     await grantRole(auth, `projects/${projectId}`, `serviceAccount:${email}`, role);
     info(`  Granted ${role}`);
+  }
+
+  // Operator needs full Secret Manager control to create secrets, add
+  // versions, and bind per-secret accessors during init (map #36).
+  const operatorEmail = await auth.getClientEmail();
+  if (operatorEmail) {
+    await grantRole(auth, `projects/${projectId}`, smMember(operatorEmail), 'roles/secretmanager.admin').catch((e: any) => {
+      warn(`Could not grant roles/secretmanager.admin to ${operatorEmail}: ${e.message}`);
+    });
+    info(`  Granted roles/secretmanager.admin to ${operatorEmail}`);
   }
 
   saveConfig(config);
@@ -241,10 +259,20 @@ async function stepBilling(auth: AuthClient, config: any, args: InitArgs): Promi
 async function stepGitHub(auth: AuthClient, config: any, args: InitArgs): Promise<void> {
   heading('Step 5: GitHub + OIDC Setup');
 
-  if (args.githubPat) {
-    config.githubPat = args.githubPat;
-  } else if (!config.githubPat) {
-    const { pat } = await inquirer.prompt([
+  const projectId = config.gcpProjectId!;
+
+  // Secret values are written to Secret Manager and used only in-memory during
+  // this run (map #36 decision #7/#8: config carries references only).
+  let pat = args.githubPat || '';
+  if (!pat) {
+    // Re-run with an existing ref → read on demand from SM instead of prompting.
+    if (config.smSecrets?.githubPat) {
+      info('Reading GitHub PAT from Secret Manager...');
+      pat = (await smFetchSecret(auth, projectId, 'github-pat')) || '';
+    }
+  }
+  if (!pat) {
+    const { pat: entered } = await inquirer.prompt([
       {
         type: 'password',
         name: 'pat',
@@ -252,10 +280,20 @@ async function stepGitHub(auth: AuthClient, config: any, args: InitArgs): Promis
         validate: (v: string) => v.length > 0 || 'Required',
       },
     ]);
-    config.githubPat = pat;
+    pat = entered;
   }
 
-  const userInfo = await validatePat(config.githubPat);
+  // Activate SM API (idempotent) before writing.
+  await enableApi(auth, projectId, 'secretmanager.googleapis.com');
+
+  const members = await buildSmMembers(auth, config);
+  if (members.length === 0) {
+    throw new CLIError('Cannot store GitHub PAT: no service account or operator identity found.');
+  }
+  const secretRef = await smWriteSecret(auth, projectId, 'github-pat', pat, members, info);
+  config.smSecrets = { ...(config.smSecrets || {}), githubPat: secretRef };
+
+  const userInfo = await validatePat(pat);
   info(`GitHub user: ${userInfo.login}`);
 
   const repoName = args.repoName || (await inquirer.prompt([
@@ -269,7 +307,7 @@ async function stepGitHub(auth: AuthClient, config: any, args: InitArgs): Promis
 
   const repoFull = `${userInfo.login}/${repoName}`;
   info(`Ensuring repo: ${repoFull}`);
-  await ensureRepo(config.githubPat, repoFull);
+  await ensureRepo(pat, repoFull);
   config.githubRepo = repoFull;
 
   info('Setting up OIDC infrastructure...');
@@ -289,7 +327,7 @@ async function stepGitHub(auth: AuthClient, config: any, args: InitArgs): Promis
 
   for (const [name, value] of varConfigs) {
     if (value) {
-      await setGitHubVariable(config.githubPat, repoFull, name, value).catch(() => {
+      await setGitHubVariable(pat, repoFull, name, value).catch(() => {
         warn(`Could not set GitHub variable ${name} (may already exist)`);
       });
     }
@@ -304,10 +342,10 @@ async function stepGitHub(auth: AuthClient, config: any, args: InitArgs): Promis
       for (const field of firebaseFields) {
         const upperField = field.replace(/([a-z])([A-Z])/g, '$1_$2').toUpperCase();
         if (configData[field]) {
-          await setGitHubVariable(config.githubPat, repoFull, `FIREBASE_${upperField}_${env}`, configData[field]).catch(() => {});
+          await setGitHubVariable(pat, repoFull, `FIREBASE_${upperField}_${env}`, configData[field]).catch(() => {});
         }
       }
-      await setGitHubVariable(config.githubPat, repoFull, `FIREBASE_PROJECT_ID_${env}`, configData.projectId).catch(() => {});
+      await setGitHubVariable(pat, repoFull, `FIREBASE_PROJECT_ID_${env}`, configData.projectId).catch(() => {});
     }
   }
 
@@ -315,13 +353,33 @@ async function stepGitHub(auth: AuthClient, config: any, args: InitArgs): Promis
   success(`GitHub repo ready: ${repoFull}`);
 }
 
-async function stepDiscord(config: any, args: InitArgs): Promise<void> {
+// Per-secret accessors for the 2 SM secrets (map #36): the operator (ADC
+// identity, user or service account) and the identity-only agent SA. The agent
+// SA is what the VM boots with; the operator is for re-run fetches.
+async function buildSmMembers(auth: AuthClient, config: any): Promise<string[]> {
+  const members: string[] = [];
+  if (config.saEmail) members.push(`serviceAccount:${config.saEmail}`);
+  try {
+    const email = await auth.getClientEmail();
+    if (email) members.push(smMember(email));
+  } catch {
+    // ADC may not expose an email — agent SA membership is enough.
+  }
+  return members;
+}
+
+async function stepDiscord(auth: AuthClient, config: any, args: InitArgs): Promise<void> {
   heading('Step 6: Discord Bot');
 
-  if (args.discordToken) {
-    config.discordBotToken = args.discordToken;
-    config.discordGuildId = args.discordGuild || '';
-  } else if (!config.discordBotToken) {
+  const projectId = config.gcpProjectId!;
+
+  // Secret value used in-memory only (map #36 decision #7/#8).
+  let token = args.discordToken || '';
+  if (!token && config.smSecrets?.discordBotToken) {
+    info('Reading Discord bot token from Secret Manager...');
+    token = (await smFetchSecret(auth, projectId, 'discord-bot-token')) || '';
+  }
+  if (!token) {
     const { botToken } = await inquirer.prompt([
       {
         type: 'password',
@@ -330,15 +388,24 @@ async function stepDiscord(config: any, args: InitArgs): Promise<void> {
         validate: (v: string) => v.length > 0 || 'Required',
       },
     ]);
-    config.discordBotToken = botToken;
+    token = botToken;
   }
+
+  // Write to the same SM store the web wizard uses; config keeps only the ref.
+  await enableApi(auth, projectId, 'secretmanager.googleapis.com');
+  const members = await buildSmMembers(auth, config);
+  if (members.length === 0) {
+    throw new CLIError('Cannot store Discord bot token: no service account or operator identity found.');
+  }
+  const secretRef = await smWriteSecret(auth, projectId, 'discord-bot-token', token, members, info);
+  config.smSecrets = { ...(config.smSecrets || {}), discordBotToken: secretRef };
 
   if (args.discordGuild) {
     config.discordGuildId = args.discordGuild;
   }
 
-  // Decode client ID from token
-  const decoded = Buffer.from(config.discordBotToken.split('.')[0], 'base64').toString();
+  // Decode client ID from the in-memory token.
+  const decoded = Buffer.from(token.split('.')[0], 'base64').toString();
   const clientIdMatch = decoded.match(/"(?:id|client_id)"\s*:\s*"(\d+)"/);
   if (clientIdMatch) {
     info(`Bot Client ID: ${clientIdMatch[1]}`);
@@ -347,8 +414,9 @@ async function stepDiscord(config: any, args: InitArgs): Promise<void> {
   if (!config.discordGuildId) {
     if (args.yes) {
       info('No guild ID provided, skipping guild prompt (-y mode)');
+      config.discordGuildId = '';
     } else {
-      const inviteUrl = `https://discord.com/oauth2/authorize?client_id=${Buffer.from(config.discordBotToken.split('.')[0], 'base64').toString().match(/"(\d+)"/)?.[1] || 'UNKNOWN'}&permissions=8&integration_type=0&scope=bot%20applications.commands`;
+      const inviteUrl = `https://discord.com/oauth2/authorize?client_id=${decoded.match(/"(\d+)"/)?.[1] || 'UNKNOWN'}&permissions=8&integration_type=0&scope=bot%20applications.commands`;
 
       warn(`Invite your bot to a server: ${inviteUrl}`);
 
@@ -379,11 +447,12 @@ async function stepCreateVm(auth: AuthClient, config: any, args: InitArgs): Prom
   info('Enabling IAM Credentials API...');
   await enableApi(auth, projectId, 'iamcredentials.googleapis.com');
 
-  // Build metadata (same as web wizard's buildVmMetadata)
+  // Build metadata (same as the web wizard's buildVmMetadata). Secret VALUES
+  // are NOT carried here (map #36 decision #9): the startup script fetches
+  // github-pat + discord-bot-token from Secret Manager via the metadata-server
+  // identity (the agent SA attached below).
   const metadata: Record<string, string> = {
-    github_pat: config.githubPat || '',
     github_repo: config.githubRepo || '',
-    discord_bot_token: config.discordBotToken || '',
     discord_guild_id: config.discordGuildId || '',
     firebase_staging: config.firebaseStaging?.projectId || '',
     firebase_production: config.firebaseProduction?.projectId || '',
@@ -418,7 +487,7 @@ async function stepCreateVm(auth: AuthClient, config: any, args: InitArgs): Prom
   for (const zone of zones) {
     try {
       info(`Attempting VM creation in ${zone}...`);
-      vmResult = await createVm(auth, projectId, zone, 'secureagent-manager', metadata);
+      vmResult = await createVm(auth, projectId, zone, 'secureagent-manager', metadata, config.saEmail);
       config.vmIp = vmResult.ip;
       config.vmZone = vmResult.zone;
       break;
