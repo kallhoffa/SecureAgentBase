@@ -205,7 +205,35 @@ export async function createVm(
     // VM doesn't exist — that's fine
   }
 
-  const result = await gcpFetch(auth, url, { method: 'POST', body });
+  // POST create returns an Operation; poll it to DONE. If the operation
+  // fails, its error is the ground truth for why the VM never becomes
+  // RUNNING (GCE otherwise tears the instance down to STOPPING/TERMINATED
+  // with no obvious cause from the instance resource itself).
+  const op = await gcpFetch(auth, url, { method: 'POST', body });
+  const opName = op?.name;
+  const opSelfLink = op?.selfLink;
+  let opBase: string | undefined;
+  if (opName) {
+    opBase = opSelfLink?.includes('global/operations')
+      ? `https://compute.googleapis.com/compute/v1/projects/${projectId}/global/operations/${opName}`
+      : `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/operations/${opName}`;
+    for (let o = 0; o < 60; o++) {
+      await new Promise((r) => setTimeout(r, 3000));
+      let status;
+      try {
+        status = await gcpFetch(auth, opBase);
+      } catch {
+        continue; // Operation not visible yet
+      }
+      if (status?.status === 'DONE') {
+        if (status?.error) {
+          const detail = JSON.stringify(status.error.errors || status.error).slice(0, 2000);
+          throw new Error(`VM create operation failed: ${detail}`);
+        }
+        break;
+      }
+    }
+  }
 
   // Poll until VM is RUNNING (up to 10 minutes)
   for (let i = 0; i < 120; i++) {
@@ -222,8 +250,16 @@ export async function createVm(
       if (instance.status === 'STOPPING' || instance.status === 'TERMINATED') {
         // VM is dying — abort early, delete it, and let the caller try the next zone
         console.log(`    VM is ${instance.status}, aborting and trying next zone...`);
-        // Dump the serial console for ground truth on why the VM stopped
-        // (boot errors, startup-script failures, etc.).
+        // Dump the create operation error if we still have one, plus the
+        // serial console, for ground truth on why the VM stopped.
+        if (opName && opBase) {
+          try {
+            const opNow = await gcpFetch(auth, opBase);
+            if (opNow?.error) {
+              console.log(`    create operation error: ${JSON.stringify(opNow.error.errors || opNow.error).slice(0, 2000)}`);
+            }
+          } catch {}
+        }
         try {
           const serial = await fetchVmLogs(auth, projectId, zone, instanceName);
           const tail = serial.split('\n').filter((l) => l.trim()).slice(-30).join('\n');
@@ -238,7 +274,7 @@ export async function createVm(
         console.log(`    VM status: ${instance.status} (attempt ${i + 1}/120)`);
       }
     } catch (e: any) {
-      if (e.message?.includes('aborting') || e.message?.includes('STOPPING') || e.message?.includes('TERMINATED')) throw e;
+      if (e.message?.includes('aborting') || e.message?.includes('STOPPING') || e.message?.includes('TERMINATED') || e.message?.includes('operation failed')) throw e;
       // Instance not yet available
     }
   }
