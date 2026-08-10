@@ -168,7 +168,11 @@ export async function createVm(
     networkInterfaces: [
       {
         network: 'global/networks/default',
-        accessConfigs: [{ type: 'ONE_TO_ONE_NAT', name: 'External NAT' }],
+        // No explicit name: GCE defaults the access config to 'external-nat'.
+        // An explicit name like 'External NAT' (space/uppercase) is invalid
+        // and GCE rejects the create operation, tearing the VM down to
+        // STOPPING within seconds (observed across all 12 zones).
+        accessConfigs: [{ type: 'ONE_TO_ONE_NAT' }],
       },
     ],
     metadata: {
