@@ -218,6 +218,15 @@ export async function createVm(
       if (instance.status === 'STOPPING' || instance.status === 'TERMINATED') {
         // VM is dying — abort early, delete it, and let the caller try the next zone
         console.log(`    VM is ${instance.status}, aborting and trying next zone...`);
+        // Dump the serial console for ground truth on why the VM stopped
+        // (boot errors, startup-script failures, etc.).
+        try {
+          const serial = await fetchVmLogs(auth, projectId, zone, instanceName);
+          const tail = serial.split('\n').filter((l) => l.trim()).slice(-30).join('\n');
+          console.log(`    --- serial console (last 30 lines) ---\n${tail}\n    ----------------------------------------`);
+        } catch (e: any) {
+          console.log(`    (serial console unavailable: ${e.message})`);
+        }
         try { await gcpFetch(auth, existingUrl, { method: 'DELETE' }); } catch {}
         throw new Error(`VM entered ${instance.status} state`);
       }
