@@ -137,6 +137,36 @@ export async function grantRole(
   });
 }
 
+// Grants a role ON a service account resource (e.g. iam.serviceAccountUser on
+// the agent SA so a VM creator can attach it). The IAM API is used instead of
+// cloudresourcemanager because the latter only supports projects/folders.
+export async function grantRoleOnServiceAccount(
+  auth: AuthClient,
+  projectId: string,
+  accountId: string,
+  member: string,
+  role: string
+): Promise<void> {
+  const base = `https://iam.googleapis.com/v1/projects/${projectId}/serviceAccounts/${accountId}`;
+  const policy = await gcpFetch(auth, `${base}:getIamPolicy`, { method: 'POST' });
+
+  const bindings = policy.bindings || [];
+  const existing = bindings.find((b: any) => b.role === role);
+
+  if (!existing) {
+    bindings.push({ role, members: [member] });
+  } else if (!existing.members.includes(member)) {
+    existing.members.push(member);
+  } else {
+    return; // Already has the role
+  }
+
+  await gcpFetch(auth, `${base}:setIamPolicy`, {
+    method: 'POST',
+    body: { policy: { bindings, etag: policy.etag } },
+  });
+}
+
 export async function createVm(
   auth: AuthClient,
   projectId: string,
