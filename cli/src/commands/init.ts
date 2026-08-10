@@ -8,6 +8,7 @@ import {
   enableApi,
   createServiceAccount,
   grantRole,
+  grantRoleOnServiceAccount,
   createVm,
   deleteVm,
   fetchVmLogs,
@@ -182,8 +183,18 @@ async function stepServiceAccount(auth: AuthClient, config: any, _args: InitArgs
       warn(`Could not grant roles/secretmanager.admin to ${operatorEmail}: ${e.message}`);
     });
     info(`  Granted roles/secretmanager.admin to ${operatorEmail}`);
+
+    // The operator also needs iam.serviceAccountUser ON the agent SA to
+    // attach it to the VM at Step 7 (GCE requires the VM creator to have
+    // serviceAccountUser on the SA it attaches). Without it the create
+    // operation fails with SERVICE_ACCOUNT_ACCESS_DENIED and GCE tears the
+    // instance down to STOPPING within seconds.
+    await grantRoleOnServiceAccount(auth, projectId, accountId, smMember(operatorEmail), 'roles/iam.serviceAccountUser').catch((e: any) => {
+      warn(`Could not grant roles/iam.serviceAccountUser on ${email} to ${operatorEmail}: ${e.message}`);
+    });
+    info(`  Granted roles/iam.serviceAccountUser on ${email} to ${operatorEmail}`);
   } else {
-    warn('Could not identify the operator (ADC identity has no email). Skipping roles/secretmanager.admin grant — the calling identity must already have it (e.g. granted via the staging deploy workflow) or SM writes will fail with 403.');
+    warn('Could not identify the operator (ADC identity has no email). Skipping roles/secretmanager.admin + iam.serviceAccountUser grants — the calling identity must already have them (e.g. granted via the staging deploy workflow) or SM writes / VM creation will fail (403 / SERVICE_ACCOUNT_ACCESS_DENIED).');
   }
 
   saveConfig(config);

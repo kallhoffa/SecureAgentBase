@@ -74,7 +74,10 @@ jobs:
           done
           # Grant WIF pool admin + other roles to deploy SA (needed for CLI e2e OIDC setup)
           # secretmanager.admin is required for the CLI's SM secret writes (slice 4, map #36)
-          DEPLOY_SA="firebase-deploy-staging@agentbase-test-staging.iam.gserviceaccount.com"
+          # NOTE: must use vars.GCP_SA_STAGING — the deploy SA lives in the
+          # agentbase-staging project, NOT agentbase-test-staging (hardcoding
+          # the test project grants roles to a phantom SA that OIDC never uses).
+          DEPLOY_SA="${{ vars.GCP_SA_STAGING }}"
           for role in roles/iam.workloadIdentityPoolAdmin roles/iam.securityAdmin roles/serviceusage.serviceUsageAdmin roles/secretmanager.admin; do
             gcloud projects add-iam-policy-binding agentbase-test-staging \
               --member="serviceAccount:${DEPLOY_SA}" \
@@ -92,15 +95,21 @@ jobs:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ vars.GCP_SA_STAGING }}
 
-      - name: Grant deploy SA secretmanager.admin (CLI SM writes)
+      - name: Grant deploy SA runtime roles (SM writes + VM creation)
         # The CLI runs as the deploy SA (ADC/WIF) and slice 4 (map #36) writes
-        # SM secrets during init. The deploy SA holds projectIamAdmin on the
-        # test project, so it can bind this role to itself; the earlier
-        # best-effort loop (e2e SA) is not a reliable source of the grant.
+        # SM secrets during init; Step 7 also attaches the agent SA to the VM,
+        # which requires iam.serviceAccountUser on the SA (without it GCE
+        # rejects the create with SERVICE_ACCOUNT_ACCESS_DENIED and tears the
+        # instance down to STOPPING). The deploy SA holds projectIamAdmin on
+        # the test project, so it can bind these roles to itself; the earlier
+        # best-effort loop (e2e SA) is not a reliable source of the grants.
         run: |
           gcloud projects add-iam-policy-binding agentbase-test-staging \
             --member="serviceAccount:${{ vars.GCP_SA_STAGING }}" \
             --role="roles/secretmanager.admin"
+          gcloud projects add-iam-policy-binding agentbase-test-staging \
+            --member="serviceAccount:${{ vars.GCP_SA_STAGING }}" \
+            --role="roles/iam.serviceAccountUser"
 
       - name: Build
         run: npm run build
