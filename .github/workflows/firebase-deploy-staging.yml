@@ -73,8 +73,9 @@ jobs:
             gcloud services enable cloudresourcemanager.googleapis.com --project "$proj" 2>/dev/null || true
           done
           # Grant WIF pool admin + other roles to deploy SA (needed for CLI e2e OIDC setup)
+          # secretmanager.admin is required for the CLI's SM secret writes (slice 4, map #36)
           DEPLOY_SA="firebase-deploy-staging@agentbase-test-staging.iam.gserviceaccount.com"
-          for role in roles/iam.workloadIdentityPoolAdmin roles/iam.securityAdmin roles/serviceusage.serviceUsageAdmin; do
+          for role in roles/iam.workloadIdentityPoolAdmin roles/iam.securityAdmin roles/serviceusage.serviceUsageAdmin roles/secretmanager.admin; do
             gcloud projects add-iam-policy-binding agentbase-test-staging \
               --member="serviceAccount:${DEPLOY_SA}" \
               --role="${role}" 2>/dev/null || true

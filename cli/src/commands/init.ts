@@ -182,6 +182,8 @@ async function stepServiceAccount(auth: AuthClient, config: any, _args: InitArgs
       warn(`Could not grant roles/secretmanager.admin to ${operatorEmail}: ${e.message}`);
     });
     info(`  Granted roles/secretmanager.admin to ${operatorEmail}`);
+  } else {
+    warn('Could not identify the operator (ADC identity has no email). Skipping roles/secretmanager.admin grant — the calling identity must already have it (e.g. granted via the staging deploy workflow) or SM writes will fail with 403.');
   }
 
   saveConfig(config);
