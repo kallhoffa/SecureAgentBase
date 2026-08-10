@@ -65,17 +65,17 @@ export async function runInit(args: InitArgs): Promise<void> {
   await stepBilling(auth, config, args);
 
   // Step 5: GitHub + OIDC
-  if (args.githubPat || !args.yes) {
+  if (args.githubPat) {
     await stepGitHub(auth, config, args);
   } else {
-    info('Skipping GitHub setup (use --github-pat or interactive mode)');
+    info('Skipping GitHub setup (no --github-pat provided)');
   }
 
   // Step 6: Discord bot
-  if (args.discordToken || !args.yes) {
+  if (args.discordToken) {
     await stepDiscord(auth, config, args);
   } else {
-    info('Skipping Discord setup (use --discord-token or interactive mode)');
+    info('Skipping Discord setup (no --discord-token provided)');
   }
 
   // Step 7: Create VM
