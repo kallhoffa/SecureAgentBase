@@ -64,6 +64,25 @@ describe('App', () => {
     expect(screen.getByText('About Page')).toBeInTheDocument();
   });
 
+  it('renders Privacy page at /privacy route', () => {
+    window.history.pushState({}, '', '/privacy');
+    render(<App db={{} as any} auth={{} as any} />);
+    expect(screen.getByRole('heading', { name: /privacy policy/i })).toBeInTheDocument();
+  });
+
+  it('renders Terms page at /terms route', () => {
+    window.history.pushState({}, '', '/terms');
+    render(<App db={{} as any} auth={{} as any} />);
+    expect(screen.getByRole('heading', { name: /terms of service/i })).toBeInTheDocument();
+  });
+
+  it('renders privacy and terms links in the footer', () => {
+    window.history.pushState({}, '', '/');
+    render(<App db={{} as any} auth={{} as any} />);
+    expect(screen.getByRole('link', { name: 'Privacy Policy' })).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Terms of Service' })).toBeInTheDocument();
+  });
+
   it('renders Signup page at /signup route', () => {
     window.history.pushState({}, '', '/signup');
     render(<App db={{} as any} auth={{} as any} />);

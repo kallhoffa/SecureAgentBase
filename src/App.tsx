@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Outlet } from 'react-router';
+import { BrowserRouter, Routes, Route, Outlet, Link } from 'react-router';
 import { Firestore } from 'firebase/firestore';
 import { Auth } from 'firebase/auth';
 import LandingPage from './posts';
@@ -9,6 +9,7 @@ import ComposeReply from './compose-reply';
 import EnvironmentBanner from './environment-banner';
 import About from './about';
 import Privacy from './privacy';
+import Terms from './terms';
 import NavigationBar from './navigation-bar';
 import Login from './login';
 import Signup from './signup';
@@ -23,6 +24,7 @@ import { RequireAuth, RedirectIfAuthed } from './components/ProtectedRoute';
 import { StagingGate } from './guardrails/StagingGate';
 
 const isAppMode = import.meta.env.VITE_APP_MODE === 'true';
+const appName = import.meta.env.VITE_APP_NAME || (isAppMode ? 'SecureAgentBase' : 'Your App');
 
 interface RootLayoutProps {
   db: Firestore;
@@ -33,9 +35,18 @@ const RootLayout: React.FC<RootLayoutProps> = ({ db }) => {
     <>
       <EnvironmentBanner />
       <NavigationBar db={db} />
-      <div className="pt-24">
+      <div className="pt-24 min-h-[calc(100vh-10rem)]">
         <Outlet />
       </div>
+      <footer className="border-t border-gray-200 mt-8">
+        <div className="max-w-6xl mx-auto px-4 py-6 flex flex-col sm:flex-row items-center justify-between gap-2 text-sm text-gray-500">
+          <span>&copy; {new Date().getFullYear()} {appName}</span>
+          <nav className="flex items-center space-x-4">
+            <Link to="/privacy" className="hover:text-blue-600">Privacy Policy</Link>
+            <Link to="/terms" className="hover:text-blue-600">Terms of Service</Link>
+          </nav>
+        </div>
+      </footer>
     </>
   );
 };
@@ -76,6 +87,7 @@ const App: React.FC<AppProps> = ({ db }) => {
             <Route path="/compose-reply" element={<RequireAuth><ComposeReply db={db} /></RequireAuth>} />
             <Route path="/about" element={<About/>} />
           <Route path="/privacy" element={<Privacy />} />
+            <Route path="/terms" element={<Terms />} />
             <Route path="/profile" element={<RequireAuth><Profile db={db} /></RequireAuth>} />
             {isAppMode && (
               <Route path="/infra-setup" element={<InfraSetup db={db} />} />

@@ -1,3 +1,5 @@
+import { Link } from 'react-router';
+
 const Privacy: React.FC = () => {
   return (
     <div className="container mx-auto p-4 max-w-3xl">
@@ -5,7 +7,8 @@ const Privacy: React.FC = () => {
         <h1 className="text-2xl font-bold mb-2">SecureAgentBase Privacy Policy</h1>
         <p className="text-gray-600 text-sm mb-6">
           Effective date: August 2026 &middot; Operated by Anthony Kallhoff &middot; Contact:{' '}
-          <a className="text-blue-600" href="mailto:kallhoff@gmail.com">kallhoff@gmail.com</a>
+          <a className="text-blue-600" href="mailto:kallhoff@gmail.com">kallhoff@gmail.com</a>{' '}
+          &middot; <Link to="/terms" className="text-blue-600">Terms of Service</Link>
         </p>
 
         <h2 className="text-xl font-semibold mb-3">1. Data We Collect</h2>
