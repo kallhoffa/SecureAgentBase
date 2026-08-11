@@ -60,8 +60,7 @@ src/
 │   │   └── remote-config.ts
 │   ├── hooks/
 │   └── infra-setup/            # Extracted wizard modules
-│       ├── api.ts              # GCP + GitHub API helpers, OIDC setup
-│       ├── crypto.ts           # Config encryption (WebCrypto)
+│       ├── api.ts              # GCP + GitHub API helpers, OIDC setup, Secret Manager writes
 │       ├── scripts.ts          # VM startup script + Cloud Shell script
 │       └── steps/              # Step1–Step7 + StepHeader components
 └── firestore-utils/
