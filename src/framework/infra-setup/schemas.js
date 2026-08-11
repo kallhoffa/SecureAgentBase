@@ -44,13 +44,6 @@ export const SCHEMAS = {
     message: 'Discord client ID must be a numeric snowflake ID',
     label: 'Discord client ID',
   },
-  passphrase: {
-    type: 'string',
-    required: false,
-    minLength: 8,
-    maxLength: 200,
-    label: 'Passphrase',
-  },
   vmMachineType: {
     type: 'string',
     required: true,

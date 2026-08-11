@@ -6,7 +6,6 @@ const projectIdSchema = { projectId: SCHEMAS.projectId };
 const githubPatSchema = { githubPat: SCHEMAS.githubPat };
 const discordBotTokenSchema = { discordBotToken: SCHEMAS.discordBotToken };
 const discordClientIdSchema = { discordClientId: SCHEMAS.discordClientId };
-const passphraseSchema = { passphrase: SCHEMAS.passphrase };
 const vmMachineTypeSchema = { vmMachineType: SCHEMAS.vmMachineType };
 
 describe('SCHEMAS.projectId', () => {
@@ -67,20 +66,6 @@ describe('SCHEMAS.discordClientId', () => {
 
   it('rejects non-numeric client IDs', () => {
     expect(validate({ discordClientId: 'not-a-number' }, discordClientIdSchema)).not.toBeNull();
-  });
-});
-
-describe('SCHEMAS.passphrase', () => {
-  it('allows empty passphrase (Firestore fallback uses plain JSON)', () => {
-    expect(validate({ passphrase: '' }, passphraseSchema)).toBeNull();
-  });
-
-  it('rejects passphrases shorter than 8 characters', () => {
-    expect(validate({ passphrase: 'short' }, passphraseSchema)).not.toBeNull();
-  });
-
-  it('accepts a passphrase of at least 8 characters', () => {
-    expect(validate({ passphrase: 'hunter2-secret' }, passphraseSchema)).toBeNull();
   });
 });
 

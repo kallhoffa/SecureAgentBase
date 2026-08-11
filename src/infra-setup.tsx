@@ -7,7 +7,6 @@ import { safeSet, safeDelete } from './guardrails/safe-firestore';
 import { validate } from './guardrails/validate';
 import { useRateLimit } from './guardrails/useRateLimit';
 import { Check, AlertTriangle, Trash2, Shield, Server, Bot } from 'lucide-react';
-import { encryptData, decryptData } from './framework/infra-setup/crypto';
 import { CloudShellScript, getStartupScript } from './framework/infra-setup/scripts';
 import {
   gcpApiFetch, githubApiFetch, setGitHubVariable, ensureGitHubRepo,
@@ -97,12 +96,23 @@ const loadProjectsFromFirestore = async (userId, firestoreDb) => {
   return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 };
 
-const saveProjectToFirestore = async (userId, projectId, name, encryptedData, firestoreDb) => {
+const saveProjectToFirestore = async (userId, projectId, name, refs, firestoreDb) => {
+  // References only — never secret values. Secrets live in Secret Manager and
+  // are referenced via sm_secrets; the Firebase web configs are public by
+  // design (shipped to browsers) so they are safe to persist.
   await safeSet(firestoreDb, PROJECTS_COLLECTION, projectId, {
     userId,
     name,
-    encryptedData
-  }, userId, { allowFields: ['userId', 'name', 'encryptedData'], merge: true });
+    ...refs,
+    updated_at: serverTimestamp()
+  }, userId, {
+    allowFields: [
+      'userId', 'name', 'gcp_project_id', 'discord_guild_id',
+      'firebase_staging', 'firebase_production', 'vm_ip', 'vm_zone',
+      'github_repo', 'sm_secrets', 'updated_at'
+    ],
+    merge: true
+  });
 };
 
 const deleteProjectFromFirestore = async (projectId, userId, firestoreDb) => {
@@ -198,10 +208,6 @@ const [loading, setLoading] = useState(true);
   const [projectName, setProjectName] = useState('');
   const [isCreatingNew, setIsCreatingNew] = useState(false);
   const [useFirestore, setUseFirestore] = useState(false);
-  const [passphrase, setPassphrase] = useState('');
-  const [decryptPassphrase, setDecryptPassphrase] = useState('');
-  const [pendingDecryptProject, setPendingDecryptProject] = useState(null);
-  const [decryptError, setDecryptError] = useState('');
 
   const [firebaseConfigStaging, setFirebaseConfigStaging] = useState('');
   const [firebaseConfigProduction, setFirebaseConfigProduction] = useState('');
@@ -234,8 +240,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   const [autoGeneratingSa, setAutoGeneratingSa] = useState(false);
   const [saAutoProgress, setSaAutoProgress] = useState('');
   const [autoGenProjectId, setAutoGenProjectId] = useState('');
-
-  const [passphraseSaved, setPassphraseSaved] = useState(false);
 
   const [step3Status, setStep3Status] = useState('idle');
   const [step3Message, setStep3Message] = useState('');
@@ -2346,14 +2350,14 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   };
 
   useEffect(() => {
-    if (!useFirestore || !user || !projectName || !passphrase || passphrase.length < 12 || !selectedProjectId) return;
+    if (!useFirestore || !user || !projectName || !selectedProjectId) return;
     
     const timer = setTimeout(() => {
       autoSaveProject();
     }, 2000);
     
     return () => clearTimeout(timer);
-  }, [projectId, serviceAccountJson, discordBotToken, githubPat, firebaseConfigStaging, firebaseConfigProduction, vmIp, vmZone, useFirestore, user, projectName, passphrase, selectedProjectId]);
+  }, [projectId, serviceAccountJson, discordBotToken, githubPat, firebaseConfigStaging, firebaseConfigProduction, vmIp, vmZone, useFirestore, user, projectName, selectedProjectId]);
 
   useEffect(() => {
     // Auto-expand the first actionable step on mount. Step 0 (Sign In) is
@@ -2509,34 +2513,14 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       saveToLocalStorage(finalData);
     }
 
-    if (useFirestore && user && projectName && passphrase && passphrase.length >= 12) {
-      console.log('Saving project to Firestore:', { projectName, passphraseLength: passphrase.length });
+    if (useFirestore && user && projectName) {
+      console.log('Saving project to Firestore (references only):', projectName);
       try {
         const projectIdToSave = selectedProjectId || `proj_${Date.now()}`;
         const discordGuildIdToSave = configData?.discord_guild_id || discordGuildId;
-        console.log('Saving encrypted blob with discordGuildId:', discordGuildIdToSave || 'EMPTY');
-        const encryptedConfig = await encryptData({
-          gcp: {
-            projectId: projectId.trim(),
-            serviceAccountJson,
-            discordBotToken,
-            discordGuildId: discordGuildIdToSave
-          },
-          github: {
-            pat: githubPat
-          },
-          firebase: {
-            staging: firebaseConfigStaging,
-            production: firebaseConfigProduction
-          },
-          vm: {
-            ip: vmIp,
-            zone: vmZone
-          },
-          projectName
-        }, passphrase);
-        
-        await saveProjectToFirestore(user.uid, projectIdToSave, projectName, encryptedConfig, db);
+        console.log('Saving project refs with discordGuildId:', discordGuildIdToSave || 'EMPTY');
+
+        await saveProjectToFirestore(user.uid, projectIdToSave, projectName, buildProjectRefs({ discordGuildId: discordGuildIdToSave }), db);
         console.log('Project saved successfully');
         setSelectedProjectId(projectIdToSave);
         setIsCreatingNew(false);
@@ -2546,40 +2530,30 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       } catch (err) {
         console.error('Error saving project:', err);
       }
-    } else if (useFirestore && projectName) {
-      console.log('Not saving to Firestore - need passphrase (min 12 chars)');
     }
   };
 
+  // References only — secrets (SA key, PAT, bot token) never touch Firestore.
+  // They live in Secret Manager and are fetched by the VM at boot.
+  const buildProjectRefs = ({ discordGuildId: extraGuildId = discordGuildId } = {}) => ({
+    gcp_project_id: projectId.trim(),
+    discord_guild_id: extraGuildId || discordGuildId || null,
+    firebase_staging: firebaseConfigStaging || null,
+    firebase_production: firebaseConfigProduction || null,
+    vm_ip: vmIp || null,
+    vm_zone: vmZone || null,
+    github_repo: githubRepoName || null
+  });
+
   const autoSaveProject = async () => {
-    if (!useFirestore || !user || !projectName || !passphrase || passphrase.length < 12) return;
+    if (!useFirestore || !user || !projectName) return;
     if (!selectedProjectId) {
       console.log('No project selected, skipping auto-save');
       return;
     }
     
     try {
-      const encryptedConfig = await encryptData({
-        gcp: {
-          projectId: projectId.trim(),
-          serviceAccountJson,
-          discordBotToken
-        },
-        github: {
-          pat: githubPat
-        },
-        firebase: {
-          staging: firebaseConfigStaging,
-          production: firebaseConfigProduction
-        },
-        vm: {
-          ip: vmIp,
-          zone: vmZone
-        },
-        projectName
-      }, passphrase);
-      
-      await saveProjectToFirestore(user.uid, selectedProjectId, projectName, encryptedConfig, db);
+      await saveProjectToFirestore(user.uid, selectedProjectId, projectName, buildProjectRefs(), db);
       console.log('Project auto-saved');
     } catch (err) {
       console.error('Error auto-saving project:', err);
@@ -2589,9 +2563,9 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   const handleSaveConfig = async () => {
     if (!projectId.trim()) return;
 
-    const errors = validate({ projectId, passphrase }, { projectId: SCHEMAS.projectId, passphrase: SCHEMAS.passphrase });
+    const errors = validate({ projectId }, { projectId: SCHEMAS.projectId });
     if (errors) {
-      setError(errors.projectId || errors.passphrase);
+      setError(errors.projectId);
       return;
     }
     if (!configRateLimit.check()) {
@@ -2662,7 +2636,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       if (user) {
         await safeDelete(db, INFRA_COLLECTION, user.uid, user.uid);
 
-        // If an encrypted project is currently selected, delete it from Firestore!
+        // If a project is currently selected, delete it from Firestore!
         if (selectedProjectId) {
           await deleteProjectFromFirestore(selectedProjectId, user.uid, db);
         }
@@ -2691,9 +2665,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       
       setSelectedProjectId('');
       setProjectName('');
-      setPassphrase('');
       setUseFirestore(false);
-      setPendingDecryptProject(null);
       
       setGcpConfigLost(false);
       setGcpConsentEmail('');
@@ -3321,27 +3293,22 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                 if (proj) {
                   setProjectName(proj.name || '');
                   setUseFirestore(true);
-                  setPendingDecryptProject(proj.encryptedData ? proj : null);
-                  setDecryptPassphrase('');
-                  setDecryptError('');
-                  if (!proj.encryptedData) {
-                    if (proj.gcp) {
-                      setProjectId(proj.gcp.projectId || '');
-                      setServiceAccountJson(proj.gcp.serviceAccountJson || null);
-                      setDiscordBotToken(proj.gcp.discordBotToken || '');
-                    }
-                    if (proj.github) {
-                      setGithubPat(proj.github.pat || '');
-                    }
-                    if (proj.firebase) {
-                      setFirebaseConfigStaging(proj.firebase.staging || '');
-                      setFirebaseConfigProduction(proj.firebase.production || '');
-                    }
-                    if (proj.vm) {
-                      setVmIp(proj.vm.ip || '');
-                      setVmZone(proj.vm.zone || 'us-east1-b');
-                    }
+                  // References only — secrets (SA key, PAT, bot token) are
+                  // never stored in Firestore. They live in Secret Manager
+                  // and are fetched by the VM at boot, so re-entry restores
+                  // configuration references only. Legacy docs may use the
+                  // nested { gcp: { projectId } } plaintext shape.
+                  setProjectId(proj.gcp_project_id || proj.gcp?.projectId || '');
+                  if (proj.firebase_staging || proj.firebase?.staging) {
+                    setFirebaseConfigStaging(proj.firebase_staging || proj.firebase?.staging || '');
                   }
+                  if (proj.firebase_production || proj.firebase?.production) {
+                    setFirebaseConfigProduction(proj.firebase_production || proj.firebase?.production || '');
+                  }
+                  setVmIp(proj.vm_ip || proj.vm?.ip || '');
+                  setVmZone(proj.vm_zone || proj.vm?.zone || 'us-east1-b');
+                  setDiscordGuildId(proj.discord_guild_id || '');
+                  setGithubRepoName(proj.github_repo || '');
                 }
               }}
               className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-400"
@@ -3394,221 +3361,18 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                   onChange={(e) => setUseFirestore(e.target.checked)}
                   className="w-4 h-4"
                 />
-                <span className="text-sm text-gray-700">Store encrypted credentials in Firestore</span>
+                <span className="text-sm text-gray-700">Save configuration to my account</span>
               </label>
               {useFirestore && (
                 <div className="flex items-center gap-2">
-                  {passphraseSaved ? (
-                    <div className="flex items-center gap-2 bg-green-50 border border-green-200 px-3 py-1.5 rounded-lg text-green-700 text-sm font-medium">
-                      <Check size={16} className="text-green-600" />
-                      <span>Passphrase Locked</span>
-                      <button
-                        type="button"
-                        onClick={() => setPassphraseSaved(false)}
-                        className="ml-2 text-xs text-blue-600 hover:text-blue-800 underline font-medium"
-                      >
-                        Change
-                      </button>
-                    </div>
-                  ) : (
-                    <>
-                      <input
-                        type="password"
-                        id="secureagentbase-passphrase"
-                        name="secureagentbase-passphrase"
-                        autoComplete="new-password"
-                        value={passphrase}
-                        onChange={(e) => setPassphrase(e.target.value)}
-                        placeholder="Enter passphrase (min 12 chars)"
-                        className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-400"
-                      />
-                      <button
-                        type="button"
-                        disabled={passphrase.length < 12}
-                        onClick={() => setPassphraseSaved(true)}
-                        className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white px-3 py-2 rounded-lg text-sm font-semibold"
-                      >
-                        Enter
-                      </button>
-                    </>
-                  )}
+                  <div className="flex items-center gap-2 bg-green-50 border border-green-200 px-3 py-1.5 rounded-lg text-green-700 text-sm font-medium">
+                    <Check size={16} className="text-green-600" />
+                    <span>Configuration references auto-save (secrets stay in Secret Manager)</span>
+                  </div>
                 </div>
               )}
             </>
           )}
-          {pendingDecryptProject && (
-            <div className="w-full mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-              <p className="text-sm text-yellow-800 mb-2">This project is encrypted. Enter passphrase to decrypt:</p>
-              <div className="flex gap-2">
-                <input
-                  type="password"
-                  id="secureagentbase-decrypt-passphrase"
-                  name="secureagentbase-decrypt-passphrase"
-                  autoComplete="current-password"
-                  value={decryptPassphrase}
-                  onChange={(e) => setDecryptPassphrase(e.target.value)}
-                  placeholder="Enter passphrase"
-                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-400"
-                />
-                <button
-                  onClick={async () => {
-                    if (!decryptPassphrase) return;
-                    try {
-                      const decrypted = await decryptData(pendingDecryptProject.encryptedData, decryptPassphrase);
-                      if (decrypted.gcp) {
-                        setProjectId(decrypted.gcp.projectId || '');
-                        setServiceAccountJson(decrypted.gcp.serviceAccountJson || null);
-                        setDiscordBotToken(decrypted.gcp.discordBotToken || '');
-                        setDiscordBotTokenInput(decrypted.gcp.discordBotToken || '');
-                        setDiscordGuildId(decrypted.gcp.discordGuildId || '');
-                      }
-                      if (decrypted.github) {
-                        setGithubPat(decrypted.github.pat || '');
-                      }
-                      if (decrypted.firebase) {
-                        setFirebaseConfigStaging(decrypted.firebase.staging || '');
-                        setFirebaseConfigProduction(decrypted.firebase.production || '');
-                        const stagingParsed = parseFirebaseConfig(decrypted.firebase.staging);
-                        if (stagingParsed) setFirebaseStagingData(stagingParsed);
-                        const productionParsed = parseFirebaseConfig(decrypted.firebase.production);
-                        if (productionParsed) setFirebaseProductionData(productionParsed);
-                      }
-                      if (decrypted.vm) {
-                        setVmIp(decrypted.vm.ip || '');
-                        setVmZone(decrypted.vm.zone || 'us-east1-b');
-                      }
-                      const hasProjectId = !!decrypted.gcp?.projectId;
-                      const hasFirebase = !!(decrypted.firebase?.staging && decrypted.firebase?.production);
-                      const hasGithub = !!decrypted.github?.pat;
-                      const hasDiscord = !!decrypted.gcp?.discordBotToken;
-                      const hasVm = !!decrypted.vm?.ip;
-                      const hasGcp = hasFirebase || hasVm || hasProjectId;
-                      
-                      // Resume into the 4-step structure: advance from Discord
-                      // (1) → GitHub (2) → Google Cloud (3) based on what the
-                      // decrypted project already has.
-                      let nextStep = 1;
-                      if (hasDiscord) nextStep = 2;
-                      if (hasGithub) nextStep = 3;
-                      if (hasGcp) nextStep = 3;
-                      
-                      const newExpanded = [nextStep];
-                      if (hasGcp && !newExpanded.includes(3)) newExpanded.push(3);
-                      wizard.dispatch({ type: 'SET_EXPANDED', steps: newExpanded });
-                      setGcpConfigLost(false);
-                      setPendingDecryptProject(null);
-                      setDecryptPassphrase('');
-                      setDecryptError('');
-                      setPassphrase(decryptPassphrase);
-                      setPassphraseSaved(true);
-                      setUseFirestore(true);
-                    } catch (err) {
-                      console.error('Failed to decrypt project:', err);
-                      setDecryptError('Incorrect passphrase or corrupted data');
-                    }
-                  }}
-                  className="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-lg"
-                >
-                  Decrypt
-                </button>
-                <button
-                  onClick={() => {
-                    setPendingDecryptProject(null);
-                    setDecryptPassphrase('');
-                    setDecryptError('');
-                  }}
-                  className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2 rounded-lg"
-                >
-                  Cancel
-                </button>
-              </div>
-              {decryptError && (
-                <p className="text-red-600 text-sm mt-2">{decryptError}</p>
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className="flex flex-wrap gap-3">
-          <button
-            onClick={async () => {
-              const configData = {
-                gcp: {
-                  projectId,
-                  serviceAccountJson,
-                  discordBotToken,
-                  discordGuildId
-                },
-                github: {
-                  pat: githubPat
-                },
-                firebase: {
-                  staging: firebaseConfigStaging,
-                  production: firebaseConfigProduction
-                },
-                vm: {
-                  ip: vmIp,
-                  zone: vmZone
-                },
-                projectName
-              };
-              
-              const jsonStr = await encryptData(configData, passphrase);
-              const blob = new Blob([jsonStr], { type: 'application/json' });
-              const url = URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = projectName ? `${projectName}-config.json` : 'secureagent-config.json';
-              a.click();
-              URL.revokeObjectURL(url);
-            }}
-            className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm"
-          >
-            Export Settings
-          </button>
-          <label className="bg-gray-200 hover:bg-gray-300 text-gray-700 px-4 py-2 rounded-lg text-sm cursor-pointer">
-            Import File
-            <input
-              type="file"
-              accept=".json"
-              className="hidden"
-              onChange={async (e) => {
-                const file = e.target.files[0];
-                if (!file) return;
-                try {
-                  const text = await file.text();
-                  let data;
-                  try {
-                    data = await decryptData(text, passphrase);
-                  } catch {
-                    data = JSON.parse(text);
-                  }
-                  if (data.gcp) {
-                    setProjectId(data.gcp.projectId || '');
-                    setServiceAccountJson(data.gcp.serviceAccountJson || null);
-                    setDiscordBotToken(data.gcp.discordBotToken || '');
-                  }
-                  if (data.github) {
-                    setGithubPat(data.github.pat || '');
-                  }
-                  if (data.firebase) {
-                    setFirebaseConfigStaging(data.firebase.staging || '');
-                    setFirebaseConfigProduction(data.firebase.production || '');
-                  }
-                  if (data.vm) {
-                    setVmIp(data.vm.ip || '');
-                    setVmZone(data.vm.zone || 'us-east1-b');
-                  }
-                  if (data.projectName) {
-                    setProjectName(data.projectName);
-                  }
-                } catch (err) {
-                  console.error('Import failed:', err);
-                  setError('Failed to import config file');
-                }
-              }}
-            />
-          </label>
         </div>
       </div>
 
@@ -3826,7 +3590,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                       className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
                     />
                     <p className="text-gray-500 text-xs mt-1">
-                      Will be encrypted and sent to your VM for GitHub authentication
+                      Stored in Secret Manager and fetched by your VM at boot
                     </p>
                   </div>
                   {error && (
