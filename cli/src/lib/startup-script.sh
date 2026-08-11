@@ -67,6 +67,19 @@ check_disk
 sudo apt-get update -y > /dev/null 2>&1 || true
 sudo apt-get install -y curl git jq apt-transport-https ca-certificates gnupg2 ufw unzip > /dev/null 2>&1 || true
 
+# Upgrade git to >= 2.32 from the git-core PPA. The default Ubuntu 20.04/22.04
+# repos ship git <= 2.30, which lacks `git add --sparse` — the opencode/kimaki
+# agent snapshot flow fails every session with exit 129: "unknown option 'sparse'".
+# Hardened keyring + sources.list.d pattern, same as the GitHub CLI install below.
+# If the PPA fetch fails, everything is `|| true` and the default-repo git stays.
+sudo mkdir -p /usr/share/keyrings
+curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xE1DD270288B4E6030699E45FA1715D88E1DF1F24" | sudo gpg --dearmor -o /usr/share/keyrings/git-core-ppa.gpg > /dev/null 2>&1 || true
+UBUNTU_CODENAME=$(. /etc/os-release && echo "${VERSION_CODENAME:-focal}")
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/git-core-ppa.gpg] https://ppa.launchpadcontent.net/git-core/ppa/ubuntu ${UBUNTU_CODENAME} main" | sudo tee /etc/apt/sources.list.d/git-core-ppa.list > /dev/null 2>&1 || true
+sudo apt-get update -y > /dev/null 2>&1 || true
+# Re-install so apt picks the higher PPA version (upgrades the git from above).
+sudo apt-get install -y git > /dev/null 2>&1 || true
+
 # Fetch secrets from Secret Manager via the metadata-server identity (map #36).
 # No secret values ride in VM metadata; the VM's attached service account holds
 # per-secret roles/secretmanager.secretAccessor. IAM grants are eventually
