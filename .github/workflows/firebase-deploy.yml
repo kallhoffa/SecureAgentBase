@@ -63,7 +63,10 @@ jobs:
             gcloud services enable secretmanager.googleapis.com --project "$proj" 2>/dev/null || true
           done
           # Grant WIF pool admin to both deploy SA and e2e-runner SA
-          DEPLOY_SA="firebase-deploy-staging@${PROJECT}.iam.gserviceaccount.com"
+          # NOTE: the deploy SA lives in the agentbase-staging project
+          # (vars.GCP_SA_STAGING) — deriving it as firebase-deploy-staging@${PROJECT}
+          # would target a phantom SA the OIDC step never uses (see PR #55).
+          DEPLOY_SA="${{ vars.GCP_SA_STAGING }}"
           E2E_SA="e2e-test-runner@${PROJECT}.iam.gserviceaccount.com"
           for sa in "$DEPLOY_SA" "$E2E_SA"; do
             # cloudresourcemanager.projectViewer: lets the wizard's getProjectNumber()
@@ -87,6 +90,23 @@ jobs:
         with:
           workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
           service_account: ${{ vars.GCP_SA_STAGING }}
+
+      - name: Grant deploy SA runtime roles (SM writes + VM creation)
+        # The CLI e2e runs as the deploy SA (ADC/WIF) and slice 4 (map #36)
+        # writes SM secrets during init; Step 7 also attaches the agent SA to
+        # the VM, which requires iam.serviceAccountUser on the SA (without it
+        # GCE rejects the create with SERVICE_ACCOUNT_ACCESS_DENIED). The
+        # deploy SA holds projectIamAdmin on the test project, so it can bind
+        # these roles to itself; the earlier best-effort loop (e2e SA) is not
+        # a reliable source of the grants (mirrors PR #51/#55 in the staging
+        # workflow — this gate must not drift from it).
+        run: |
+          gcloud projects add-iam-policy-binding agentbase-test-staging \
+            --member="serviceAccount:${{ vars.GCP_SA_STAGING }}" \
+            --role="roles/secretmanager.admin"
+          gcloud projects add-iam-policy-binding agentbase-test-staging \
+            --member="serviceAccount:${{ vars.GCP_SA_STAGING }}" \
+            --role="roles/iam.serviceAccountUser"
 
       - name: Build (staging)
         run: npm run build

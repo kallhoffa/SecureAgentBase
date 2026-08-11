@@ -20,6 +20,14 @@ A release travels through a chain of gates. **Do not cut a release until every g
    - **Staging E2E Gate** — hardcodes `E2E_FULL: 'true'` and runs the real wizard e2e suite (`tests/e2e/wizard.spec.js`, ~38 tests incl. "VM creation e2e test") and the CLI e2e suite (`tests/e2e/cli.spec.mjs`, 13 tests) against staging. This is the only place the full wizard + CLI e2e actually runs.
    - **Deploy to Production** — `needs: staging-gate`, then `firebase deploy --only hosting,firestore --project ${{ vars.FIREBASE_PROJECT_ID_PRODUCTION }}`.
 
+> **⚠️ Keep `firebase-deploy.yml`'s staging-gate in sync with `firebase-deploy-staging.yml`.**
+> The two workflows duplicate the CLI e2e setup (best-effort role loop, deploy-SA
+> self-grant step, Build CLI / Run CLI E2E steps). Fixes to the CLI e2e gate (e.g.
+> PR #51/#55: deploy SA self-grant of `secretmanager.admin` + `iam.serviceAccountUser`,
+> and the `vars.GCP_SA_STAGING` phantom-SA fix) MUST be mirrored in both files or the
+> next release fails at the gate. `DEPLOY_SA` derives from `vars.GCP_SA_STAGING`
+> (agentbase-staging project), never from `@${PROJECT}` (agentbase-test-staging).
+
 ## Pre-PR checklist
 
 Run `npm run check` (test:ci + lint + build) before opening a PR. Also run the security scans locally when feasible:
