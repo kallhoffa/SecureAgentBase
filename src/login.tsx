@@ -1,6 +1,7 @@
 import { useState, FormEvent } from 'react';
 import { Link, useNavigate, useLocation } from 'react-router';
 import { useAuth } from './firestore-utils/auth-context';
+import { LEGAL_URLS } from './legal-urls';
 
 const Login: React.FC = () => {
   const [email, setEmail] = useState('');
@@ -126,6 +127,13 @@ const Login: React.FC = () => {
         </div>
 
         <p className="mt-6 text-center text-sm text-gray-600">
+          By continuing, you agree to the{' '}
+          <a className="text-blue-600 hover:text-blue-700 font-medium" href={LEGAL_URLS.privacyPolicy}>Privacy Policy</a>{' '}
+          and{' '}
+          <a className="text-blue-600 hover:text-blue-700 font-medium" href={LEGAL_URLS.termsOfService}>Terms of Service</a>.
+        </p>
+
+        <p className="mt-4 text-center text-sm text-gray-600">
           Don&apos;t have an account?{' '}
           <Link to="/signup" className="text-blue-600 hover:text-blue-700 font-medium">
             Sign up
