@@ -237,7 +237,10 @@ jobs:
           E2E_FIREBASE_PRODUCTION_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID_PRODUCTION }}
 
       - name: Build CLI
+        # Runs on every push to main (so a broken CLI fails the run instead of
+        # hiding until release day), on tag pushes, and on cli/all dispatches.
         if: >-
+          github.event_name == 'push' ||
           startsWith(github.ref, 'refs/tags/') ||
           (github.event_name == 'workflow_dispatch' && (github.event.inputs.e2e_type == 'cli' || github.event.inputs.e2e_type == 'all'))
         run: |
@@ -246,6 +249,7 @@ jobs:
 
       - name: Run CLI E2E Tests
         if: >-
+          github.event_name == 'push' ||
           startsWith(github.ref, 'refs/tags/') ||
           (github.event_name == 'workflow_dispatch' && (github.event.inputs.e2e_type == 'cli' || github.event.inputs.e2e_type == 'all'))
         run: |
