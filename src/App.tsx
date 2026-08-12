@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Outlet, Link } from 'react-router';
+import { BrowserRouter, Routes, Route, Outlet, Link, Navigate } from 'react-router';
 import { Firestore } from 'firebase/firestore';
 import { Auth } from 'firebase/auth';
 import LandingPage from './posts';
@@ -82,9 +82,22 @@ const App: React.FC<AppProps> = ({ db }) => {
           <Route path="/signup" element={<RedirectIfAuthed><Signup /></RedirectIfAuthed>} />
           <Route element={<StagingGate db={db}><RootLayout db={db} /></StagingGate>}>
             <Route path="/" element={<HomePage />} />
-            <Route path="/post" element={<Post db={db}/>} />
-            <Route path="/compose-post" element={<RequireAuth><ComposePost db={db} /></RequireAuth>} />
-            <Route path="/compose-reply" element={<RequireAuth><ComposeReply db={db} /></RequireAuth>} />
+            {isAppMode ? (
+              <>
+                {/* Posts are an app-mode (SecureAgentBase product) feature. */}
+                <Route path="/post" element={<Post db={db}/>} />
+                <Route path="/compose-post" element={<RequireAuth><ComposePost db={db} /></RequireAuth>} />
+                <Route path="/compose-reply" element={<RequireAuth><ComposeReply db={db} /></RequireAuth>} />
+              </>
+            ) : (
+              <>
+                {/* Template apps must not allow creating posts — redirect any
+                    direct hits on the posts routes back to the dashboard. */}
+                <Route path="/post" element={<Navigate to="/" replace />} />
+                <Route path="/compose-post" element={<Navigate to="/" replace />} />
+                <Route path="/compose-reply" element={<Navigate to="/" replace />} />
+              </>
+            )}
             <Route path="/about" element={<About/>} />
           <Route path="/privacy" element={<Privacy />} />
             <Route path="/terms" element={<Terms />} />

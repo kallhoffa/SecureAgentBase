@@ -88,4 +88,15 @@ describe('App', () => {
     render(<App db={{} as any} auth={{} as any} />);
     expect(screen.getByText('Signup Page')).toBeInTheDocument();
   });
+
+  describe('template mode (posts disabled)', () => {
+    it.each(['/post', '/compose-post', '/compose-reply'])(
+      'redirects %s back to the dashboard',
+      (path) => {
+        window.history.pushState({}, '', path);
+        render(<App db={{} as any} auth={{} as any} />);
+        expect(screen.getByText('Dashboard Page')).toBeInTheDocument();
+      }
+    );
+  });
 });
