@@ -831,7 +831,7 @@ test.describe('Wizard E2E Regression', () => {
       await expect(page.getByText('Step 1: Discord Bot')).toBeVisible({ timeout: 15000 });
 
       // Step 1: Discord bot token
-      const discordInput = page.getByPlaceholder(/MTE8/);
+      const discordInput = page.getByPlaceholder(/MTE4/);
       await openStepIfNeeded(page, 'Step 1: Discord Bot', discordInput);
       await expect(discordInput).toBeVisible({ timeout: 10000 });
       await discordInput.fill(process.env.E2E_DISCORD_TOKEN);
@@ -870,7 +870,7 @@ test.describe('Wizard E2E Regression', () => {
 
       // Discord token restored: open the step if needed and verify the input
       // holds the restored value (proves the token is back in state).
-      const discord2 = page2.getByPlaceholder(/MTE8/);
+      const discord2 = page2.getByPlaceholder(/MTE4/);
       await openStepIfNeeded(page2, 'Step 1: Discord Bot', discord2);
       await expect(discord2).toBeVisible({ timeout: 10000 });
       await expect(discord2).toHaveValue(process.env.E2E_DISCORD_TOKEN, { timeout: 20000 });
