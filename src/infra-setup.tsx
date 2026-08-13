@@ -240,6 +240,10 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   const [autoGeneratingSa, setAutoGeneratingSa] = useState(false);
   const [saAutoProgress, setSaAutoProgress] = useState('');
   const [autoGenProjectId, setAutoGenProjectId] = useState('');
+  // True only when real e2e credentials were read from URL params/sessionStorage.
+  // Deploy builds ship VITE_E2E=true so the Playwright gate works, so isE2EMode
+  // alone can't distinguish a test session from a real user's session.
+  const [e2eInjected, setE2eInjected] = useState(false);
 
   const [step3Status, setStep3Status] = useState('idle');
   const [step3Message, setStep3Message] = useState('');
@@ -746,6 +750,15 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       const gcpProject = projectId;
       const poolId = 'firebase-deploy-pool';
       const providerId = 'github-provider';
+
+      // Guard: an empty projectId would build `projects//locations/...` URLs,
+      // which GCP rejects with a bare 400 INVALID_ARGUMENT. Surface a clear
+      // message instead of a cryptic API error.
+      if (!gcpProject || !gcpProject.trim()) {
+        setOidcSetupStatus('error');
+        setOidcSetupStep('Failed: GCP Project ID is missing');
+        throw new Error('Enter your GCP Project ID in the Project section of Step 3 before setting up OIDC.');
+      }
 
       // Create workload identity pool
       setOidcSetupStep('Creating workload identity pool...');
@@ -1872,6 +1885,10 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           setBillingChecking(false);
           expandNextStep(3);
           setNewProjectName('');
+          // Refresh the project list and pre-select it in the auto-generation
+          // dropdown so the just-created/reused project is immediately usable.
+          setAutoGenProjectId(projectIdVal);
+          await fetchGcpProjects(gcpAccessToken);
           setCreatingProject(false);
           return;
         }
@@ -1917,6 +1934,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       setBillingChecking(false);
       expandNextStep(3);
       setNewProjectName('');
+      // Refresh the project list and pre-select the new project in the
+      // auto-generation dropdown (it is not in the list fetched at connect
+      // time, so without this the operator can't auto-gen against it).
+      setAutoGenProjectId(projectIdVal);
+      await fetchGcpProjects(gcpAccessToken);
     } catch (err) {
       console.error('Error creating project:', err);
       setError(err.message || 'Failed to create GCP project');
@@ -2156,15 +2178,24 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
     if (e2eSA || e2eToken || e2eFirebaseStaging || e2eFirebaseProd || e2eGithubPat || e2eDiscordToken || e2eDiscordGuild || e2eDiscordBotAdded || e2eBillingEnabled) {
       console.log('E2E mode active: credentials injected from URL params');
+      setE2eInjected(true);
     }
   }, []);
 
   // E2E auto-setup: once githubPat + githubRepoName are injected, automatically
   // run OIDC setup + upload GitHub variables (Steps 5-6 are skipped in e2e).
   // The fine-grained PAT can't set variables (403), so the wizard must do it.
+  // SECURITY/UX: gated on e2eInjected (real e2e credentials present in the
+  // URL/sessionStorage), NOT on isE2EMode — deploy builds ship VITE_E2E=true
+  // so the Playwright gate works, and a real user's session would otherwise
+  // auto-run OIDC the moment Google connects, against an incomplete project
+  // state (empty projectId → 400 INVALID_ARGUMENT on `projects//...` URLs),
+  // racing the operator's input. Real users set up OIDC via the explicit
+  // "Save & Setup OIDC Deployment" button.
   const e2eOidcDoneRef = useRef(false);
   useEffect(() => {
     if (e2eOidcDoneRef.current) return;
+    if (!e2eInjected) return;
     if (!githubPat || !githubRepoName || !gcpAccessToken) return;
     if (!firebaseStagingData && !firebaseProductionData) return;
 
@@ -2185,7 +2216,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         console.error('E2E: Failed to auto-setup OIDC:', err);
       }
     })();
-  }, [githubPat, githubRepoName, gcpAccessToken, firebaseStagingData, firebaseProductionData]);
+  }, [e2eInjected, githubPat, githubRepoName, gcpAccessToken, firebaseStagingData, firebaseProductionData]);
 
   useEffect(() => {
     const formProgress = loadFormProgress();
@@ -2482,7 +2513,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   const saveConfig = async (configData) => {
     const finalData = {
       ...configData,
-      gcp_project_id: projectId.trim(),
+      // Never persist an empty project id — an auto-save firing before the
+      // operator enters the ID would restore as '' and later produce
+      // `projects//...` GCP URLs (400 INVALID_ARGUMENT). Absent key = merge
+      // keeps the previously stored value.
+      ...(projectId.trim() ? { gcp_project_id: projectId.trim() } : {}),
       github_app_installed: githubAppInstalled,
       github_repo: githubRepoName,
       god_sa_email: godSaEmail,

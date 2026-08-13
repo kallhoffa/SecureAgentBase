@@ -7,7 +7,7 @@ export const gcpApiFetch = async (url: string, token: string, opts?: Record<stri
   });
   if (!response.ok) {
     const err = await response.text().catch(() => response.statusText);
-    throw new Error(`GCP API error (${response.status}): ${err}`);
+    throw new Error(`GCP API error (${response.status}) [${url}]: ${err}`);
   }
   if (response.status === 204) return {};
   const text = await response.text();
