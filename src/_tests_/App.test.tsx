@@ -2,8 +2,10 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import App from '../App';
 
+const mockAuthUser = vi.hoisted(() => ({ user: null as any }));
+
 vi.mock('../firestore-utils/auth-context', () => ({
-  useAuth: () => ({ loading: false, user: null }),
+  useAuth: () => ({ loading: false, user: mockAuthUser.user }),
 }));
 
 vi.mock('../firestore-utils/notification-context', () => ({
@@ -38,6 +40,19 @@ vi.mock('../template', () => ({
 
 vi.mock('../posts', () => ({
   LandingPage: () => <div>Landing Page</div>,
+  default: () => <div>Landing Page</div>,
+}));
+
+vi.mock('../post', () => ({
+  default: () => <div>Post Page</div>,
+}));
+
+vi.mock('../compose-post', () => ({
+  default: () => <div>Compose Post Page</div>,
+}));
+
+vi.mock('../compose-reply', () => ({
+  default: () => <div>Compose Reply Page</div>,
 }));
 
 describe('App', () => {
@@ -89,13 +104,36 @@ describe('App', () => {
     expect(screen.getByText('Signup Page')).toBeInTheDocument();
   });
 
-  describe('template mode (posts disabled)', () => {
-    it.each(['/post', '/compose-post', '/compose-reply'])(
-      'redirects %s back to the dashboard',
+  describe('template mode (copied apps — posts enabled)', () => {
+    it('renders the post view at /post', () => {
+      window.history.pushState({}, '', '/post');
+      render(<App db={{} as any} auth={{} as any} />);
+      expect(screen.getByText('Post Page')).toBeInTheDocument();
+    });
+
+    it.each(['/compose-post', '/compose-reply'])(
+      'renders the compose form at %s when signed in',
       (path) => {
+        mockAuthUser.user = { uid: 'user-1' };
         window.history.pushState({}, '', path);
         render(<App db={{} as any} auth={{} as any} />);
-        expect(screen.getByText('Dashboard Page')).toBeInTheDocument();
+        expect(screen.getByText(/Compose (Post|Reply) Page/)).toBeInTheDocument();
+        mockAuthUser.user = null;
+      }
+    );
+  });
+
+  describe('app mode (template repo — posts blocked)', () => {
+    it.each(['/post', '/compose-post', '/compose-reply'])(
+      'redirects %s back to the landing page',
+      async (path) => {
+        vi.resetModules();
+        vi.stubEnv('VITE_APP_MODE', 'true');
+        const { default: AppAppMode } = await import('../App');
+        window.history.pushState({}, '', path);
+        render(<AppAppMode db={{} as any} auth={{} as any} />);
+        expect(screen.getByText('Landing Page')).toBeInTheDocument();
+        vi.unstubAllEnvs();
       }
     );
   });
