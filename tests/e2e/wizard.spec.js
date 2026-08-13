@@ -824,6 +824,11 @@ test.describe('Wizard E2E Regression', () => {
       };
 
       // ============ Tab 1: enter tokens, app must sync them to Secret Manager ============
+      // Capture the app's console so a deferred sync (e.g. a GCP 403 on
+      // secretmanager) surfaces its real error message in the CI log.
+      const browserLogs = [];
+      page.on('console', (msg) => browserLogs.push(`[${msg.type()}] ${msg.text()}`));
+      page.on('pageerror', (err) => browserLogs.push(`[pageerror] ${err.message}`));
       await signIn(page);
       await injectTokenOnly(page);
       await page.goto(`${TEST_URL}/infra-setup`);
@@ -851,14 +856,24 @@ test.describe('Wizard E2E Regression', () => {
 
       // The sync effect fires as soon as both tokens + GCP token + project are
       // present: poll Secret Manager until the payloads match the real values.
-      await expect.poll(
-        () => smRead('github-pat'),
-        { timeout: 60000, message: 'github-pat should be written to Secret Manager' }
-      ).toBe(process.env.E2E_GITHUB_PAT);
-      await expect.poll(
-        () => smRead('discord-bot-token'),
-        { timeout: 60000, message: 'discord-bot-token should be written to Secret Manager' }
-      ).toBe(process.env.E2E_DISCORD_TOKEN);
+      try {
+        await expect.poll(
+          () => smRead('github-pat'),
+          { timeout: 60000, message: 'github-pat should be written to Secret Manager' }
+        ).toBe(process.env.E2E_GITHUB_PAT);
+        await expect.poll(
+          () => smRead('discord-bot-token'),
+          { timeout: 60000, message: 'discord-bot-token should be written to Secret Manager' }
+        ).toBe(process.env.E2E_DISCORD_TOKEN);
+      } catch (err) {
+        const syncRelevant = browserLogs.filter((l) =>
+          /Secret Manager|secretmanager|deferred|GCP API error|sync|github|pat|discord|error|warn/i.test(l)
+        ).slice(-30);
+        console.log('--- Browser console (sync-relevant) ---');
+        console.log(syncRelevant.join('\n') || '(no matching browser console logs)');
+        console.log('--- End browser console ---');
+        throw err;
+      }
 
       // ============ Tab 2: fresh tab (empty sessionStorage) must self-restore ============
       const page2 = await context.newPage();
