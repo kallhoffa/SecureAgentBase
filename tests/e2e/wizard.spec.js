@@ -866,11 +866,16 @@ test.describe('Wizard E2E Regression', () => {
           { timeout: 60000, message: 'discord-bot-token should be written to Secret Manager' }
         ).toBe(process.env.E2E_DISCORD_TOKEN);
       } catch (err) {
-        const syncRelevant = browserLogs.filter((l) =>
-          /Secret Manager|secretmanager|deferred|GCP API error|sync|github|pat|discord|error|warn/i.test(l)
-        ).slice(-30);
-        console.log('--- Browser console (sync-relevant) ---');
-        console.log(syncRelevant.join('\n') || '(no matching browser console logs)');
+        const storageState = await page.evaluate(() => ({
+          token: sessionStorage.getItem('__e2e_token') ? 'set' : 'missing',
+          projectId: sessionStorage.getItem('__e2e_project_id'),
+          discordToken: sessionStorage.getItem('discordBotToken') ? 'set' : 'missing',
+          githubPat: sessionStorage.getItem('githubPat') ? 'set' : 'missing',
+        })).catch(() => ({}));
+        console.log('--- Browser console (full, last 80) ---');
+        console.log(browserLogs.slice(-80).join('\n') || '(no browser console logs)');
+        console.log('--- sessionStorage state ---');
+        console.log(JSON.stringify(storageState));
         console.log('--- End browser console ---');
         throw err;
       }
