@@ -67,6 +67,13 @@ const INFRA_COLLECTION = 'infra_configs';
 const PROJECTS_COLLECTION = 'projects';
 const LOCALSTORAGE_KEY = 'infra_config_pending';
 const FORM_PROGRESS_KEY = 'infra_form_progress';
+// Operator-entered secrets, kept in sessionStorage (NOT Firestore — GHSA-x49w)
+// so a same-tab reload restores them; cleared when the tab closes.
+const SESSION_KEYS = {
+  discordBotToken: 'wz_discord_bot_token',
+  githubPat: 'wz_github_pat',
+  serviceAccountJson: 'wz_sa_key',
+};
 
 
 
@@ -244,6 +251,10 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   // Deploy builds ship VITE_E2E=true so the Playwright gate works, so isE2EMode
   // alone can't distinguish a test session from a real user's session.
   const [e2eInjected, setE2eInjected] = useState(false);
+  // Ref variant of e2eInjected: the load-restore effect runs in the same mount
+  // flush as the injection effect, so it reads the ref (mutable, set first) —
+  // a state closure would still see `false` on the first pass.
+  const e2eInjectedRef = useRef(false);
 
   const [step3Status, setStep3Status] = useState('idle');
   const [step3Message, setStep3Message] = useState('');
@@ -256,10 +267,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   const [botOnline, setBotOnline] = useState(false);
   const [stagingDeployed, setStagingDeployed] = useState(false);
 
-  // E2E mode is a build-time feature flag (VITE_E2E=true). Used to keep the
-  // wizard hermetic under automation: skip restoring stale persisted state
-  // and tolerate expected environment quirks (e.g. PAT scope limits).
-  const isE2EMode = !import.meta.env.DEV && import.meta.env.VITE_E2E === 'true';
+  // NOTE: isE2EMode (build-time VITE_E2E=true, set by deploy workflows for the
+  // Playwright gate) is deliberately NOT used to branch runtime behavior for
+  // real users — deploy builds ship it, so it can't distinguish a test session
+  // from a user's session. e2eInjectedRef (real credentials in URL/sessionStorage)
+  // is the discriminator used by the load-restore path and upload error path.
 
   const [step4Status, setStep4Status] = useState<'idle' | 'enabling' | 'complete' | 'error'>('idle');
   const [step4Message, setStep4Message] = useState('');
@@ -898,7 +910,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       setGithubVarUploaded(true);
     } catch (err) {
       console.error('Failed to upload GitHub vars:', err);
-      if (isE2EMode) {
+      if (e2eInjectedRef.current) {
         // E2E: the test repo's variables already exist with the correct values
         // from the wizard setup, and the e2e PAT may lack the Actions-variables
         // write scope (403 'Resource not accessible'). A failed upload must not
@@ -2179,6 +2191,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     if (e2eSA || e2eToken || e2eFirebaseStaging || e2eFirebaseProd || e2eGithubPat || e2eDiscordToken || e2eDiscordGuild || e2eDiscordBotAdded || e2eBillingEnabled) {
       console.log('E2E mode active: credentials injected from URL params');
       setE2eInjected(true);
+      e2eInjectedRef.current = true;
     }
   }, []);
 
@@ -2285,36 +2298,39 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         // E2E injection sets projectId from URL params; don't overwrite with a
         // stale Firestore value (e.g. empty string) that would break the VM
         // creation guard (`if (!serviceAccountJson || !projectId)`) and block
-        // the e2e test.
-        if (!isE2EMode) setProjectId(configData.gcp_project_id || '');
+        // the e2e test. Deploy builds ship VITE_E2E=true, so isE2EMode is true
+        // for real users too — gate on e2eInjectedRef instead (real credentials
+        // injected), otherwise real users would lose their saved config on load.
+        if (!e2eInjectedRef.current) setProjectId(configData.gcp_project_id || '');
         // GCP access token is NOT restored — it's short-lived (~1h) and
         // gcpTokenExpiry can't be restored either, so getAccessToken() can't
         // tell if it's valid. The user clicks "Connect Google Cloud Account"
         // to get a fresh token when needed.
         setGithubAppInstalled(configData.github_app_installed || false);
-        // vm_ip is NOT restored in E2E mode: it marks step 3 complete and
-        // replaces the "Create VM" button with the VM-management view. The
-        // shared e2e user's Firestore doc carries a stale vm_ip from earlier
-        // runs, which would hide the Create button and fail the wizard test.
-        // E2E mode always creates a fresh VM, so the IP is never needed on load.
-        if (!isE2EMode) setVmIp(configData.vm_ip || '');
+        // vm_ip is NOT restored when real e2e credentials are injected: it
+        // marks step 3 complete and replaces the "Create VM" button with the
+        // VM-management view. The shared e2e user's Firestore doc carries a
+        // stale vm_ip from earlier runs, which would hide the Create button
+        // and fail the wizard test. E2E mode always creates a fresh VM, so the
+        // IP is never needed on load.
+        if (!e2eInjectedRef.current) setVmIp(configData.vm_ip || '');
         // discord_bot_token intentionally NOT restored from Firestore (GHSA-x49w).
-        // User must re-enter after page reload — same pattern as SA key and GCP token.
+        // Restored from sessionStorage below instead — same pattern as SA key.
         setDiscordGuildId(configData.discord_guild_id || configData.discordGuildId || '');
         // E2E injection sets discordBotAdded=true via URL params; don't overwrite
         // with stale Firestore value that would lock Step 8 and block the test
-        if (!isE2EMode) setDiscordBotAdded(!!configData.discord_bot_added);
+        if (!e2eInjectedRef.current) setDiscordBotAdded(!!configData.discord_bot_added);
         // Firebase configs are E2E-injected too — skip stale Firestore restore
-        if (!isE2EMode && configData.firebase_staging) {
+        if (!e2eInjectedRef.current && configData.firebase_staging) {
           setFirebaseConfigStaging(JSON.stringify(configData.firebase_staging, null, 2));
           setFirebaseStagingData(configData.firebase_staging);
         }
-        if (!isE2EMode && configData.firebase_production) {
+        if (!e2eInjectedRef.current && configData.firebase_production) {
           setFirebaseConfigProduction(JSON.stringify(configData.firebase_production, null, 2));
           setFirebaseProductionData(configData.firebase_production);
         }
         // github_pat intentionally NOT restored from Firestore (GHSA-x49w).
-        // User must re-enter after page reload.
+        // Restored from sessionStorage below instead.
         
         // Restore OIDC values so Step 7 can build VM metadata on reload
         if (configData.gcp_wif_provider) setGcpWifProviderName(configData.gcp_wif_provider);
@@ -2322,13 +2338,43 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         if (configData.gcp_sa_production) setGcpSaProductionEmail(configData.gcp_sa_production);
         if (configData.github_repo) setGithubRepoName(configData.github_repo);
         
-        // Note: service_account_key is NOT restored (private_key sensitive)
-        // User must re-upload service account JSON each session
+        // Restore operator-entered secrets from sessionStorage (not Firestore):
+        // survives a same-tab reload, cleared when the tab closes. The GCP
+        // access token is excluded — it expires in ~1h regardless.
+        if (!e2eInjectedRef.current) {
+          try {
+            const savedDiscordToken = sessionStorage.getItem(SESSION_KEYS.discordBotToken);
+            if (savedDiscordToken) {
+              setDiscordBotToken(savedDiscordToken);
+              setDiscordBotTokenInput(savedDiscordToken);
+              const extractedId = extractClientIdFromToken(savedDiscordToken);
+              if (extractedId) setDiscordClientId(extractedId);
+            }
+          } catch (e) { console.warn('Failed to restore discord bot token from sessionStorage:', e); }
+          try {
+            const savedPat = sessionStorage.getItem(SESSION_KEYS.githubPat);
+            if (savedPat) setGithubPat(savedPat);
+          } catch (e) { console.warn('Failed to restore github PAT from sessionStorage:', e); }
+          try {
+            const savedSa = sessionStorage.getItem(SESSION_KEYS.serviceAccountJson);
+            if (savedSa) {
+              const saJson = JSON.parse(savedSa);
+              if (saJson?.private_key) {
+                setServiceAccountJson(saJson);
+                if (saJson.client_email) setGodSaEmail(saJson.client_email);
+              }
+            }
+          } catch (e) { console.warn('Failed to restore service account from sessionStorage:', e); }
+        }
 
-        if (!isE2EMode && configData.god_sa_email) setGodSaEmail(configData.god_sa_email);
+        // Note: service_account_key is NOT restored from Firestore (private_key
+        // sensitive) — sessionStorage restore above covers the same-tab case.
 
-        // Stale vm_ip must not expand step 3 in E2E mode either (see above).
-        if (!isE2EMode && configData.vm_ip && !expandedSteps.includes(3)) {
+        if (!e2eInjectedRef.current && configData.god_sa_email) setGodSaEmail(configData.god_sa_email);
+
+        // Stale vm_ip must not expand step 3 when e2e credentials are injected
+        // (see above).
+        if (!e2eInjectedRef.current && configData.vm_ip && !expandedSteps.includes(3)) {
           wizard.dispatch({ type: 'EXPAND_STEP', step: 3 });
         }
 
@@ -2343,6 +2389,29 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
     loadInfraConfig();
   }, [db, user]);
+
+  // Persist operator-entered secrets to sessionStorage as they change, so a
+  // same-tab reload restores them (see loadInfraConfig). Not Firestore
+  // (GHSA-x49w) and not localStorage: cleared when the tab closes. The GCP
+  // access token is excluded — it expires in ~1h so restoring is pointless.
+  useEffect(() => {
+    try {
+      if (discordBotToken) sessionStorage.setItem(SESSION_KEYS.discordBotToken, discordBotToken);
+      else sessionStorage.removeItem(SESSION_KEYS.discordBotToken);
+    } catch (e) { console.warn('Failed to persist discord bot token:', e); }
+  }, [discordBotToken, SESSION_KEYS]);
+  useEffect(() => {
+    try {
+      if (githubPat) sessionStorage.setItem(SESSION_KEYS.githubPat, githubPat);
+      else sessionStorage.removeItem(SESSION_KEYS.githubPat);
+    } catch (e) { console.warn('Failed to persist github PAT:', e); }
+  }, [githubPat, SESSION_KEYS]);
+  useEffect(() => {
+    try {
+      if (serviceAccountJson?.private_key) sessionStorage.setItem(SESSION_KEYS.serviceAccountJson, JSON.stringify(serviceAccountJson));
+      else sessionStorage.removeItem(SESSION_KEYS.serviceAccountJson);
+    } catch (e) { console.warn('Failed to persist service account:', e); }
+  }, [serviceAccountJson, SESSION_KEYS]);
 
   useEffect(() => {
     if (checkingCompletion) return;
@@ -2697,6 +2766,10 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       setFirebaseConfigProduction('');
       setFirebaseStagingData({});
       setFirebaseProductionData({});
+      // Wipe session-scoped secrets too, so a disconnect truly clears them
+      try {
+        Object.values(SESSION_KEYS).forEach((key) => sessionStorage.removeItem(key));
+      } catch (e) { console.warn('Failed to clear sessionStorage secrets:', e); }
       
       setSelectedProjectId('');
       setProjectName('');
@@ -3254,8 +3327,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       });
 
       // Discord bot token intentionally NOT saved to Firestore (GHSA-x49w).
-      // Kept in React state only — same pattern as SA key and GCP token.
-      // User must re-enter after page reload.
+      // Persisted to sessionStorage (same-tab reload restores it; cleared on
+      // tab close) — same pattern as SA key. GCP token is never persisted.
 
       console.log('Discord config saved');
     } catch (err) {
