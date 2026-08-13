@@ -756,4 +756,119 @@ test.describe('Wizard E2E Regression', () => {
       await expect(page.getByText('1. Connect Google Cloud & Service Account')).toBeVisible({ timeout: 15000 });
     });
   });
+
+  // ---------- Token persistence across reload (Secret Manager round-trip) ----------
+  // Regression for "tokens are still not saving": enter real tokens, verify the
+  // app writes them to Secret Manager, then reload in a FRESH tab (empty
+  // sessionStorage — the same-tab sessionStorage restore can't mask the path)
+  // and verify the wizard repopulates steps 1-2 from Secret Manager on its own.
+  //
+  // Injection is TOKEN-ONLY (__e2e_token + __e2e_project_id). That stands in
+  // for a connected Google account without flipping e2eInjectedRef, so the
+  // app's REAL sync + restore + config-restore paths run against live GCP.
+  test.describe('Token Persistence (Secret Manager)', () => {
+    test.beforeEach(async () => {
+      test.skip(process.env.E2E_APP_MODE !== 'true', 'Wizard route only available in app mode');
+      test.skip(!E2E_GCP_TOKEN || !E2E_GCP_PROJECT_ID,
+        'E2E_GCP_TOKEN and E2E_GCP_PROJECT_ID required');
+      test.skip(!process.env.E2E_GITHUB_PAT || !process.env.E2E_DISCORD_TOKEN,
+        'E2E_GITHUB_PAT and E2E_DISCORD_TOKEN required');
+    });
+
+    test('tokens persist to Secret Manager and restore after reload', async ({ page, context }) => {
+      test.setTimeout(180000);
+
+      // Clean slate: delete any secrets written by previous runs so this test
+      // proves a FRESH write + restore rather than a hit on last run's values.
+      const smDelete = async (secretId) => {
+        const resp = await fetch(
+          `https://secretmanager.googleapis.com/v1/projects/${E2E_GCP_PROJECT_ID}/secrets/${secretId}`,
+          { method: 'DELETE', headers: { Authorization: `Bearer ${E2E_GCP_TOKEN}` } }
+        );
+        console.log(`SM cleanup ${secretId}: HTTP ${resp.status} (404 = nothing to clean)`);
+      };
+      await smDelete('github-pat');
+      await smDelete('discord-bot-token');
+
+      // Read the LATEST version payload of a secret (null if missing/404).
+      const smRead = async (secretId) => {
+        const resp = await fetch(
+          `https://secretmanager.googleapis.com/v1/projects/${E2E_GCP_PROJECT_ID}/secrets/${secretId}/versions/latest:access`,
+          { headers: { Authorization: `Bearer ${E2E_GCP_TOKEN}` } }
+        );
+        if (!resp.ok) return null;
+        const data = await resp.json();
+        return Buffer.from(data.payload.data, 'base64').toString('utf8');
+      };
+
+      const injectTokenOnly = async (targetPage) => {
+        await targetPage.addInitScript((token, projectId) => {
+          sessionStorage.setItem('__e2e_token', token);
+          sessionStorage.setItem('__e2e_project_id', projectId);
+        }, Buffer.from(E2E_GCP_TOKEN).toString('base64'), E2E_GCP_PROJECT_ID);
+      };
+
+      // ============ Tab 1: enter tokens, app must sync them to Secret Manager ============
+      await signIn(page);
+      await injectTokenOnly(page);
+      await page.goto(`${TEST_URL}/infra-setup`);
+      await page.waitForLoadState('domcontentloaded');
+      await expect(page.getByText('Step 1: Discord Bot')).toBeVisible({ timeout: 15000 });
+
+      // Step 1: Discord bot token
+      const discordInput = page.getByPlaceholder(/MTE8/);
+      await expect(discordInput).toBeVisible({ timeout: 10000 });
+      await discordInput.fill(process.env.E2E_DISCORD_TOKEN);
+      await page.getByRole('button', { name: 'Save Discord Bot' }).click();
+      // Invite link appears → "Bot Added — Continue" marks step 1 complete
+      const botAddedBtn = page.getByRole('button', { name: /Bot Added/ });
+      await expect(botAddedBtn).toBeVisible({ timeout: 10000 });
+      await botAddedBtn.click();
+      await expect(page.getByText('Step 2: GitHub')).toBeVisible({ timeout: 10000 });
+
+      // Step 2: GitHub PAT (validated against the real GitHub API)
+      const patInput = page.getByPlaceholder(/ghp_/);
+      await expect(patInput).toBeVisible({ timeout: 10000 });
+      await patInput.fill(process.env.E2E_GITHUB_PAT);
+      await page.getByRole('button', { name: 'Save GitHub Configuration' }).click();
+
+      // The sync effect fires as soon as both tokens + GCP token + project are
+      // present: poll Secret Manager until the payloads match the real values.
+      await expect.poll(
+        () => smRead('github-pat'),
+        { timeout: 60000, message: 'github-pat should be written to Secret Manager' }
+      ).toBe(process.env.E2E_GITHUB_PAT);
+      await expect.poll(
+        () => smRead('discord-bot-token'),
+        { timeout: 60000, message: 'discord-bot-token should be written to Secret Manager' }
+      ).toBe(process.env.E2E_DISCORD_TOKEN);
+
+      // ============ Tab 2: fresh tab (empty sessionStorage) must self-restore ============
+      const page2 = await context.newPage();
+      await injectTokenOnly(page2);
+      await signIn(page2);
+      await page2.goto(`${TEST_URL}/infra-setup`);
+      await page2.waitForLoadState('domcontentloaded');
+      await expect(page2.getByText('Step 1: Discord Bot')).toBeVisible({ timeout: 15000 });
+
+      // Discord token restored: either the step is collapsed (complete) or the
+      // input shows the restored value. Both prove the token is back in state.
+      const discord2 = page2.getByPlaceholder(/MTE8/);
+      if (await discord2.isVisible().catch(() => false)) {
+        await expect(discord2).toHaveValue(process.env.E2E_DISCORD_TOKEN, { timeout: 20000 });
+      } else {
+        await page2.getByText('Step 1: Discord Bot').first().click();
+        await expect(discord2).toBeVisible({ timeout: 10000 });
+        await expect(discord2).toHaveValue(process.env.E2E_DISCORD_TOKEN);
+      }
+
+      // GitHub PAT restored: step 2 is complete; open it and verify the value.
+      await page2.getByText('Step 2: GitHub').first().click();
+      const pat2 = page2.getByPlaceholder(/ghp_/);
+      await expect(pat2).toBeVisible({ timeout: 10000 });
+      await expect(pat2).toHaveValue(process.env.E2E_GITHUB_PAT, { timeout: 20000 });
+
+      console.log('Token persistence e2e test passed: tokens written to Secret Manager and restored in a fresh tab');
+    });
+  });
 });
