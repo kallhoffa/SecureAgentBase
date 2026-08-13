@@ -2677,7 +2677,12 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       firebase_staging_project_id: firebaseStagingData?.projectId || null,
       firebase_production_project_id: firebaseProductionData?.projectId || null,
       // Map #36: references to Secret Manager secrets only — never values.
-      sm_secrets: configData.sm_secrets || null,
+      // Only persist when this save explicitly carries refs (the secret sync
+      // and the direct restore write pass { sm_secrets }). Otherwise keep the
+      // stashed refs — an unrelated later save (GitHub repo, Save button,
+      // auto-save) must never null out the secret refs, or tokens are
+      // silently lost on the next visit ("tokens not saving").
+      sm_secrets: configData.sm_secrets !== undefined ? configData.sm_secrets : smSecretsRef.current,
       updated_at: new Date().toISOString(),
     };
 

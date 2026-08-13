@@ -810,11 +810,16 @@ test.describe('Wizard E2E Regression', () => {
 
       // The shared e2e user's Firestore doc carries completion flags (e.g.
       // discord_bot_added) from previous runs — a step can therefore load
-      // already-complete and collapsed. Open it to reach its inputs.
-      const openStepIfNeeded = async (targetPage, stepTitle, inputLocator) => {
-        if (!(await inputLocator.isVisible().catch(() => false))) {
-          await targetPage.getByText(stepTitle).first().click();
-          await targetPage.waitForTimeout(300);
+      // already-complete and collapsed. It can also flip mid-interaction: the
+      // async config restore sets those flags AFTER first paint, and the
+      // collapse effect then lands a moment after our first click. Retry
+      // clicking until the input stays visible.
+      const openStepIfNeeded = async (targetPage, stepTitle, inputLocator, timeoutMs = 20000) => {
+        const deadline = Date.now() + timeoutMs;
+        while (Date.now() < deadline) {
+          if (await inputLocator.isVisible().catch(() => false)) return;
+          await targetPage.getByText(stepTitle).first().click().catch(() => {});
+          await targetPage.waitForTimeout(400);
         }
       };
 
@@ -863,20 +868,16 @@ test.describe('Wizard E2E Regression', () => {
       await page2.waitForLoadState('domcontentloaded');
       await expect(page2.getByText('Step 1: Discord Bot')).toBeVisible({ timeout: 15000 });
 
-      // Discord token restored: either the step is collapsed (complete) or the
-      // input shows the restored value. Both prove the token is back in state.
+      // Discord token restored: open the step if needed and verify the input
+      // holds the restored value (proves the token is back in state).
       const discord2 = page2.getByPlaceholder(/MTE8/);
-      if (await discord2.isVisible().catch(() => false)) {
-        await expect(discord2).toHaveValue(process.env.E2E_DISCORD_TOKEN, { timeout: 20000 });
-      } else {
-        await page2.getByText('Step 1: Discord Bot').first().click();
-        await expect(discord2).toBeVisible({ timeout: 10000 });
-        await expect(discord2).toHaveValue(process.env.E2E_DISCORD_TOKEN);
-      }
+      await openStepIfNeeded(page2, 'Step 1: Discord Bot', discord2);
+      await expect(discord2).toBeVisible({ timeout: 10000 });
+      await expect(discord2).toHaveValue(process.env.E2E_DISCORD_TOKEN, { timeout: 20000 });
 
       // GitHub PAT restored: step 2 is complete; open it and verify the value.
-      await page2.getByText('Step 2: GitHub').first().click();
       const pat2 = page2.getByPlaceholder(/ghp_/);
+      await openStepIfNeeded(page2, 'Step 2: GitHub', pat2);
       await expect(pat2).toBeVisible({ timeout: 10000 });
       await expect(pat2).toHaveValue(process.env.E2E_GITHUB_PAT, { timeout: 20000 });
 
