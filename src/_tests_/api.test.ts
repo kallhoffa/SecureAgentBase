@@ -7,6 +7,7 @@ import {
   smAddVersion,
   smSetSecretAccess,
   smWriteSecret,
+  smReadSecret,
 } from '../framework/infra-setup/api';
 
 const ok = (status: number, body: unknown) =>
@@ -346,5 +347,45 @@ describe('smWriteSecret', () => {
 
     expect(name).toBe('projects/p-1/secrets/discord-bot-token');
     expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+});
+
+describe('smReadSecret', () => {
+  beforeEach(() => { vi.stubGlobal('fetch', vi.fn()); });
+  afterEach(() => { vi.unstubAllGlobals(); });
+
+  it('decodes the latest version payload and returns the value', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValue(ok(200, {
+      payload: { data: btoa('MTExOTk1NjQzMjIxMjI4MjI2NQ==.s3cr3t.t0k3n') },
+    }));
+    const value = await smReadSecret('tok', 'projects/p-1/secrets/discord-bot-token');
+    expect(value).toBe('MTExOTk1NjQzMjIxMjI4MjI2NQ==.s3cr3t.t0k3n');
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('https://secretmanager.googleapis.com/v1/projects/p-1/secrets/discord-bot-token/versions/latest:access');
+    expect((init as any).method).toBe('GET');
+  });
+
+  it('returns null when the secret does not exist yet', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValue(new Response('{"error":{"code":404,"message":"Secret not found."}}', { status: 404 }));
+    const value = await smReadSecret('tok', 'projects/p-1/secrets/github-pat');
+    expect(value).toBeNull();
+  });
+
+  it('round-trips non-ASCII values (UTF-8 safe decode)', async () => {
+    const fetchMock = vi.mocked(fetch);
+    const original = 'MTAköztié×1';
+    fetchMock.mockResolvedValue(ok(200, {
+      payload: { data: btoa(String.fromCharCode(...new TextEncoder().encode(original))) },
+    }));
+    const value = await smReadSecret('tok', 'projects/p-1/secrets/discord-bot-token');
+    expect(value).toBe(original);
+  });
+
+  it('throws on other errors so callers can surface them', async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValue(new Response('{"error":{"code":403,"message":"Permission denied."}}', { status: 403 }));
+    await expect(smReadSecret('tok', 'projects/p-1/secrets/github-pat')).rejects.toThrow('403');
   });
 });
