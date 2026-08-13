@@ -328,6 +328,13 @@ const base64Encode = (value: string) => {
   return btoa(binary);
 };
 
+const base64Decode = (value: string) => {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder().decode(bytes);
+};
+
 export const smEnsureSecret = async (token: string, projectId: string, secretId: string) => {
   // The API-enable loop activates secretmanager.googleapis.com before writing,
   // but GCP can lag a few seconds past the status poll (same behavior as
@@ -400,6 +407,26 @@ export const smWriteSecret = async (token: string, projectId: string, secretId: 
   await smSetSecretAccess(token, projectId, secretId, members);
   log?.(`Secret ${secretId} stored in Secret Manager (${secretName})`);
   return secretName;
+};
+
+// Read the latest version of a stored secret by its full resource name
+// (e.g. `projects/{project}/secrets/{secretId}`, exactly what smWriteSecret
+// returns and what `sm_secrets` refs hold). Used to repopulate the wizard
+// (Discord token, GitHub PAT) when the operator returns and reconnects.
+// Returns null when the secret doesn't exist yet (never written).
+export const smReadSecret = async (token: string, secretResourceName: string, log?: (msg: string) => void) => {
+  try {
+    const res = await gcpApiFetch(
+      `${SM_BASE}/${secretResourceName}/versions/latest:access`,
+      token
+    );
+    if (!res?.payload?.data) return null;
+    log?.(`Secret read: ${secretResourceName}`);
+    return base64Decode(res.payload.data);
+  } catch (e) {
+    if (e.message?.includes('404') || e.message?.includes('NOT_FOUND')) return null;
+    throw e;
+  }
 };
 
 export const grantPoolAccessToSA = async (token: string, gcpProjectId: string, saEmail: string, poolName: string, repoFullName: string, log: (msg: string) => void) => {

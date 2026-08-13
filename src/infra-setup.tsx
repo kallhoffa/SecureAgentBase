@@ -12,7 +12,7 @@ import {
   gcpApiFetch, githubApiFetch, setGitHubVariable, ensureGitHubRepo,
   createWorkloadIdentityPool, createWorkloadIdentityProvider,
   createDeployServiceAccount, grantFirebaseRoles, grantPoolAccessToSA,
-  smWriteSecret
+  smWriteSecret, smReadSecret
 } from './framework/infra-setup/api';
 import { SCHEMAS } from './framework/infra-setup/schemas';
 import { StepHeader } from './framework/infra-setup/steps';
@@ -255,6 +255,12 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   // flush as the injection effect, so it reads the ref (mutable, set first) —
   // a state closure would still see `false` on the first pass.
   const e2eInjectedRef = useRef(false);
+  // Stashed sm_secrets refs (Secret Manager resource names) from the loaded
+  // config; the Google-connect callback reads them to repopulate tokens.
+  const smSecretsRef = useRef<Record<string, string> | null>(null);
+  // Guard against Secret Manager write churn: only write when the project or
+  // the token values actually changed (each write adds a new secret version).
+  const lastSmWriteRef = useRef('');
 
   const [step3Status, setStep3Status] = useState('idle');
   const [step3Message, setStep3Message] = useState('');
@@ -1850,6 +1856,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           const projects = await fetchGcpProjects(response.access_token);
           expandNextStep(3);
           
+          // Repopulate tokens (Discord, GitHub PAT) from Secret Manager refs
+          // stored in the saved config, so steps 1-2 stay complete with the
+          // keys entered when the operator returns.
+          await restoreSecretsFromSecretManager(response.access_token);
+          
           if (user) {
             try {
               await safeSet(db, INFRA_COLLECTION, user.uid, {
@@ -2295,6 +2306,9 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       }
 
       if (configData) {
+        // Secret Manager refs (resource names, never values) for the token
+        // restore triggered once the operator reconnects Google (step 3).
+        smSecretsRef.current = configData.sm_secrets || null;
         // E2E injection sets projectId from URL params; don't overwrite with a
         // stale Firestore value (e.g. empty string) that would break the VM
         // creation guard (`if (!serviceAccountJson || !projectId)`) and block
@@ -2663,6 +2677,65 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       console.error('Error auto-saving project:', err);
     }
   };
+
+  // Map #36: sync operator-entered secrets (GitHub PAT + Discord bot token)
+  // to Secret Manager as soon as Google is connected and a project is selected
+  // — not only at VM creation — so steps 1-2 survive returning to the wizard.
+  // Firestore/localStorage keep refs only (sm_secrets). Best-effort: a failure
+  // (e.g. operator lacks secretmanager.admin on a brand-new project) is
+  // deferred; VM creation retries the write and aborts loudly if it fails.
+  const syncSecretsToSecretManager = async (token) => {
+    if (e2eInjectedRef.current) return; // e2e injects its own credentials
+    if (!token || !projectId?.trim()) return;
+    if (!githubPat && !discordBotToken) return;
+    const signature = `${projectId}|${githubPat}|${discordBotToken}`;
+    if (lastSmWriteRef.current === signature) return; // avoid version churn
+    lastSmWriteRef.current = signature;
+    try {
+      const refs = await writeSecretsToSecretManager(token, (m) => console.log(m));
+      if (Object.keys(refs).length > 0) {
+        smSecretsRef.current = { ...(smSecretsRef.current || {}), ...refs };
+        await saveConfig({ sm_secrets: smSecretsRef.current }).catch(() => {});
+      }
+    } catch (e) {
+      console.warn('Secret Manager sync deferred (VM creation will retry):', e.message);
+      lastSmWriteRef.current = ''; // allow retry when values change again
+    }
+  };
+
+  // Restore tokens from Secret Manager after the operator reconnects Google,
+  // repopulating steps 1-2 (Discord bot token, GitHub PAT) so they stay
+  // complete with the keys entered. Only fills fields that are still empty —
+  // a token entered fresh in this session is never overwritten. Mirrors the
+  // read-back signature into lastSmWriteRef so the sync effect doesn't
+  // immediately re-write what we just read.
+  const restoreSecretsFromSecretManager = async (token) => {
+    if (e2eInjectedRef.current) return; // e2e injects its own credentials
+    const refs = smSecretsRef.current;
+    if (!refs || (!refs.github_pat && !refs.discord_bot_token)) return;
+    try {
+      const [pat, botToken] = await Promise.all([
+        refs.github_pat ? smReadSecret(token, refs.github_pat).catch(() => null) : Promise.resolve(null),
+        refs.discord_bot_token ? smReadSecret(token, refs.discord_bot_token).catch(() => null) : Promise.resolve(null),
+      ]);
+      if (pat && !githubPat) setGithubPat(pat);
+      if (botToken && !discordBotToken) {
+        setDiscordBotToken(botToken);
+        setDiscordBotTokenInput(botToken);
+        const extractedId = extractClientIdFromToken(botToken);
+        if (extractedId) setDiscordClientId(extractedId);
+      }
+      lastSmWriteRef.current = `${projectId}|${pat || githubPat}|${botToken || discordBotToken}`;
+    } catch (e) {
+      console.warn('Failed to restore secrets from Secret Manager:', e.message);
+    }
+  };
+
+  // Trigger the sync whenever Google connects or tokens/project change.
+  useEffect(() => {
+    if (e2eInjectedRef.current) return;
+    syncSecretsToSecretManager(gcpAccessToken);
+  }, [gcpAccessToken, projectId, githubPat, discordBotToken, gcpConsentEmail, godSaEmail, user]);
 
   const handleSaveConfig = async () => {
     if (!projectId.trim()) return;
