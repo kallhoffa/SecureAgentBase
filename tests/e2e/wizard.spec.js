@@ -776,7 +776,7 @@ test.describe('Wizard E2E Regression', () => {
     });
 
     test('tokens persist to Secret Manager and restore after reload', async ({ page, context }) => {
-      test.setTimeout(180000);
+      test.setTimeout(240000);
 
       // Clean slate: delete any secrets written by previous runs so this test
       // proves a FRESH write + restore rather than a hit on last run's values.
@@ -884,8 +884,14 @@ test.describe('Wizard E2E Regression', () => {
         throw err;
       }
 
-      // ============ Tab 2: fresh tab (empty sessionStorage) must self-restore ============
-      const page2 = await context.newPage();
+      // ============ Tab 2: fresh context (empty storage) must self-restore ============
+      // A new PAGE in the same context still shares cookies/IndexedDB — the
+      // Firebase auth session would make /login redirect instantly (no email
+      // form), and the tokens in sessionStorage would mask the Secret Manager
+      // path. A fresh CONTEXT is truly empty, so the restore can only come
+      // from Secret Manager refs in the saved config.
+      const ctx2 = await context.browser().newContext();
+      const page2 = await ctx2.newPage();
       await injectTokenOnly(page2);
       await signIn(page2);
       await page2.goto(`${TEST_URL}/infra-setup`);
@@ -904,8 +910,9 @@ test.describe('Wizard E2E Regression', () => {
       await openStepIfNeeded(page2, 'Step 2: GitHub', pat2);
       await expect(pat2).toBeVisible({ timeout: 10000 });
       await expect(pat2).toHaveValue(process.env.E2E_GITHUB_PAT, { timeout: 20000 });
+      await ctx2.close();
 
-      console.log('Token persistence e2e test passed: tokens written to Secret Manager and restored in a fresh tab');
+      console.log('Token persistence e2e test passed: tokens written to Secret Manager and restored in a fresh context');
     });
   });
 });
