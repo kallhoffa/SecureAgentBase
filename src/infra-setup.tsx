@@ -2243,7 +2243,15 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       }
     }
 
-    if (e2eSA || e2eToken || e2eFirebaseStaging || e2eFirebaseProd || e2eGithubPat || e2eDiscordToken || e2eDiscordGuild || e2eDiscordBotAdded || e2eBillingEnabled) {
+    // Capability-only injections (GCP access token, project id, billing flag)
+    // do NOT flip the e2e flag: they only stand in for a connected Google
+    // account, so the REAL sync/restore/config-restore paths still run against
+    // live credentials (token-persistence regression test). Only actual
+    // credential injections (SA key, Firebase configs, PAT, Discord
+    // token/guild/bot-added) mark the session as e2e-injected and skip those
+    // paths.
+    const hasE2eCredentials = !!(e2eSA || e2eFirebaseStaging || e2eFirebaseProd || e2eGithubPat || e2eDiscordToken || e2eDiscordGuild || e2eDiscordBotAdded);
+    if (hasE2eCredentials) {
       console.log('E2E mode active: credentials injected from URL params');
       setE2eInjected(true);
       e2eInjectedRef.current = true;
@@ -2447,6 +2455,13 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       // the manual connect button when the browser has no Google session.
       if (!e2eInjectedRef.current && configData?.gcp_project_id) {
         void silentGcpTokenRefresh();
+      }
+
+      // If a GCP token is already held (e2e token injection, or a token that
+      // arrived while the config was loading), restore Secret Manager tokens
+      // right now — the effect below covers tokens that arrive later.
+      if (!e2eInjectedRef.current && gcpAccessToken && smSecretsRef.current) {
+        await restoreSecretsFromSecretManager(gcpAccessToken);
       }
 
       setLoading(false);
@@ -2788,6 +2803,19 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     if (e2eInjectedRef.current) return;
     syncSecretsToSecretManager(gcpAccessToken);
   }, [gcpAccessToken, projectId, githubPat, discordBotToken, gcpConsentEmail, godSaEmail, user]);
+
+  // Restore tokens from Secret Manager whenever we hold a GCP token AND the
+  // saved config carries sm_secrets refs — covers the manual connect callback,
+  // the silent refresh, and token injection (e2e) alike. Idempotent:
+  // restoreSecretsFromSecretManager only fills fields that are still empty.
+  // checkingCompletion re-fires the effect once loadInfraConfig has populated
+  // smSecretsRef (otherwise a projectId/token that matches the restored config
+  // would bail out of the re-render and skip the restore).
+  useEffect(() => {
+    if (e2eInjectedRef.current) return;
+    if (!gcpAccessToken) return;
+    restoreSecretsFromSecretManager(gcpAccessToken);
+  }, [gcpAccessToken, githubPat, discordBotToken, projectId, checkingCompletion]);
 
   const handleSaveConfig = async () => {
     if (!projectId.trim()) return;
