@@ -802,10 +802,14 @@ test.describe('Wizard E2E Regression', () => {
       };
 
       const injectTokenOnly = async (targetPage) => {
-        await targetPage.addInitScript((token, projectId) => {
+        // addInitScript accepts exactly ONE arg — pass an array so the
+        // projectId parameter doesn't arrive as `undefined` (which setItem
+        // would store as the string 'undefined', making every GCP call hit
+        // `projects/undefined` → 403 → sync deferred).
+        await targetPage.addInitScript(([token, projectId]) => {
           sessionStorage.setItem('__e2e_token', token);
           sessionStorage.setItem('__e2e_project_id', projectId);
-        }, Buffer.from(E2E_GCP_TOKEN).toString('base64'), E2E_GCP_PROJECT_ID);
+        }, [Buffer.from(E2E_GCP_TOKEN).toString('base64'), E2E_GCP_PROJECT_ID]);
       };
 
       // The shared e2e user's Firestore doc carries completion flags (e.g.
