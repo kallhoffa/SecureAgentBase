@@ -808,6 +808,16 @@ test.describe('Wizard E2E Regression', () => {
         }, Buffer.from(E2E_GCP_TOKEN).toString('base64'), E2E_GCP_PROJECT_ID);
       };
 
+      // The shared e2e user's Firestore doc carries completion flags (e.g.
+      // discord_bot_added) from previous runs — a step can therefore load
+      // already-complete and collapsed. Open it to reach its inputs.
+      const openStepIfNeeded = async (targetPage, stepTitle, inputLocator) => {
+        if (!(await inputLocator.isVisible().catch(() => false))) {
+          await targetPage.getByText(stepTitle).first().click();
+          await targetPage.waitForTimeout(300);
+        }
+      };
+
       // ============ Tab 1: enter tokens, app must sync them to Secret Manager ============
       await signIn(page);
       await injectTokenOnly(page);
@@ -817,6 +827,7 @@ test.describe('Wizard E2E Regression', () => {
 
       // Step 1: Discord bot token
       const discordInput = page.getByPlaceholder(/MTE8/);
+      await openStepIfNeeded(page, 'Step 1: Discord Bot', discordInput);
       await expect(discordInput).toBeVisible({ timeout: 10000 });
       await discordInput.fill(process.env.E2E_DISCORD_TOKEN);
       await page.getByRole('button', { name: 'Save Discord Bot' }).click();
@@ -828,6 +839,7 @@ test.describe('Wizard E2E Regression', () => {
 
       // Step 2: GitHub PAT (validated against the real GitHub API)
       const patInput = page.getByPlaceholder(/ghp_/);
+      await openStepIfNeeded(page, 'Step 2: GitHub', patInput);
       await expect(patInput).toBeVisible({ timeout: 10000 });
       await patInput.fill(process.env.E2E_GITHUB_PAT);
       await page.getByRole('button', { name: 'Save GitHub Configuration' }).click();
