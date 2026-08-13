@@ -328,14 +328,17 @@ async function stepGitHub(auth: AuthClient, config: any, args: InitArgs): Promis
   config.oidc = oidcData;
 
   // Upload GitHub variables (best-effort — variables may already be set from prior run)
+  // NOTE: VITE_APP_MODE and VITE_APP_NAME are intentionally NOT set here.
+  // Copied apps run in template mode (the default) — which is where the posts
+  // feature lives — and display "Your App" until the user brands it (or sets
+  // the name via the VM's `vite_app_name` metadata). The SecureAgentBase
+  // product/template repo itself (app mode) blocks posts.
   const varConfigs: [string, string | undefined][] = [
-    ['VITE_APP_NAME', 'SecureAgentBase'],
     ['GCP_WIF_PROVIDER', oidcData.wifPoolName],
     ['GCP_SA_STAGING', oidcData.saStagingEmail],
     ['GCP_SA_PRODUCTION', oidcData.saProductionEmail],
     ['GCP_CLIENT_ID_STAGING', ''],
     ['GCP_CLIENT_ID_PRODUCTION', ''],
-    ['VITE_APP_MODE', 'true'],
   ];
 
   for (const [name, value] of varConfigs) {

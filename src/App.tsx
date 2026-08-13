@@ -84,18 +84,20 @@ const App: React.FC<AppProps> = ({ db }) => {
             <Route path="/" element={<HomePage />} />
             {isAppMode ? (
               <>
-                {/* Posts are an app-mode (SecureAgentBase product) feature. */}
-                <Route path="/post" element={<Post db={db}/>} />
-                <Route path="/compose-post" element={<RequireAuth><ComposePost db={db} /></RequireAuth>} />
-                <Route path="/compose-reply" element={<RequireAuth><ComposeReply db={db} /></RequireAuth>} />
-              </>
-            ) : (
-              <>
-                {/* Template apps must not allow creating posts — redirect any
-                    direct hits on the posts routes back to the dashboard. */}
+                {/* The template repo (this deployment) must not accept user
+                    posts. Posts are a feature of the apps users copy from the
+                    template — so they live in template mode instead. */}
                 <Route path="/post" element={<Navigate to="/" replace />} />
                 <Route path="/compose-post" element={<Navigate to="/" replace />} />
                 <Route path="/compose-reply" element={<Navigate to="/" replace />} />
+              </>
+            ) : (
+              <>
+                {/* Copied apps (template mode) get the posts feature:
+                    create a post, view it, reply. */}
+                <Route path="/post" element={<Post db={db}/>} />
+                <Route path="/compose-post" element={<RequireAuth><ComposePost db={db} /></RequireAuth>} />
+                <Route path="/compose-reply" element={<RequireAuth><ComposeReply db={db} /></RequireAuth>} />
               </>
             )}
             <Route path="/about" element={<About/>} />
