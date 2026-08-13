@@ -776,7 +776,7 @@ test.describe('Wizard E2E Regression', () => {
     });
 
     test('tokens persist to Secret Manager and restore after reload', async ({ page, context }) => {
-      test.setTimeout(240000);
+      test.setTimeout(300000);
 
       // Clean slate: delete any secrets written by previous runs so this test
       // proves a FRESH write + restore rather than a hit on last run's values.
@@ -828,6 +828,7 @@ test.describe('Wizard E2E Regression', () => {
       };
 
       // ============ Tab 1: enter tokens, app must sync them to Secret Manager ============
+      console.log('[persist] tab1: signIn + inject + goto');
       // Capture the app's console so a deferred sync (e.g. a GCP 403 on
       // secretmanager) surfaces its real error message in the CI log.
       const browserLogs = [];
@@ -863,12 +864,14 @@ test.describe('Wizard E2E Regression', () => {
       try {
         await expect.poll(
           () => smRead('github-pat'),
-          { timeout: 60000, message: 'github-pat should be written to Secret Manager' }
+          { timeout: 30000, message: 'github-pat should be written to Secret Manager' }
         ).toBe(process.env.E2E_GITHUB_PAT);
+        console.log('[persist] tab1: github-pat poll passed');
         await expect.poll(
           () => smRead('discord-bot-token'),
-          { timeout: 60000, message: 'discord-bot-token should be written to Secret Manager' }
+          { timeout: 30000, message: 'discord-bot-token should be written to Secret Manager' }
         ).toBe(process.env.E2E_DISCORD_TOKEN);
+        console.log('[persist] tab1: discord-bot-token poll passed');
       } catch (err) {
         const storageState = await page.evaluate(() => ({
           token: sessionStorage.getItem('__e2e_token') ? 'set' : 'missing',
@@ -890,26 +893,31 @@ test.describe('Wizard E2E Regression', () => {
       // form), and the tokens in sessionStorage would mask the Secret Manager
       // path. A fresh CONTEXT is truly empty, so the restore can only come
       // from Secret Manager refs in the saved config.
+      console.log('[persist] tab2: fresh context signIn');
       const ctx2 = await context.browser().newContext();
       const page2 = await ctx2.newPage();
       await injectTokenOnly(page2);
       await signIn(page2);
+      console.log('[persist] tab2: signed in, navigating to wizard');
       await page2.goto(`${TEST_URL}/infra-setup`);
       await page2.waitForLoadState('domcontentloaded');
       await expect(page2.getByText('Step 1: Discord Bot')).toBeVisible({ timeout: 15000 });
+      console.log('[persist] tab2: wizard loaded, opening step 1');
 
       // Discord token restored: open the step if needed and verify the input
       // holds the restored value (proves the token is back in state).
       const discord2 = page2.getByPlaceholder(/MTE4/);
       await openStepIfNeeded(page2, 'Step 1: Discord Bot', discord2);
       await expect(discord2).toBeVisible({ timeout: 10000 });
-      await expect(discord2).toHaveValue(process.env.E2E_DISCORD_TOKEN, { timeout: 20000 });
+      await expect(discord2).toHaveValue(process.env.E2E_DISCORD_TOKEN, { timeout: 15000 });
+      console.log('[persist] tab2: Discord token restored');
 
       // GitHub PAT restored: step 2 is complete; open it and verify the value.
       const pat2 = page2.getByPlaceholder(/ghp_/);
       await openStepIfNeeded(page2, 'Step 2: GitHub', pat2);
       await expect(pat2).toBeVisible({ timeout: 10000 });
-      await expect(pat2).toHaveValue(process.env.E2E_GITHUB_PAT, { timeout: 20000 });
+      await expect(pat2).toHaveValue(process.env.E2E_GITHUB_PAT, { timeout: 15000 });
+      console.log('[persist] tab2: GitHub PAT restored');
       await ctx2.close();
 
       console.log('Token persistence e2e test passed: tokens written to Secret Manager and restored in a fresh context');
