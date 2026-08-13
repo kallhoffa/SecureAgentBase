@@ -1818,63 +1818,107 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     return [];
   };
 
-  const initGoogleOAuth = (): { open(): void; requestAccessToken(): void } | null => {
+  const GCP_OAUTH_SCOPES = 'openid email https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/cloud-billing.readonly';
+
+  // Shared handler for a GCP OAuth token response (manual consent flow and the
+  // silent refresh). Stores the token, refreshes the project list, and
+  // repopulates Discord/GitHub tokens from Secret Manager so steps 1-2 stay
+  // complete with the keys entered.
+  const handleGcpOAuthResponse = async (response, { silent = false } = {}) => {
+    if (response.error) {
+      if (silent) {
+        // Silent refresh failed (e.g. no prior consent or expired Google
+        // session) — the manual connect button on step 3 remains the path.
+        console.info('Silent Google token refresh unavailable:', response.error);
+        return;
+      }
+      console.error('Google OAuth error:', response.error);
+      setError('Failed to connect to Google');
+      return;
+    }
+    const grantedScopes = response.scope || '';
+    console.log('GCP OAuth granted scopes:', grantedScopes);
+    if (!grantedScopes.includes('cloud-platform') && !grantedScopes.includes('devstorage')) {
+      console.warn('cloud-platform scope not granted — token may be restricted');
+      if (!silent) {
+        setError('Google OAuth did not grant cloud-platform access. Try reconnecting and selecting an account with GCP billing access.');
+      }
+    }
+    // The consent account's email (granted via openid email) is the
+    // account we grant IAM roles to — NOT the app-auth account (which
+    // may be a different Google account or absent entirely).
+    const consentEmail = (response as any).email || '';
+    setGcpConsentEmail(consentEmail);
+    setGcpEmailMismatch(!!(user?.email && consentEmail && user.email !== consentEmail));
+    setGcpAccessToken(response.access_token);
+    setGcpTokenExpiry(Date.now() + (((response as any).expires_in || 3600) - 60) * 1000);
+    setGcpConnected(true);
+    setGcpConfigLost(false);
+
+    const projects = await fetchGcpProjects(response.access_token);
+    if (!silent) expandNextStep(3);
+
+    // Repopulate tokens (Discord, GitHub PAT) from Secret Manager refs
+    // stored in the saved config, so steps 1-2 stay complete with the
+    // keys entered when the operator returns.
+    await restoreSecretsFromSecretManager(response.access_token);
+
+    if (user) {
+      try {
+        await safeSet(db, INFRA_COLLECTION, user.uid, {
+          gcp_connected: true,
+          gcp_token_expiry: new Date(Date.now() + 3600 * 1000).toISOString(),
+          updated_at: new Date().toISOString(),
+        }, user.uid, { allowFields: ['gcp_connected', 'gcp_token_expiry', 'updated_at'], merge: true });
+      } catch (err) {
+        console.error('Error auto-saving GCP connection state:', err);
+      }
+    }
+  };
+
+  const getGoogleOAuthClient = (prompt) => {
     const clientId = import.meta.env.VITE_GCP_CLIENT_ID;
     if (!clientId) {
       setError('GCP Client ID not configured. Add VITE_GCP_CLIENT_ID to .env.local');
       return null;
     }
-
     const googleClient = (window as unknown as { google?: { accounts: { oauth2: { initTokenClient: (config: { client_id: string; scope: string; prompt?: string; callback: (response: { error?: string; access_token?: string; scope?: string }) => void }) => { open(): void; requestAccessToken(): void } } } } }).google;
     if (!googleClient) return null;
     return googleClient.accounts.oauth2.initTokenClient({
       client_id: clientId,
-      scope: 'openid email https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/cloud-billing.readonly',
-      prompt: 'consent select_account',
-      callback: async (response) => {
-        if (response.error) {
-          console.error('Google OAuth error:', response.error);
-          setError('Failed to connect to Google');
-        } else {
-          const grantedScopes = response.scope || '';
-          console.log('GCP OAuth granted scopes:', grantedScopes);
-          if (!grantedScopes.includes('cloud-platform') && !grantedScopes.includes('devstorage')) {
-            console.warn('cloud-platform scope not granted — token may be restricted');
-            setError('Google OAuth did not grant cloud-platform access. Try reconnecting and selecting an account with GCP billing access.');
-          }
-          // The consent account's email (granted via openid email) is the
-          // account we grant IAM roles to — NOT the app-auth account (which
-          // may be a different Google account or absent entirely).
-          const consentEmail = (response as any).email || '';
-          setGcpConsentEmail(consentEmail);
-          setGcpEmailMismatch(!!(user?.email && consentEmail && user.email !== consentEmail));
-          setGcpAccessToken(response.access_token);
-          setGcpTokenExpiry(Date.now() + (((response as any).expires_in || 3600) - 60) * 1000);
-          setGcpConnected(true);
-          setGcpConfigLost(false);
-          
-          const projects = await fetchGcpProjects(response.access_token);
-          expandNextStep(3);
-          
-          // Repopulate tokens (Discord, GitHub PAT) from Secret Manager refs
-          // stored in the saved config, so steps 1-2 stay complete with the
-          // keys entered when the operator returns.
-          await restoreSecretsFromSecretManager(response.access_token);
-          
-          if (user) {
-            try {
-              await safeSet(db, INFRA_COLLECTION, user.uid, {
-                gcp_connected: true,
-                gcp_token_expiry: new Date(Date.now() + 3600 * 1000).toISOString(),
-                updated_at: new Date().toISOString(),
-              }, user.uid, { allowFields: ['gcp_connected', 'gcp_token_expiry', 'updated_at'], merge: true });
-            } catch (err) {
-              console.error('Error auto-saving GCP connection state:', err);
-            }
-          }
-        }
-      },
+      scope: GCP_OAUTH_SCOPES,
+      prompt,
+      callback: (response) => { void handleGcpOAuthResponse(response); },
     });
+  };
+
+  const initGoogleOAuth = (): { open(): void; requestAccessToken(): void } | null => {
+    return getGoogleOAuthClient('consent select_account');
+  };
+
+  // Try to refresh the GCP token silently (prior consent + active Google
+  // session in the browser) so a returning operator who is signed in via
+  // step 0 gets their config AND tokens restored without re-consenting.
+  // Best-effort: on interaction_required it falls back to the manual
+  // "Connect Google Cloud Account" button (step 3).
+  const silentGcpTokenRefresh = async () => {
+    if (e2eInjectedRef.current) return;
+    if (gcpAccessToken) return;
+    const clientId = import.meta.env.VITE_GCP_CLIENT_ID;
+    if (!clientId) return;
+    // The gsi client script is loaded async in index.html — wait for it.
+    for (let i = 0; i < 25; i++) {
+      const google = (window as unknown as { google?: { accounts?: { oauth2?: unknown } } }).google;
+      if (google?.accounts?.oauth2) break;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    const client = getGoogleOAuthClient('');
+    if (!client) return;
+    try {
+      client.requestAccessToken();
+    } catch (e) {
+      console.info('Silent Google token refresh failed:', e);
+    }
   };
 
   useEffect(() => {
@@ -2395,6 +2439,14 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         if (configData.gcp_project_id && !configData.gcp_access_token) {
           setGcpConfigLost(true);
         }
+      }
+
+      // Signed in via step 0 but no GCP token yet: try a silent Google token
+      // refresh (prior consent) so the saved config AND Secret Manager tokens
+      // restore without the operator re-consenting on step 3. Falls back to
+      // the manual connect button when the browser has no Google session.
+      if (!e2eInjectedRef.current && configData?.gcp_project_id) {
+        void silentGcpTokenRefresh();
       }
 
       setLoading(false);
