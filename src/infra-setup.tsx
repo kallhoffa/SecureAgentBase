@@ -17,6 +17,7 @@ import {
 import { SCHEMAS } from './framework/infra-setup/schemas';
 import { StepHeader } from './framework/infra-setup/steps';
 import { useWizardProgress } from './framework/infra-setup/useWizardProgress';
+import { SECRET_KEYS, persistOperatorSecret, readOperatorSecret, clearOperatorSecrets } from './framework/infra-setup/secret-storage';
 
 // URL builders. User-controlled values always flow through URLSearchParams or
 // encodeURIComponent so they are percent-encoded, never interpolated raw into
@@ -67,13 +68,10 @@ const INFRA_COLLECTION = 'infra_configs';
 const PROJECTS_COLLECTION = 'projects';
 const LOCALSTORAGE_KEY = 'infra_config_pending';
 const FORM_PROGRESS_KEY = 'infra_form_progress';
-// Operator-entered secrets, kept in sessionStorage (NOT Firestore — GHSA-x49w)
-// so a same-tab reload restores them; cleared when the tab closes.
-const SESSION_KEYS = {
-  discordBotToken: 'wz_discord_bot_token',
-  githubPat: 'wz_github_pat',
-  serviceAccountJson: 'wz_sa_key',
-};
+// Operator-entered secrets: never written to Firestore (GHSA-x49w). Discord
+// bot token + GitHub PAT persist to sessionStorage AND localStorage so a fresh
+// tab restores steps 1-2 without a GCP token; the SA key is
+// sessionStorage-only. See secret-storage.js.
 
 
 
@@ -2404,25 +2402,26 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         if (configData.gcp_sa_production) setGcpSaProductionEmail(configData.gcp_sa_production);
         if (configData.github_repo) setGithubRepoName(configData.github_repo);
         
-        // Restore operator-entered secrets from sessionStorage (not Firestore):
-        // survives a same-tab reload, cleared when the tab closes. The GCP
-        // access token is excluded — it expires in ~1h regardless.
+        // Restore operator-entered secrets (not Firestore): sessionStorage
+        // covers a same-tab reload; localStorage (tokens only, not the SA key)
+        // covers a fresh tab — so steps 1-2 come back without a GCP token. The
+        // GCP access token is excluded — it expires in ~1h regardless.
         if (!e2eInjectedRef.current) {
           try {
-            const savedDiscordToken = sessionStorage.getItem(SESSION_KEYS.discordBotToken);
+            const savedDiscordToken = readOperatorSecret(SECRET_KEYS.discordBotToken);
             if (savedDiscordToken) {
               setDiscordBotToken(savedDiscordToken);
               setDiscordBotTokenInput(savedDiscordToken);
               const extractedId = extractClientIdFromToken(savedDiscordToken);
               if (extractedId) setDiscordClientId(extractedId);
             }
-          } catch (e) { console.warn('Failed to restore discord bot token from sessionStorage:', e); }
+          } catch (e) { console.warn('Failed to restore discord bot token:', e); }
           try {
-            const savedPat = sessionStorage.getItem(SESSION_KEYS.githubPat);
+            const savedPat = readOperatorSecret(SECRET_KEYS.githubPat);
             if (savedPat) setGithubPat(savedPat);
-          } catch (e) { console.warn('Failed to restore github PAT from sessionStorage:', e); }
+          } catch (e) { console.warn('Failed to restore github PAT:', e); }
           try {
-            const savedSa = sessionStorage.getItem(SESSION_KEYS.serviceAccountJson);
+            const savedSa = sessionStorage.getItem(SECRET_KEYS.serviceAccountJson);
             if (savedSa) {
               const saJson = JSON.parse(savedSa);
               if (saJson?.private_key) {
@@ -2477,22 +2476,20 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   // access token is excluded — it expires in ~1h so restoring is pointless.
   useEffect(() => {
     try {
-      if (discordBotToken) sessionStorage.setItem(SESSION_KEYS.discordBotToken, discordBotToken);
-      else sessionStorage.removeItem(SESSION_KEYS.discordBotToken);
+      persistOperatorSecret(SECRET_KEYS.discordBotToken, discordBotToken);
     } catch (e) { console.warn('Failed to persist discord bot token:', e); }
-  }, [discordBotToken, SESSION_KEYS]);
+  }, [discordBotToken]);
   useEffect(() => {
     try {
-      if (githubPat) sessionStorage.setItem(SESSION_KEYS.githubPat, githubPat);
-      else sessionStorage.removeItem(SESSION_KEYS.githubPat);
+      persistOperatorSecret(SECRET_KEYS.githubPat, githubPat);
     } catch (e) { console.warn('Failed to persist github PAT:', e); }
-  }, [githubPat, SESSION_KEYS]);
+  }, [githubPat]);
   useEffect(() => {
     try {
-      if (serviceAccountJson?.private_key) sessionStorage.setItem(SESSION_KEYS.serviceAccountJson, JSON.stringify(serviceAccountJson));
-      else sessionStorage.removeItem(SESSION_KEYS.serviceAccountJson);
+      persistOperatorSecret(SECRET_KEYS.serviceAccountJson,
+        serviceAccountJson?.private_key ? JSON.stringify(serviceAccountJson) : null);
     } catch (e) { console.warn('Failed to persist service account:', e); }
-  }, [serviceAccountJson, SESSION_KEYS]);
+  }, [serviceAccountJson]);
 
   useEffect(() => {
     if (checkingCompletion) return;
@@ -2930,10 +2927,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       setFirebaseConfigProduction('');
       setFirebaseStagingData({});
       setFirebaseProductionData({});
-      // Wipe session-scoped secrets too, so a disconnect truly clears them
+      // Wipe operator secrets (sessionStorage + localStorage) so a
+      // disconnect truly clears them
       try {
-        Object.values(SESSION_KEYS).forEach((key) => sessionStorage.removeItem(key));
-      } catch (e) { console.warn('Failed to clear sessionStorage secrets:', e); }
+        clearOperatorSecrets();
+      } catch (e) { console.warn('Failed to clear stored secrets:', e); }
       
       setSelectedProjectId('');
       setProjectName('');

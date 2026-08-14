@@ -67,6 +67,26 @@ check_disk
 sudo apt-get update -y > /dev/null 2>&1 || true
 sudo apt-get install -y curl git jq apt-transport-https ca-certificates gnupg2 ufw unzip > /dev/null 2>&1 || true
 
+# Swap file — small VMs (e.g. e2-small, 3.8 GB RAM) ship with NO swap, so a
+# memory spike (npm installs, vitest, vite builds, opencode) can hard-freeze
+# the box: the OOM killer cannot make progress without swap and the kernel
+# stalls with no console output. Create a 2G swapfile once; it persists across
+# reboots via /etc/fstab, and a re-run of this script (every boot) is a no-op.
+if [ ! -f /swapfile ]; then
+  echo "Creating 2G swapfile..."
+  sudo fallocate -l 2G /swapfile 2>/dev/null \
+    || sudo dd if=/dev/zero of=/swapfile bs=1M count=2048 2>/dev/null \
+    || true
+  sudo chmod 600 /swapfile
+  sudo mkswap /swapfile > /dev/null 2>&1 || true
+  sudo swapon /swapfile > /dev/null 2>&1 || true
+  grep -q '^/swapfile' /etc/fstab 2>/dev/null \
+    || echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab > /dev/null
+fi
+# Idempotent: if the file pre-existed but swap is currently off, turn it on.
+grep -q '^/swapfile' /proc/swaps 2>/dev/null || sudo swapon /swapfile > /dev/null 2>&1 || true
+grep -q '^/swapfile' /proc/swaps 2>/dev/null && echo "Swap enabled: $(grep '^/swapfile' /proc/swaps)"
+
 # Upgrade git to >= 2.32 from the git-core PPA. The default Ubuntu 20.04/22.04
 # repos ship git <= 2.30, which lacks `git add --sparse` — the opencode/kimaki
 # agent snapshot flow fails every session with exit 129: "unknown option 'sparse'".

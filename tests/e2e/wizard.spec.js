@@ -133,6 +133,37 @@ const navigateWithE2E = async (page, extraParams = {}) => {
   await expect(page.getByText('Step 1: Discord Bot')).toBeVisible({ timeout: 15000 });
 };
 
+// Open a wizard step by clicking its header, retrying until the given input is
+// visible (hard deadline + attempt cap so the loop always terminates).
+//
+// Why retry: the shared e2e user's Firestore doc carries completion flags
+// (e.g. discord_bot_added) from previous runs — a step can therefore load
+// already-complete and collapsed. It can also flip mid-interaction: the async
+// config restore sets those flags AFTER first paint, and the collapse effect
+// then lands a moment after our first click.
+//
+// Opens via a direct DOM click (no Playwright actionability waiting, so it
+// cannot hang on animations/overlays/navigations). A failure leaves a precise
+// expect(...).toBeVisible timeout with a DOM snapshot instead.
+const openStepIfNeeded = async (targetPage, stepTitle, inputLocator, timeoutMs = 15000) => {
+  const deadline = Date.now() + timeoutMs;
+  let attempts = 0;
+  while (Date.now() < deadline && attempts < 30) {
+    attempts += 1;
+    if (await inputLocator.isVisible().catch(() => false)) return true;
+    const clicked = await targetPage.evaluate((title) => {
+      const header = [...document.querySelectorAll('button')]
+        .find((b) => b.textContent.trim().startsWith(title) && b.offsetParent !== null);
+      if (!header) return false;
+      header.click();
+      return true;
+    }, stepTitle).catch(() => false);
+    if (!clicked) return false;
+    await targetPage.waitForTimeout(300);
+  }
+  return false;
+};
+
 test.describe('Wizard E2E Regression', () => {
 
   // ---------- Signed-out access tests (app mode only) ----------
@@ -812,34 +843,8 @@ test.describe('Wizard E2E Regression', () => {
         }, [Buffer.from(E2E_GCP_TOKEN).toString('base64'), E2E_GCP_PROJECT_ID]);
       };
 
-      // The shared e2e user's Firestore doc carries completion flags (e.g.
-      // discord_bot_added) from previous runs — a step can therefore load
-      // already-complete and collapsed. It can also flip mid-interaction: the
-      // async config restore sets those flags AFTER first paint, and the
-      // collapse effect then lands a moment after our first click. Retry
-      // opening until the input stays visible.
-      // Opens via a direct DOM click (no Playwright actionability waiting, so
-      // it cannot hang on animations/overlays/navigations) with a hard cap, so
-      // the loop always terminates; a failure leaves a precise
-      // expect(...).toBeVisible timeout with a DOM snapshot instead.
-      const openStepIfNeeded = async (targetPage, stepTitle, inputLocator, timeoutMs = 15000) => {
-        const deadline = Date.now() + timeoutMs;
-        let attempts = 0;
-        while (Date.now() < deadline && attempts < 30) {
-          attempts += 1;
-          if (await inputLocator.isVisible().catch(() => false)) return true;
-          const clicked = await targetPage.evaluate((title) => {
-            const header = [...document.querySelectorAll('button')]
-              .find((b) => b.textContent.trim().startsWith(title) && b.offsetParent !== null);
-            if (!header) return false;
-            header.click();
-            return true;
-          }, stepTitle).catch(() => false);
-          if (!clicked) return false;
-          await targetPage.waitForTimeout(300);
-        }
-        return false;
-      };
+      // openStepIfNeeded is module-level (shared with the localStorage
+      // fresh-tab test). See its docstring above the helper.
 
       // ============ Tab 1: enter tokens, app must sync them to Secret Manager ============
       console.log('[persist] tab1: signIn + inject + goto');
@@ -970,6 +975,143 @@ test.describe('Wizard E2E Regression', () => {
       }
 
       console.log('Token persistence e2e test passed: tokens written to Secret Manager and restored in a fresh context');
+    });
+  });
+
+  // ---------- Token persistence across a FRESH TAB without step 3 ----------
+  // Regression for "I don't want to do step 3 — finish step 2, open a fresh
+  // tab, and steps 1-2 come back": the Discord/GitHub tokens are written to
+  // localStorage (shared across tabs of the same origin) as well as
+  // sessionStorage, so a brand-new page in the SAME context restores them with
+  // EMPTY sessionStorage and NO GCP token (no Secret Manager, no step 3).
+  test.describe('Token Persistence (Fresh Tab, no GCP token)', () => {
+    test.beforeEach(async () => {
+      test.skip(process.env.E2E_APP_MODE !== 'true', 'Wizard route only available in app mode');
+      test.skip(!process.env.E2E_GITHUB_PAT || !process.env.E2E_DISCORD_TOKEN,
+        'E2E_GITHUB_PAT and E2E_DISCORD_TOKEN required');
+    });
+
+    test('steps 1-2 restore from localStorage in a fresh tab without a GCP token', async ({ page, context }) => {
+      test.setTimeout(300000);
+
+      // ============ Tab 1: enter tokens — NO GCP token injected ============
+      // Intentionally skips injectTokenOnly/navigateWithE2E: this test proves
+      // the no-step-3 path, so the app must never see a GCP access token.
+      console.log('[persist-local] tab1: signIn (no GCP token) + goto');
+      const browserLogs = [];
+      page.on('console', (msg) => browserLogs.push(`[${msg.type()}] ${msg.text()}`));
+      page.on('pageerror', (err) => browserLogs.push(`[pageerror] ${err.message}`));
+      await signIn(page);
+      await page.goto(`${TEST_URL}/infra-setup`);
+      await page.waitForLoadState('domcontentloaded');
+      await expect(page.getByText('Step 1: Discord Bot')).toBeVisible({ timeout: 15000 });
+
+      // Step 1: Discord bot token
+      const discordInput = page.getByPlaceholder(/MTE4/);
+      await openStepIfNeeded(page, 'Step 1: Discord Bot', discordInput);
+      await expect(discordInput).toBeVisible({ timeout: 10000 });
+      await discordInput.fill(process.env.E2E_DISCORD_TOKEN);
+      await page.getByRole('button', { name: 'Save Discord Bot' }).click();
+      const botAddedBtn = page.getByRole('button', { name: /Bot Added/ });
+      await expect(botAddedBtn).toBeVisible({ timeout: 10000 });
+      await botAddedBtn.click();
+      await expect(page.getByText('Step 2: GitHub')).toBeVisible({ timeout: 10000 });
+
+      // Step 2: GitHub PAT
+      const patInput = page.getByPlaceholder(/ghp_/);
+      await openStepIfNeeded(page, 'Step 2: GitHub', patInput);
+      await expect(patInput).toBeVisible({ timeout: 10000 });
+      await patInput.fill(process.env.E2E_GITHUB_PAT);
+      await page.getByRole('button', { name: 'Save GitHub Configuration' }).click();
+
+      // The fresh tab restores from localStorage — verify the values landed
+      // there (the persistence effects write sessionStorage AND localStorage).
+      try {
+        await expect.poll(
+          () => page.evaluate(() => localStorage.getItem('wz_discord_bot_token')),
+          { timeout: 15000, message: 'discord token should be in localStorage' }
+        ).toBe(process.env.E2E_DISCORD_TOKEN);
+        console.log('[persist-local] tab1: discord token in localStorage');
+        await expect.poll(
+          () => page.evaluate(() => localStorage.getItem('wz_github_pat')),
+          { timeout: 15000, message: 'github PAT should be in localStorage' }
+        ).toBe(process.env.E2E_GITHUB_PAT);
+        console.log('[persist-local] tab1: github PAT in localStorage');
+      } catch (err) {
+        console.log('--- PERSIST-LOCAL TAB1 DIAGNOSTICS ---');
+        const storage = await page.evaluate(() => ({
+          lsDiscord: localStorage.getItem('wz_discord_bot_token') ? 'set' : 'missing',
+          lsPat: localStorage.getItem('wz_github_pat') ? 'set' : 'missing',
+          ssDiscord: sessionStorage.getItem('wz_discord_bot_token') ? 'set' : 'missing',
+          ssPat: sessionStorage.getItem('wz_github_pat') ? 'set' : 'missing',
+          e2eToken: sessionStorage.getItem('__e2e_token') ? 'set' : 'missing',
+        })).catch(() => ({}));
+        console.log('storage state:', JSON.stringify(storage));
+        console.log('browser console (last 40):');
+        console.log(browserLogs.slice(-40).join('\n') || '(none)');
+        console.log('--- END TAB1 DIAGNOSTICS ---');
+        throw err;
+      }
+
+      // ============ Tab 2: FRESH PAGE in the SAME context ============
+      // Same origin → localStorage is shared. sessionStorage is per-tab and
+      // therefore empty here. No injection of any kind → step 3's GCP token is
+      // absent → the restore can only come from localStorage.
+      console.log('[persist-local] tab2: new page in same context (empty sessionStorage)');
+      const page2 = await context.newPage();
+      const page2Console = [];
+      page2.on('console', (msg) => page2Console.push(`[${msg.type()}] ${msg.text()}`));
+      page2.on('pageerror', (err) => page2Console.push(`[pageerror] ${err.message}`));
+      page2.on('dialog', (dialog) => dialog.dismiss().catch(() => {}));
+      await page2.goto(`${TEST_URL}/infra-setup`);
+      await page2.waitForLoadState('domcontentloaded');
+      await expect(page2.getByText('Step 1: Discord Bot')).toBeVisible({ timeout: 15000 });
+
+      try {
+        const discord2 = page2.getByPlaceholder(/MTE4/);
+        await openStepIfNeeded(page2, 'Step 1: Discord Bot', discord2);
+        await expect(discord2).toBeVisible({ timeout: 10000 });
+        await expect(discord2).toHaveValue(process.env.E2E_DISCORD_TOKEN, { timeout: 15000 });
+        console.log('[persist-local] tab2: Discord token restored (no GCP token)');
+
+        const pat2 = page2.getByPlaceholder(/ghp_/);
+        await openStepIfNeeded(page2, 'Step 2: GitHub', pat2);
+        await expect(pat2).toBeVisible({ timeout: 10000 });
+        await expect(pat2).toHaveValue(process.env.E2E_GITHUB_PAT, { timeout: 15000 });
+        console.log('[persist-local] tab2: GitHub PAT restored (no GCP token)');
+
+        // Sanity: the GCP token must NOT exist in this context, proving the
+        // restore did not ride on Secret Manager / step 3.
+        const lsGcp = await page2.evaluate(() => sessionStorage.getItem('__e2e_token')).catch(() => null);
+        if (lsGcp) {
+          throw new Error('GCP token unexpectedly present in fresh tab — test is not exercising the no-step-3 path');
+        }
+      } catch (err) {
+        console.log('--- PERSIST-LOCAL TAB2 FAILURE DIAGNOSTICS ---');
+        console.log('page2 URL:', page2.url());
+        const dom = await page2.evaluate(() => {
+          const wizardRoot = document.querySelector('[class*="space-y"]') || document.body;
+          return {
+            text: wizardRoot.textContent.replace(/\s+/g, ' ').slice(0, 1500),
+            patInputs: [...document.querySelectorAll('input[placeholder*="ghp_"]')]
+              .map((i) => `value=${i.value.slice(0, 12)}... visible=${i.offsetParent !== null}`),
+            discordInputs: [...document.querySelectorAll('input[placeholder*="MTE4"]')]
+              .map((i) => `value=${i.value.slice(0, 12)}... visible=${i.offsetParent !== null}`),
+            stepHeaders: [...document.querySelectorAll('button')]
+              .filter((b) => /^Step \d/.test(b.textContent.trim()))
+              .map((b) => b.textContent.trim().slice(0, 60)),
+          };
+        }).catch(() => ({}));
+        console.log('tab2 DOM:', JSON.stringify(dom, null, 2));
+        console.log('page2 console (last 60):');
+        console.log(page2Console.slice(-60).join('\n') || '(no page2 console logs)');
+        console.log('--- END TAB2 DIAGNOSTICS ---');
+        throw err;
+      } finally {
+        await page2.close().catch(() => {});
+      }
+
+      console.log('Fresh-tab restore test passed: steps 1-2 restored from localStorage without a GCP token');
     });
   });
 });

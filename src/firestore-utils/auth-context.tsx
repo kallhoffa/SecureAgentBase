@@ -9,6 +9,7 @@ import {
   User,
   Auth
 } from 'firebase/auth';
+import { clearOperatorSecrets } from '../framework/infra-setup/secret-storage';
 import type { AuthContextType } from '../types';
 
 const AuthContext = createContext<AuthContextType | null>(null);
@@ -53,6 +54,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ auth, children }) =>
 
   const logout = async (): Promise<void> => {
     await signOut(auth);
+    // Operator session ended: wipe operator-entered secrets from both
+    // sessionStorage and localStorage so a different user on the same browser
+    // profile cannot inherit them.
+    clearOperatorSecrets();
   };
 
   const value: AuthContextType = {
