@@ -817,14 +817,28 @@ test.describe('Wizard E2E Regression', () => {
       // already-complete and collapsed. It can also flip mid-interaction: the
       // async config restore sets those flags AFTER first paint, and the
       // collapse effect then lands a moment after our first click. Retry
-      // clicking until the input stays visible.
-      const openStepIfNeeded = async (targetPage, stepTitle, inputLocator, timeoutMs = 20000) => {
+      // opening until the input stays visible.
+      // Opens via a direct DOM click (no Playwright actionability waiting, so
+      // it cannot hang on animations/overlays/navigations) with a hard cap, so
+      // the loop always terminates; a failure leaves a precise
+      // expect(...).toBeVisible timeout with a DOM snapshot instead.
+      const openStepIfNeeded = async (targetPage, stepTitle, inputLocator, timeoutMs = 15000) => {
         const deadline = Date.now() + timeoutMs;
-        while (Date.now() < deadline) {
-          if (await inputLocator.isVisible().catch(() => false)) return;
-          await targetPage.getByText(stepTitle).first().click().catch(() => {});
-          await targetPage.waitForTimeout(400);
+        let attempts = 0;
+        while (Date.now() < deadline && attempts < 30) {
+          attempts += 1;
+          if (await inputLocator.isVisible().catch(() => false)) return true;
+          const clicked = await targetPage.evaluate((title) => {
+            const header = [...document.querySelectorAll('button')]
+              .find((b) => b.textContent.trim().startsWith(title) && b.offsetParent !== null);
+            if (!header) return false;
+            header.click();
+            return true;
+          }, stepTitle).catch(() => false);
+          if (!clicked) return false;
+          await targetPage.waitForTimeout(300);
         }
+        return false;
       };
 
       // ============ Tab 1: enter tokens, app must sync them to Secret Manager ============
@@ -896,6 +910,12 @@ test.describe('Wizard E2E Regression', () => {
       console.log('[persist] tab2: fresh context signIn');
       const ctx2 = await context.browser().newContext();
       const page2 = await ctx2.newPage();
+      const page2Console = [];
+      const page2Navs = [];
+      page2.on('console', (msg) => page2Console.push(`[${msg.type()}] ${msg.text()}`));
+      page2.on('pageerror', (err) => page2Console.push(`[pageerror] ${err.message}`));
+      page2.on('framenavigated', (frame) => page2Navs.push(`${new Date().toISOString().slice(11, 19)} ${frame.url()}`));
+      page2.on('dialog', (dialog) => dialog.dismiss().catch(() => {}));
       await injectTokenOnly(page2);
       await signIn(page2);
       console.log('[persist] tab2: signed in, navigating to wizard');
@@ -904,21 +924,50 @@ test.describe('Wizard E2E Regression', () => {
       await expect(page2.getByText('Step 1: Discord Bot')).toBeVisible({ timeout: 15000 });
       console.log('[persist] tab2: wizard loaded, opening step 1');
 
-      // Discord token restored: open the step if needed and verify the input
-      // holds the restored value (proves the token is back in state).
-      const discord2 = page2.getByPlaceholder(/MTE4/);
-      await openStepIfNeeded(page2, 'Step 1: Discord Bot', discord2);
-      await expect(discord2).toBeVisible({ timeout: 10000 });
-      await expect(discord2).toHaveValue(process.env.E2E_DISCORD_TOKEN, { timeout: 15000 });
-      console.log('[persist] tab2: Discord token restored');
+      try {
+        // Discord token restored: open the step if needed and verify the input
+        // holds the restored value (proves the token is back in state).
+        const discord2 = page2.getByPlaceholder(/MTE4/);
+        await openStepIfNeeded(page2, 'Step 1: Discord Bot', discord2);
+        await expect(discord2).toBeVisible({ timeout: 10000 });
+        await expect(discord2).toHaveValue(process.env.E2E_DISCORD_TOKEN, { timeout: 15000 });
+        console.log('[persist] tab2: Discord token restored');
 
-      // GitHub PAT restored: step 2 is complete; open it and verify the value.
-      const pat2 = page2.getByPlaceholder(/ghp_/);
-      await openStepIfNeeded(page2, 'Step 2: GitHub', pat2);
-      await expect(pat2).toBeVisible({ timeout: 10000 });
-      await expect(pat2).toHaveValue(process.env.E2E_GITHUB_PAT, { timeout: 15000 });
-      console.log('[persist] tab2: GitHub PAT restored');
-      await ctx2.close();
+        // GitHub PAT restored: step 2 is complete; open it and verify the value.
+        const pat2 = page2.getByPlaceholder(/ghp_/);
+        await openStepIfNeeded(page2, 'Step 2: GitHub', pat2);
+        console.log('[persist] tab2: step 2 opened, checking PAT value');
+        await expect(pat2).toBeVisible({ timeout: 10000 });
+        await expect(pat2).toHaveValue(process.env.E2E_GITHUB_PAT, { timeout: 15000 });
+        console.log('[persist] tab2: GitHub PAT restored');
+      } catch (err) {
+        // Diagnose exactly what tab 2 looked like when a restore check failed.
+        console.log('--- TAB2 FAILURE DIAGNOSTICS ---');
+        console.log('page2 URL:', page2.url());
+        console.log('page2 navigations:', page2Navs.join('\n') || '(none)');
+        const dom = await page2.evaluate(() => {
+          const wizardRoot = document.querySelector('[class*="space-y"]') || document.body;
+          return {
+            text: wizardRoot.textContent.replace(/\s+/g, ' ').slice(0, 1500),
+            patInputs: [...document.querySelectorAll('input[placeholder*="ghp_"]')]
+              .map((i) => `value=${i.value.slice(0, 12)}... visible=${i.offsetParent !== null}`),
+            discordInputs: [...document.querySelectorAll('input[placeholder*="MTE4"]')]
+              .map((i) => `value=${i.value.slice(0, 12)}... visible=${i.offsetParent !== null}`),
+            stepHeaders: [...document.querySelectorAll('button')]
+              .filter((b) => /^Step \d/.test(b.textContent.trim()))
+              .map((b) => b.textContent.trim().slice(0, 60)),
+          };
+        }).catch(() => ({}));
+        console.log('tab2 DOM:', JSON.stringify(dom, null, 2));
+        console.log('page2 console (last 60):');
+        console.log(page2Console.slice(-60).join('\n') || '(no page2 console logs)');
+        console.log('page1 browserLogs (last 40):');
+        console.log(browserLogs.slice(-40).join('\n') || '(no page1 console logs)');
+        console.log('--- END TAB2 DIAGNOSTICS ---');
+        throw err;
+      } finally {
+        await ctx2.close().catch(() => {});
+      }
 
       console.log('Token persistence e2e test passed: tokens written to Secret Manager and restored in a fresh context');
     });
