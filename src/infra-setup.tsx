@@ -2693,7 +2693,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           'service_account_email', 'service_account_project_id',
           'github_app_installed', 'god_sa_email', 'vm_ip', 'github_repo',
           'firebase_staging_project_id', 'firebase_production_project_id',
-          'discord_client_id', 'discord_guild_id', 'sm_secrets',
+          'discord_client_id', 'discord_guild_id', 'discord_bot_added', 'sm_secrets',
           'updated_at'
         ],
         merge: true
@@ -2796,6 +2796,12 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         setDiscordBotTokenInput(botToken);
         const extractedId = extractClientIdFromToken(botToken);
         if (extractedId) setDiscordClientId(extractedId);
+        // A discord token in Secret Manager proves step 1 was completed before
+        // (the token is only saved from the validated step-1 form, and the
+        // invite URL regenerates from the token below) — mark the step
+        // complete so the linear lock chain doesn't leave step 2 locked with a
+        // restored-but-unusable GitHub section.
+        setDiscordBotAdded(true);
       }
       lastSmWriteRef.current = `${projectId}|${pat || githubPat}|${botToken || discordBotToken}`;
     } catch (e) {
