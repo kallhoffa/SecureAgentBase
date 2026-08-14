@@ -2435,9 +2435,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
       // If a GCP token is already held (e2e token injection, or a token that
       // arrived while the config was loading), restore Secret Manager tokens
-      // right now — the effect below covers tokens that arrive later.
+      // right now — the effect below covers tokens that arrive later. Pass the
+      // doc's project id: this closure's projectId state is stale until the
+      // re-render triggered by setProjectId above.
       if (!e2eInjectedRef.current && gcpAccessToken && smSecretsRef.current) {
-        await restoreSecretsFromSecretManager(gcpAccessToken);
+        await restoreSecretsFromSecretManager(gcpAccessToken, configData.gcp_project_id);
       }
 
       setLoading(false);
@@ -2803,22 +2805,31 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   // a token entered fresh in this session is never overwritten. Mirrors the
   // read-back signature into lastSmWriteRef so the sync effect doesn't
   // immediately re-write what we just read.
-  const restoreSecretsFromSecretManager = async (token) => {
+  //
+  // Project-scoped: refuses to run until a project is actually selected
+  // (projectOverride wins — used by loadInfraConfig where the state closure
+  // is stale — otherwise the current projectId state). The saved sm_secrets
+  // refs point at whatever project they were written for, and restoring them
+  // while the picker shows "Select a project" (or a different project) would
+  // populate steps 1-2 with another project's secrets.
+  const restoreSecretsFromSecretManager = async (token, projectOverride = '') => {
     if (e2eInjectedRef.current) return; // e2e injects its own credentials
-    // Use the saved resource names when available; fall back to the
-    // deterministic names (smWriteSecret uses these exact ids) so the restore
-    // does NOT depend on the Firestore config fetch — getDoc() can stall on
-    // transient "Could not reach Cloud Firestore backend" conditions, and a
-    // slow doc must not delay (or skip) the token restore.
-    const project = projectId || smSecretsRef.current?.project_id;
+    const project = (projectOverride || projectId || '').trim();
+    if (!project) return;
     const refs = smSecretsRef.current || {};
-    const githubPatRef = refs.github_pat || (project ? `projects/${project}/secrets/github-pat` : null);
-    const discordBotTokenRef = refs.discord_bot_token || (project ? `projects/${project}/secrets/discord-bot-token` : null);
-    if (!githubPatRef && !discordBotTokenRef) return;
+    // Use a saved ref only when it belongs to the SELECTED project; otherwise
+    // use the deterministic names (smWriteSecret uses these exact ids) so a
+    // project that was never synced still resolves to its own secret slots.
+    const githubPatRef = refs.github_pat?.startsWith(`projects/${project}/`)
+      ? refs.github_pat
+      : `projects/${project}/secrets/github-pat`;
+    const discordBotTokenRef = refs.discord_bot_token?.startsWith(`projects/${project}/`)
+      ? refs.discord_bot_token
+      : `projects/${project}/secrets/discord-bot-token`;
     try {
       const [pat, botToken] = await Promise.all([
-        githubPatRef ? smReadSecret(token, githubPatRef).catch(() => null) : Promise.resolve(null),
-        discordBotTokenRef ? smReadSecret(token, discordBotTokenRef).catch(() => null) : Promise.resolve(null),
+        smReadSecret(token, githubPatRef).catch(() => null),
+        smReadSecret(token, discordBotTokenRef).catch(() => null),
       ]);
       if (pat && !githubPat) setGithubPat(pat);
       if (botToken && !discordBotToken) {
@@ -2833,7 +2844,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         // restored-but-unusable GitHub section.
         setDiscordBotAdded(true);
       }
-      lastSmWriteRef.current = `${projectId}|${pat || githubPat}|${botToken || discordBotToken}`;
+      lastSmWriteRef.current = `${project}|${pat || githubPat}|${botToken || discordBotToken}`;
     } catch (e) {
       console.warn('Failed to restore secrets from Secret Manager:', e.message);
     }
