@@ -932,10 +932,12 @@ test.describe('Wizard E2E Regression', () => {
       try {
         // Discord token restored: open the step if needed and verify the input
         // holds the restored value (proves the token is back in state).
+        // 25s: the SM restore path can be delayed by the Firestore config
+        // fetch (getDoc) that populates smSecretsRef.
         const discord2 = page2.getByPlaceholder(/MTE4/);
         await openStepIfNeeded(page2, 'Step 1: Discord Bot', discord2);
         await expect(discord2).toBeVisible({ timeout: 10000 });
-        await expect(discord2).toHaveValue(process.env.E2E_DISCORD_TOKEN, { timeout: 15000 });
+        await expect(discord2).toHaveValue(process.env.E2E_DISCORD_TOKEN, { timeout: 25000 });
         console.log('[persist] tab2: Discord token restored');
 
         // GitHub PAT restored: step 2 is complete; open it and verify the value.
@@ -943,7 +945,7 @@ test.describe('Wizard E2E Regression', () => {
         await openStepIfNeeded(page2, 'Step 2: GitHub', pat2);
         console.log('[persist] tab2: step 2 opened, checking PAT value');
         await expect(pat2).toBeVisible({ timeout: 10000 });
-        await expect(pat2).toHaveValue(process.env.E2E_GITHUB_PAT, { timeout: 15000 });
+        await expect(pat2).toHaveValue(process.env.E2E_GITHUB_PAT, { timeout: 25000 });
         console.log('[persist] tab2: GitHub PAT restored');
       } catch (err) {
         // Diagnose exactly what tab 2 looked like when a restore check failed.
@@ -955,9 +957,9 @@ test.describe('Wizard E2E Regression', () => {
           return {
             text: wizardRoot.textContent.replace(/\s+/g, ' ').slice(0, 1500),
             patInputs: [...document.querySelectorAll('input[placeholder*="ghp_"]')]
-              .map((i) => `value=${i.value.slice(0, 12)}... visible=${i.offsetParent !== null}`),
+              .map((i) => `hasValue=${i.value.length > 0} visible=${i.offsetParent !== null}`),
             discordInputs: [...document.querySelectorAll('input[placeholder*="MTE4"]')]
-              .map((i) => `value=${i.value.slice(0, 12)}... visible=${i.offsetParent !== null}`),
+              .map((i) => `hasValue=${i.value.length > 0} visible=${i.offsetParent !== null}`),
             stepHeaders: [...document.querySelectorAll('button')]
               .filter((b) => /^Step \d/.test(b.textContent.trim()))
               .map((b) => b.textContent.trim().slice(0, 60)),
@@ -1094,9 +1096,9 @@ test.describe('Wizard E2E Regression', () => {
           return {
             text: wizardRoot.textContent.replace(/\s+/g, ' ').slice(0, 1500),
             patInputs: [...document.querySelectorAll('input[placeholder*="ghp_"]')]
-              .map((i) => `value=${i.value.slice(0, 12)}... visible=${i.offsetParent !== null}`),
+              .map((i) => `hasValue=${i.value.length > 0} visible=${i.offsetParent !== null}`),
             discordInputs: [...document.querySelectorAll('input[placeholder*="MTE4"]')]
-              .map((i) => `value=${i.value.slice(0, 12)}... visible=${i.offsetParent !== null}`),
+              .map((i) => `hasValue=${i.value.length > 0} visible=${i.offsetParent !== null}`),
             stepHeaders: [...document.querySelectorAll('button')]
               .filter((b) => /^Step \d/.test(b.textContent.trim()))
               .map((b) => b.textContent.trim().slice(0, 60)),

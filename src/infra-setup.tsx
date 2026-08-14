@@ -2379,7 +2379,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         // IP is never needed on load.
         if (!e2eInjectedRef.current) setVmIp(configData.vm_ip || '');
         // discord_bot_token intentionally NOT restored from Firestore (GHSA-x49w).
-        // Restored from sessionStorage below instead — same pattern as SA key.
+        // Restored from browser storage in the dedicated mount effect below.
         setDiscordGuildId(configData.discord_guild_id || configData.discordGuildId || '');
         // E2E injection sets discordBotAdded=true via URL params; don't overwrite
         // with stale Firestore value that would lock Step 8 and block the test
@@ -2394,7 +2394,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           setFirebaseProductionData(configData.firebase_production);
         }
         // github_pat intentionally NOT restored from Firestore (GHSA-x49w).
-        // Restored from sessionStorage below instead.
+        // Restored from browser storage in the dedicated mount effect below.
         
         // Restore OIDC values so Step 7 can build VM metadata on reload
         if (configData.gcp_wif_provider) setGcpWifProviderName(configData.gcp_wif_provider);
@@ -2402,38 +2402,15 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         if (configData.gcp_sa_production) setGcpSaProductionEmail(configData.gcp_sa_production);
         if (configData.github_repo) setGithubRepoName(configData.github_repo);
         
-        // Restore operator-entered secrets (not Firestore): sessionStorage
-        // covers a same-tab reload; localStorage (tokens only, not the SA key)
-        // covers a fresh tab — so steps 1-2 come back without a GCP token. The
-        // GCP access token is excluded — it expires in ~1h regardless.
-        if (!e2eInjectedRef.current) {
-          try {
-            const savedDiscordToken = readOperatorSecret(SECRET_KEYS.discordBotToken);
-            if (savedDiscordToken) {
-              setDiscordBotToken(savedDiscordToken);
-              setDiscordBotTokenInput(savedDiscordToken);
-              const extractedId = extractClientIdFromToken(savedDiscordToken);
-              if (extractedId) setDiscordClientId(extractedId);
-            }
-          } catch (e) { console.warn('Failed to restore discord bot token:', e); }
-          try {
-            const savedPat = readOperatorSecret(SECRET_KEYS.githubPat);
-            if (savedPat) setGithubPat(savedPat);
-          } catch (e) { console.warn('Failed to restore github PAT:', e); }
-          try {
-            const savedSa = sessionStorage.getItem(SECRET_KEYS.serviceAccountJson);
-            if (savedSa) {
-              const saJson = JSON.parse(savedSa);
-              if (saJson?.private_key) {
-                setServiceAccountJson(saJson);
-                if (saJson.client_email) setGodSaEmail(saJson.client_email);
-              }
-            }
-          } catch (e) { console.warn('Failed to restore service account from sessionStorage:', e); }
-        }
+        // Restore operator-entered secrets (Discord token, GitHub PAT, SA key)
+        // happens in a dedicated mount effect (below) that reads browser
+        // storage directly — deliberately NOT gated on this Firestore fetch,
+        // so a slow/unreachable Firestore backend can't delay the restore.
+        // Not Firestore (GHSA-x49w).
 
         // Note: service_account_key is NOT restored from Firestore (private_key
-        // sensitive) — sessionStorage restore above covers the same-tab case.
+        // sensitive) — browser-storage restore covers the same-tab/fresh-tab
+        // cases (see the dedicated mount effect).
 
         if (!e2eInjectedRef.current && configData.god_sa_email) setGodSaEmail(configData.god_sa_email);
 
@@ -2470,10 +2447,58 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     loadInfraConfig();
   }, [db, user]);
 
-  // Persist operator-entered secrets to sessionStorage as they change, so a
-  // same-tab reload restores them (see loadInfraConfig). Not Firestore
-  // (GHSA-x49w) and not localStorage: cleared when the tab closes. The GCP
-  // access token is excluded — it expires in ~1h so restoring is pointless.
+  // Restore operator-entered secrets from browser storage on mount. Runs
+  // IMMEDIATELY, independent of the Firestore config fetch above — the tokens
+  // live in sessionStorage/localStorage, and waiting on getDoc() would stall
+  // the restore whenever Firestore is slow or briefly unreachable (observed
+  // "Could not reach Cloud Firestore backend" transients).
+  //   - sessionStorage: same-tab reload
+  //   - localStorage (tokens only, NOT the SA key): fresh tab / new browser
+  //     window — steps 1-2 come back without a GCP token (no step 3 needed)
+  //   - GCP access token is excluded: it expires in ~1h regardless
+  // Not Firestore (GHSA-x49w). Declared AFTER the e2e injection effect so
+  // e2eInjectedRef reflects injected credentials on first run.
+  useEffect(() => {
+    if (e2eInjectedRef.current) return;
+    let discord = false;
+    let pat = false;
+    let sa = false;
+    try {
+      const savedDiscordToken = readOperatorSecret(SECRET_KEYS.discordBotToken);
+      if (savedDiscordToken) {
+        discord = true;
+        setDiscordBotToken(savedDiscordToken);
+        setDiscordBotTokenInput(savedDiscordToken);
+        const extractedId = extractClientIdFromToken(savedDiscordToken);
+        if (extractedId) setDiscordClientId(extractedId);
+      }
+    } catch (e) { console.warn('Failed to restore discord bot token:', e); }
+    try {
+      const savedPat = readOperatorSecret(SECRET_KEYS.githubPat);
+      if (savedPat) {
+        pat = true;
+        setGithubPat(savedPat);
+      }
+    } catch (e) { console.warn('Failed to restore github PAT:', e); }
+    try {
+      const savedSa = sessionStorage.getItem(SECRET_KEYS.serviceAccountJson);
+      if (savedSa) {
+        const saJson = JSON.parse(savedSa);
+        if (saJson?.private_key) {
+          sa = true;
+          setServiceAccountJson(saJson);
+          if (saJson.client_email) setGodSaEmail(saJson.client_email);
+        }
+      }
+    } catch (e) { console.warn('Failed to restore service account from sessionStorage:', e); }
+    // Presence only — never log secret values.
+    console.log(`[secret-restore] browser storage: discord=${discord} pat=${pat} sa=${sa}`);
+  }, []);
+
+  // Persist operator-entered secrets to browser storage as they change, so a
+  // same-tab reload (sessionStorage) or fresh tab (localStorage, tokens only)
+  // restores them. Not Firestore (GHSA-x49w). The GCP access token is
+  // excluded — it expires in ~1h so restoring is pointless.
   useEffect(() => {
     try {
       persistOperatorSecret(SECRET_KEYS.discordBotToken, discordBotToken);
@@ -2780,12 +2805,20 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   // immediately re-write what we just read.
   const restoreSecretsFromSecretManager = async (token) => {
     if (e2eInjectedRef.current) return; // e2e injects its own credentials
-    const refs = smSecretsRef.current;
-    if (!refs || (!refs.github_pat && !refs.discord_bot_token)) return;
+    // Use the saved resource names when available; fall back to the
+    // deterministic names (smWriteSecret uses these exact ids) so the restore
+    // does NOT depend on the Firestore config fetch — getDoc() can stall on
+    // transient "Could not reach Cloud Firestore backend" conditions, and a
+    // slow doc must not delay (or skip) the token restore.
+    const project = projectId || smSecretsRef.current?.project_id;
+    const refs = smSecretsRef.current || {};
+    const githubPatRef = refs.github_pat || (project ? `projects/${project}/secrets/github-pat` : null);
+    const discordBotTokenRef = refs.discord_bot_token || (project ? `projects/${project}/secrets/discord-bot-token` : null);
+    if (!githubPatRef && !discordBotTokenRef) return;
     try {
       const [pat, botToken] = await Promise.all([
-        refs.github_pat ? smReadSecret(token, refs.github_pat).catch(() => null) : Promise.resolve(null),
-        refs.discord_bot_token ? smReadSecret(token, refs.discord_bot_token).catch(() => null) : Promise.resolve(null),
+        githubPatRef ? smReadSecret(token, githubPatRef).catch(() => null) : Promise.resolve(null),
+        discordBotTokenRef ? smReadSecret(token, discordBotTokenRef).catch(() => null) : Promise.resolve(null),
       ]);
       if (pat && !githubPat) setGithubPat(pat);
       if (botToken && !discordBotToken) {
