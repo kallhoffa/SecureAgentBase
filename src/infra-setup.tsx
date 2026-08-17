@@ -2854,10 +2854,26 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   // Discord token, GitHub PAT, and related state so steps 1-2 start empty
   // for the new project. The Secret Manager restore (effect below) will
   // re-fill them from the new project's SM slots once it settles.
-  // Skipped on initial load (prevProjectIdRef starts empty — no old tokens
-  // to clear) and on e2e injection / formProgress / config-doc restore.
+  //
+  // Gate: only fires AFTER loadInfraConfig finishes (loading→false).
+  // During the initial load, injection and the config doc can both set
+  // projectId to different values — clearing on that transient mismatch
+  // would wipe freshly-entered tokens mid-test. The wasLoadingRef
+  // captures the config-loaded projectId as the baseline so the very
+  // first post-load render never clears.
   const prevProjectIdForClearRef = useRef('');
+  const wasLoadingRef = useRef(true);
   useEffect(() => {
+    if (loading) {
+      wasLoadingRef.current = true;
+      return;
+    }
+    // First render after config loads: snapshot the baseline, don't clear.
+    if (wasLoadingRef.current) {
+      wasLoadingRef.current = false;
+      prevProjectIdForClearRef.current = projectId;
+      return;
+    }
     const prev = prevProjectIdForClearRef.current;
     prevProjectIdForClearRef.current = projectId;
     if (prev !== projectId && prev.trim()) {
@@ -2868,7 +2884,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       setDiscordBotAdded(false);
       clearOperatorSecrets();
     }
-  }, [projectId]);
+  }, [projectId, loading]);
 
   // Trigger the sync whenever Google connects or tokens/project change.
   // Skip the sync on the render where projectId changes to prevent writing
