@@ -1035,7 +1035,7 @@ test.describe('Wizard E2E Regression', () => {
         'E2E_GITHUB_PAT and E2E_DISCORD_TOKEN required');
     });
 
-    test('steps 1-2 restore from localStorage in a fresh tab without a GCP token', async ({ page, context }) => {
+    test('steps 1-2 start empty in a fresh tab (no localStorage restore)', async ({ page, context }) => {
       test.setTimeout(300000);
 
       // ============ Tab 1: enter tokens — NO GCP token injected ============
@@ -1068,8 +1068,8 @@ test.describe('Wizard E2E Regression', () => {
       await patInput.fill(process.env.E2E_GITHUB_PAT);
       await page.getByRole('button', { name: 'Save GitHub Configuration' }).click();
 
-      // The fresh tab restores from localStorage — verify the values landed
-      // there (the persistence effects write sessionStorage AND localStorage).
+      // Verify tokens are persisted to both sessionStorage and localStorage
+      // (the persistence effects write both, but mount only reads sessionStorage).
       try {
         await expect.poll(
           () => page.evaluate(() => localStorage.getItem('wz_discord_bot_token')),
@@ -1100,8 +1100,9 @@ test.describe('Wizard E2E Regression', () => {
       // ============ Tab 2: FRESH PAGE in the SAME context ============
       // Same origin → localStorage is shared. sessionStorage is per-tab and
       // therefore empty here. No injection of any kind → step 3's GCP token is
-      // absent → the restore can only come from localStorage.
-      console.log('[persist-local] tab2: new page in same context (empty sessionStorage)');
+      // absent. Mount restore reads sessionStorage only (not localStorage) to
+      // prevent cross-project token contamination, so tab 2 starts EMPTY.
+      console.log('[persist-local] tab2: new page in same context (expect empty)');
       const page2 = await context.newPage();
       const page2Console = [];
       page2.on('console', (msg) => page2Console.push(`[${msg.type()}] ${msg.text()}`));
@@ -1115,21 +1116,25 @@ test.describe('Wizard E2E Regression', () => {
         const discord2 = page2.getByPlaceholder(/MTE4/);
         await openStepIfNeeded(page2, 'Step 1: Discord Bot', discord2);
         await expect(discord2).toBeVisible({ timeout: 10000 });
-        await expect(discord2).toHaveValue(process.env.E2E_DISCORD_TOKEN, { timeout: 15000 });
-        console.log('[persist-local] tab2: Discord token restored (no GCP token)');
+
+        // Fresh tab should start EMPTY — no localStorage restore, no GCP token,
+        // so SM restore also cannot fire. This prevents cross-project contamination.
+        await expect(discord2).toHaveValue('', { timeout: 15000 });
+        console.log('[persist-local] tab2: Discord input correctly empty in fresh tab');
 
         const pat2 = page2.getByPlaceholder(/ghp_/);
         await openStepIfNeeded(page2, 'Step 2: GitHub', pat2);
         await expect(pat2).toBeVisible({ timeout: 10000 });
-        await expect(pat2).toHaveValue(process.env.E2E_GITHUB_PAT, { timeout: 15000 });
-        console.log('[persist-local] tab2: GitHub PAT restored (no GCP token)');
+        await expect(pat2).toHaveValue('', { timeout: 15000 });
+        console.log('[persist-local] tab2: PAT input correctly empty in fresh tab');
 
-        // Sanity: the GCP token must NOT exist in this context, proving the
-        // restore did not ride on Secret Manager / step 3.
-        const lsGcp = await page2.evaluate(() => sessionStorage.getItem('__e2e_token')).catch(() => null);
-        if (lsGcp) {
+        // Sanity: the GCP token must NOT exist in this context, confirming no
+        // SM restore happened (would require a GCP access token).
+        const ssGcp = await page2.evaluate(() => sessionStorage.getItem('__e2e_token')).catch(() => null);
+        if (ssGcp) {
           throw new Error('GCP token unexpectedly present in fresh tab — test is not exercising the no-step-3 path');
         }
+        console.log('[persist-local] tab2: confirmed no GCP token — SM restore did not fire');
       } catch (err) {
         console.log('--- PERSIST-LOCAL TAB2 FAILURE DIAGNOSTICS ---');
         console.log('page2 URL:', page2.url());
@@ -1155,7 +1160,7 @@ test.describe('Wizard E2E Regression', () => {
         await page2.close().catch(() => {});
       }
 
-      console.log('Fresh-tab restore test passed: steps 1-2 restored from localStorage without a GCP token');
+      console.log('Fresh-tab test passed: steps 1-2 correctly empty in a fresh tab (no cross-project contamination)');
     });
   });
 });
