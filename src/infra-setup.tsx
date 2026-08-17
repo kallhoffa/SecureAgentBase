@@ -2449,14 +2449,15 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     loadInfraConfig();
   }, [db, user]);
 
-  // Restore operator-entered secrets from browser storage on mount. Runs
+  // Restore operator-entered secrets from sessionStorage on mount. Runs
   // IMMEDIATELY, independent of the Firestore config fetch above — the tokens
-  // live in sessionStorage/localStorage, and waiting on getDoc() would stall
-  // the restore whenever Firestore is slow or briefly unreachable (observed
-  // "Could not reach Cloud Firestore backend" transients).
-  //   - sessionStorage: same-tab reload
-  //   - localStorage (tokens only, NOT the SA key): fresh tab / new browser
-  //     window — steps 1-2 come back without a GCP token (no step 3 needed)
+  // live in sessionStorage, and waiting on getDoc() would stall the restore
+  // whenever Firestore is slow or briefly unreachable (observed "Could not
+  // reach Cloud Firestore backend" transients).
+  //   - sessionStorage: same-tab reload only. Fresh tab / hard refresh starts
+  //     empty → Secret Manager restore (effect below) fills tokens once a GCP
+  //     token is available. This prevents stale tokens from a DIFFERENT project
+  //     leaking in via localStorage (GHSA-x49w / cross-project contamination).
   //   - GCP access token is excluded: it expires in ~1h regardless
   // Not Firestore (GHSA-x49w). Declared AFTER the e2e injection effect so
   // e2eInjectedRef reflects injected credentials on first run.
@@ -2466,7 +2467,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     let pat = false;
     let sa = false;
     try {
-      const savedDiscordToken = readOperatorSecret(SECRET_KEYS.discordBotToken);
+      const savedDiscordToken = sessionStorage.getItem(SECRET_KEYS.discordBotToken);
       if (savedDiscordToken) {
         discord = true;
         setDiscordBotToken(savedDiscordToken);
@@ -2476,7 +2477,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       }
     } catch (e) { console.warn('Failed to restore discord bot token:', e); }
     try {
-      const savedPat = readOperatorSecret(SECRET_KEYS.githubPat);
+      const savedPat = sessionStorage.getItem(SECRET_KEYS.githubPat);
       if (savedPat) {
         pat = true;
         setGithubPat(savedPat);
@@ -2494,13 +2495,15 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       }
     } catch (e) { console.warn('Failed to restore service account from sessionStorage:', e); }
     // Presence only — never log secret values.
-    console.log(`[secret-restore] browser storage: discord=${discord} pat=${pat} sa=${sa}`);
+    console.log(`[secret-restore] sessionStorage: discord=${discord} pat=${pat} sa=${sa}`);
   }, []);
 
   // Persist operator-entered secrets to browser storage as they change, so a
-  // same-tab reload (sessionStorage) or fresh tab (localStorage, tokens only)
-  // restores them. Not Firestore (GHSA-x49w). The GCP access token is
-  // excluded — it expires in ~1h so restoring is pointless.
+  // same-tab reload (sessionStorage) restores them immediately. Fresh tab /
+  // hard refresh starts empty — Secret Manager restore fills tokens once a GCP
+  // token is available. localStorage is still written but never read on mount
+  // to prevent cross-project token contamination (GHSA-x49w). The GCP access
+  // token is excluded — it expires in ~1h so restoring is pointless.
   useEffect(() => {
     try {
       persistOperatorSecret(SECRET_KEYS.discordBotToken, discordBotToken);
@@ -2547,6 +2550,23 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     };
     loadProjects();
   }, [user, db]);
+
+  // After projects and projectId are both loaded, sync the project selector
+  // dropdown so it shows the correct project instead of "Select a project".
+  // Only runs once (first time both are available with a non-empty projectId
+  // and an empty selectedProjectId).
+  const projectSyncedRef = useRef(false);
+  useEffect(() => {
+    if (projectSyncedRef.current) return;
+    if (!projectId || projects.length === 0 || selectedProjectId) return;
+    const match = projects.find(p =>
+      (p.gcp_project_id || p.gcp?.projectId) === projectId
+    );
+    if (match) {
+      projectSyncedRef.current = true;
+      setSelectedProjectId(match.id);
+    }
+  }, [projectId, projects, selectedProjectId]);
 
   const handleCopyScript = () => {
     navigator.clipboard.writeText(CloudShellScript({ projectId }));
@@ -3669,6 +3689,9 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                   setVmZone(proj.vm_zone || proj.vm?.zone || 'us-east1-b');
                   setDiscordGuildId(proj.discord_guild_id || '');
                   setGithubRepoName(proj.github_repo || '');
+                  // Update SM refs so the restore effect (below) reads from
+                  // the new project's secret slots, not the old project's.
+                  smSecretsRef.current = proj.sm_secrets || null;
                 }
               }}
               className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-400"
