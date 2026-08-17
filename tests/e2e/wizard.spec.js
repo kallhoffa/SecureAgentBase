@@ -780,11 +780,53 @@ test.describe('Wizard E2E Regression', () => {
       await expect(patInput).toBeVisible({ timeout: 10000 });
 
       await patInput.fill(process.env.E2E_GITHUB_PAT);
+
+      // Listen for the GitHub API call so we can diagnose failures.
+      const githubResponsePromise = page.waitForResponse(
+        (res) => res.url().includes('api.github.com'),
+        { timeout: 30000 }
+      ).catch(() => null);
+
       await page.getByRole('button', { name: 'Save GitHub Configuration' }).click();
 
-      // Save hits the GitHub API, derives owner/repo, and expands step 3
-      await expect(page.getByText('Step 3: Google Cloud')).toBeVisible({ timeout: 15000 });
-      await expect(page.getByText('1. Connect Google Cloud & Service Account')).toBeVisible({ timeout: 15000 });
+      // Wait for the GitHub API response and log the result for diagnostics.
+      const ghResp = await githubResponsePromise;
+      if (ghResp && !ghResp.ok()) {
+        console.error(`[PAT-test] GitHub API ${ghResp.status()}: ${ghResp.url()}`);
+        const body = await ghResp.text().catch(() => '<unreadable>');
+        console.error(`[PAT-test] GitHub API body: ${body.slice(0, 500)}`);
+      } else if (!ghResp) {
+        console.error('[PAT-test] No GitHub API response captured within 30s');
+      } else {
+        console.log(`[PAT-test] GitHub API ${ghResp.status()} OK`);
+      }
+
+      // After Save: either the step-3 body appears (success) or an error message
+      // shows. Capture whichever wins the race for diagnostics.
+      const errorBox = page.locator('.bg-red-50.border.border-red-200');
+      const bodyText = page.getByText('1. Connect Google Cloud & Service Account');
+
+      const result = await Promise.race([
+        bodyText.waitFor({ state: 'visible', timeout: 20000 }).then(() => 'body-visible'),
+        errorBox.first().waitFor({ state: 'visible', timeout: 20000 }).then(async () => {
+          const msg = await errorBox.first().textContent().catch(() => '<unreadable>');
+          return `error: ${msg}`;
+        }),
+      ]);
+
+      console.log(`[PAT-test] Race result: ${result}`);
+
+      if (result === 'body-visible') {
+        await expect(bodyText).toBeVisible();
+      } else {
+        // Log full page state for CI debugging
+        const pageContent = await page.locator('body').textContent().catch(() => '<unreadable>');
+        console.error(`[PAT-test] Page content (first 1000 chars): ${pageContent.slice(0, 1000)}`);
+        throw new Error(`PAT save failed: ${result}`);
+      }
+
+      // Also verify step 3 header is visible (sanity check)
+      await expect(page.getByText('Step 3: Google Cloud')).toBeVisible({ timeout: 5000 });
     });
   });
 
