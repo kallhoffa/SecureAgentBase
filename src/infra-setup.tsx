@@ -2850,9 +2850,39 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     }
   };
 
+  // When the operator switches to a different GCP project, clear the
+  // Discord token, GitHub PAT, and related state so steps 1-2 start empty
+  // for the new project. The Secret Manager restore (effect below) will
+  // re-fill them from the new project's SM slots once it settles.
+  // Skipped on initial load (prevProjectIdRef starts empty — no old tokens
+  // to clear) and on e2e injection / formProgress / config-doc restore.
+  const prevProjectIdForClearRef = useRef('');
+  useEffect(() => {
+    const prev = prevProjectIdForClearRef.current;
+    prevProjectIdForClearRef.current = projectId;
+    if (prev !== projectId && prev.trim()) {
+      setDiscordBotToken('');
+      setDiscordBotTokenInput('');
+      setDiscordClientId('');
+      setGithubPat('');
+      setDiscordBotAdded(false);
+      clearOperatorSecrets();
+    }
+  }, [projectId]);
+
   // Trigger the sync whenever Google connects or tokens/project change.
+  // Skip the sync on the render where projectId changes to prevent writing
+  // the old project's tokens into the new project's SM slot (the clear
+  // effect above will re-render with empty tokens → the guard inside
+  // syncSecretsToSecretManager skips automatically).
+  const prevSmSyncProjectRef = useRef('');
   useEffect(() => {
     if (e2eInjectedRef.current) return;
+    if (!gcpAccessToken) return;
+    if (projectId !== prevSmSyncProjectRef.current) {
+      prevSmSyncProjectRef.current = projectId;
+      return;
+    }
     syncSecretsToSecretManager(gcpAccessToken);
   }, [gcpAccessToken, projectId, githubPat, discordBotToken, gcpConsentEmail, godSaEmail, user]);
 
