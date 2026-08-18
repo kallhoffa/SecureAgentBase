@@ -2555,6 +2555,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   // dropdown so it shows the correct project instead of "Select a project".
   // Only runs once (first time both are available with a non-empty projectId
   // and an empty selectedProjectId).
+  // When projects are loaded but none match the Firestore config's projectId,
+  // clear the stale projectId so SM restore doesn't fill tokens for a
+  // non-existent project while the dropdown shows "Select a project".
+  // E2e injection: skip clearing — the test injects credentials directly and
+  // doesn't create project docs, so clearing would break the SM round-trip.
   const projectSyncedRef = useRef(false);
   useEffect(() => {
     if (projectSyncedRef.current) return;
@@ -2562,9 +2567,17 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     const match = projects.find(p =>
       (p.gcp_project_id || p.gcp?.projectId) === projectId
     );
+    projectSyncedRef.current = true;
     if (match) {
-      projectSyncedRef.current = true;
       setSelectedProjectId(match.id);
+    } else {
+      // No project matches — clear the stale projectId and SM refs
+      // unless this is an e2e session (injected credentials, no project docs).
+      const isE2E = typeof window !== 'undefined' && sessionStorage.getItem('__e2e_token');
+      if (!isE2E) {
+        setProjectId('');
+        smSecretsRef.current = null;
+      }
     }
   }, [projectId, projects, selectedProjectId]);
 
@@ -3665,8 +3678,18 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                 setSelectedProjectId(projId);
                 setIsCreatingNew(false);
                 if (!projId) {
+                  // Clear ALL project-specific state so no stale tokens from
+                  // a previous project leak through.
                   setProjectName('');
+                  setProjectId('');
                   setUseFirestore(false);
+                  setDiscordBotToken('');
+                  setDiscordBotTokenInput('');
+                  setDiscordClientId('');
+                  setGithubPat('');
+                  setDiscordBotAdded(false);
+                  smSecretsRef.current = null;
+                  clearOperatorSecrets();
                   return;
                 }
                 const proj = projects.find(p => p.id === projId);
