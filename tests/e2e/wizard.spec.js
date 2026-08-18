@@ -830,73 +830,25 @@ test.describe('Wizard E2E Regression', () => {
     });
   });
 
-  // ---------- Token persistence across reload (Secret Manager round-trip) ----------
-  // Regression for "tokens are still not saving": enter real tokens, verify the
-  // app writes them to Secret Manager, then reload in a FRESH tab (empty
-  // sessionStorage — the same-tab sessionStorage restore can't mask the path)
-  // and verify the wizard repopulates steps 1-2 from Secret Manager on its own.
-  //
-  // Injection is TOKEN-ONLY (__e2e_token + __e2e_project_id). That stands in
-  // for a connected Google account without flipping e2eInjectedRef, so the
-  // app's REAL sync + restore + config-restore paths run against live GCP.
-  test.describe('Token Persistence (Secret Manager)', () => {
+  // ---------- No state saving: tokens do NOT persist across tabs ----------
+  // State saving was removed — verify that tokens entered in one tab do NOT
+  // leak to a fresh context via SM restore or browser storage.
+  test.describe('No State Saving (Cross-Tab)', () => {
     test.beforeEach(async () => {
       test.skip(process.env.E2E_APP_MODE !== 'true', 'Wizard route only available in app mode');
-      test.skip(!E2E_GCP_TOKEN || !E2E_GCP_PROJECT_ID,
-        'E2E_GCP_TOKEN and E2E_GCP_PROJECT_ID required');
       test.skip(!process.env.E2E_GITHUB_PAT || !process.env.E2E_DISCORD_TOKEN,
         'E2E_GITHUB_PAT and E2E_DISCORD_TOKEN required');
     });
 
-    test('tokens persist to Secret Manager and restore after reload', async ({ page, context }) => {
+    test('no state saving: tokens do NOT persist across tabs', async ({ page, context }) => {
       test.setTimeout(300000);
 
-      // Clean slate: delete any secrets written by previous runs so this test
-      // proves a FRESH write + restore rather than a hit on last run's values.
-      const smDelete = async (secretId) => {
-        const resp = await fetch(
-          `https://secretmanager.googleapis.com/v1/projects/${E2E_GCP_PROJECT_ID}/secrets/${secretId}`,
-          { method: 'DELETE', headers: { Authorization: `Bearer ${E2E_GCP_TOKEN}` } }
-        );
-        console.log(`SM cleanup ${secretId}: HTTP ${resp.status} (404 = nothing to clean)`);
-      };
-      await smDelete('github-pat');
-      await smDelete('discord-bot-token');
-
-      // Read the LATEST version payload of a secret (null if missing/404).
-      const smRead = async (secretId) => {
-        const resp = await fetch(
-          `https://secretmanager.googleapis.com/v1/projects/${E2E_GCP_PROJECT_ID}/secrets/${secretId}/versions/latest:access`,
-          { headers: { Authorization: `Bearer ${E2E_GCP_TOKEN}` } }
-        );
-        if (!resp.ok) return null;
-        const data = await resp.json();
-        return Buffer.from(data.payload.data, 'base64').toString('utf8');
-      };
-
-      const injectTokenOnly = async (targetPage) => {
-        // addInitScript accepts exactly ONE arg — pass an array so the
-        // projectId parameter doesn't arrive as `undefined` (which setItem
-        // would store as the string 'undefined', making every GCP call hit
-        // `projects/undefined` → 403 → sync deferred).
-        await targetPage.addInitScript(([token, projectId]) => {
-          sessionStorage.setItem('__e2e_token', token);
-          sessionStorage.setItem('__e2e_project_id', projectId);
-        }, [Buffer.from(E2E_GCP_TOKEN).toString('base64'), E2E_GCP_PROJECT_ID]);
-      };
-
-      // openStepIfNeeded is module-level (shared with the localStorage
-      // fresh-tab test). See its docstring above the helper.
-
-      // ============ Tab 1: enter tokens, app must sync them to Secret Manager ============
-      console.log('[persist] tab1: signIn + inject + goto');
-      // Capture the app's console so a deferred sync (e.g. a GCP 403 on
-      // secretmanager) surfaces its real error message in the CI log.
+      // ============ Tab 1: enter tokens ============
+      console.log('[no-persist] tab1: signIn + goto');
       const browserLogs = [];
       page.on('console', (msg) => browserLogs.push(`[${msg.type()}] ${msg.text()}`));
       page.on('pageerror', (err) => browserLogs.push(`[pageerror] ${err.message}`));
       await signIn(page);
-      await injectTokenOnly(page);
       await page.goto(`${TEST_URL}/infra-setup`);
       await page.waitForLoadState('domcontentloaded');
       await expect(page.getByText('Step 1: Discord Bot')).toBeVisible({ timeout: 15000 });
@@ -913,87 +865,52 @@ test.describe('Wizard E2E Regression', () => {
       await botAddedBtn.click();
       await expect(page.getByText('Step 2: GitHub')).toBeVisible({ timeout: 10000 });
 
-      // Step 2: GitHub PAT (validated against the real GitHub API)
+      // Step 2: GitHub PAT
       const patInput = page.getByPlaceholder(/ghp_/);
       await openStepIfNeeded(page, 'Step 2: GitHub', patInput);
       await expect(patInput).toBeVisible({ timeout: 10000 });
       await patInput.fill(process.env.E2E_GITHUB_PAT);
       await page.getByRole('button', { name: 'Save GitHub Configuration' }).click();
 
-      // The sync effect fires as soon as both tokens + GCP token + project are
-      // present: poll Secret Manager until the payloads match the real values.
-      try {
-        await expect.poll(
-          () => smRead('github-pat'),
-          { timeout: 30000, message: 'github-pat should be written to Secret Manager' }
-        ).toBe(process.env.E2E_GITHUB_PAT);
-        console.log('[persist] tab1: github-pat poll passed');
-        await expect.poll(
-          () => smRead('discord-bot-token'),
-          { timeout: 30000, message: 'discord-bot-token should be written to Secret Manager' }
-        ).toBe(process.env.E2E_DISCORD_TOKEN);
-        console.log('[persist] tab1: discord-bot-token poll passed');
-      } catch (err) {
-        const storageState = await page.evaluate(() => ({
-          token: sessionStorage.getItem('__e2e_token') ? 'set' : 'missing',
-          projectId: sessionStorage.getItem('__e2e_project_id'),
-          discordToken: sessionStorage.getItem('discordBotToken') ? 'set' : 'missing',
-          githubPat: sessionStorage.getItem('githubPat') ? 'set' : 'missing',
-        })).catch(() => ({}));
-        console.log('--- Browser console (full, last 80) ---');
-        console.log(browserLogs.slice(-80).join('\n') || '(no browser console logs)');
-        console.log('--- sessionStorage state ---');
-        console.log(JSON.stringify(storageState));
-        console.log('--- End browser console ---');
-        throw err;
-      }
+      // Verify no browser storage persistence (state saving is disabled)
+      const storageState = await page.evaluate(() => ({
+        ssDiscord: sessionStorage.getItem('wz_discord_bot_token') || sessionStorage.getItem('discordBotToken'),
+        ssPat: sessionStorage.getItem('wz_github_pat') || sessionStorage.getItem('githubPat'),
+        lsDiscord: localStorage.getItem('wz_discord_bot_token') || localStorage.getItem('discordBotToken'),
+        lsPat: localStorage.getItem('wz_github_pat') || localStorage.getItem('githubPat'),
+      })).catch(() => ({}));
+      console.log('[no-persist] tab1 storage:', JSON.stringify(storageState));
 
-      // ============ Tab 2: fresh context (empty storage) must self-restore ============
-      // A new PAGE in the same context still shares cookies/IndexedDB — the
-      // Firebase auth session would make /login redirect instantly (no email
-      // form), and the tokens in sessionStorage would mask the Secret Manager
-      // path. A fresh CONTEXT is truly empty, so the restore can only come
-      // from Secret Manager refs in the saved config.
-      console.log('[persist] tab2: fresh context signIn');
+      // ============ Tab 2: fresh context must start EMPTY ============
+      console.log('[no-persist] tab2: fresh context signIn');
       const ctx2 = await context.browser().newContext();
       const page2 = await ctx2.newPage();
       const page2Console = [];
-      const page2Navs = [];
       page2.on('console', (msg) => page2Console.push(`[${msg.type()}] ${msg.text()}`));
       page2.on('pageerror', (err) => page2Console.push(`[pageerror] ${err.message}`));
-      page2.on('framenavigated', (frame) => page2Navs.push(`${new Date().toISOString().slice(11, 19)} ${frame.url()}`));
-      page2.on('dialog', (dialog) => dialog.dismiss().catch(() => {}));
-      await injectTokenOnly(page2);
       await signIn(page2);
-      console.log('[persist] tab2: signed in, navigating to wizard');
       await page2.goto(`${TEST_URL}/infra-setup`);
       await page2.waitForLoadState('domcontentloaded');
       await expect(page2.getByText('Step 1: Discord Bot')).toBeVisible({ timeout: 15000 });
-      console.log('[persist] tab2: wizard loaded, opening step 1');
 
       try {
-        // Discord token restored: open the step if needed and verify the input
-        // holds the restored value (proves the token is back in state).
-        // 25s: the SM restore path can be delayed by the Firestore config
-        // fetch (getDoc) that populates smSecretsRef.
         const discord2 = page2.getByPlaceholder(/MTE4/);
         await openStepIfNeeded(page2, 'Step 1: Discord Bot', discord2);
         await expect(discord2).toBeVisible({ timeout: 10000 });
-        await expect(discord2).toHaveValue(process.env.E2E_DISCORD_TOKEN, { timeout: 25000 });
-        console.log('[persist] tab2: Discord token restored');
 
-        // GitHub PAT restored: step 2 is complete; open it and verify the value.
+        // Fresh context must start EMPTY — no state saving, so tokens from tab 1
+        // must not leak through.
+        await expect(discord2).toHaveValue('', { timeout: 15000 });
+        console.log('[no-persist] tab2: Discord input correctly empty');
+
         const pat2 = page2.getByPlaceholder(/ghp_/);
         await openStepIfNeeded(page2, 'Step 2: GitHub', pat2);
-        console.log('[persist] tab2: step 2 opened, checking PAT value');
         await expect(pat2).toBeVisible({ timeout: 10000 });
-        await expect(pat2).toHaveValue(process.env.E2E_GITHUB_PAT, { timeout: 25000 });
-        console.log('[persist] tab2: GitHub PAT restored');
+        await expect(pat2).toHaveValue('', { timeout: 15000 });
+        console.log('[no-persist] tab2: PAT input correctly empty');
       } catch (err) {
-        // Diagnose exactly what tab 2 looked like when a restore check failed.
         console.log('--- TAB2 FAILURE DIAGNOSTICS ---');
         console.log('page2 URL:', page2.url());
-        console.log('page2 navigations:', page2Navs.join('\n') || '(none)');
         const dom = await page2.evaluate(() => {
           const wizardRoot = document.querySelector('[class*="space-y"]') || document.body;
           return {
@@ -1010,32 +927,27 @@ test.describe('Wizard E2E Regression', () => {
         console.log('tab2 DOM:', JSON.stringify(dom, null, 2));
         console.log('page2 console (last 60):');
         console.log(page2Console.slice(-60).join('\n') || '(no page2 console logs)');
-        console.log('page1 browserLogs (last 40):');
-        console.log(browserLogs.slice(-40).join('\n') || '(no page1 console logs)');
         console.log('--- END TAB2 DIAGNOSTICS ---');
         throw err;
       } finally {
         await ctx2.close().catch(() => {});
       }
 
-      console.log('Token persistence e2e test passed: tokens written to Secret Manager and restored in a fresh context');
+      console.log('No-state-saving e2e test passed: tokens do NOT persist across tabs');
     });
   });
 
-  // ---------- Token persistence across a FRESH TAB without step 3 ----------
-  // Regression for "I don't want to do step 3 — finish step 2, open a fresh
-  // tab, and steps 1-2 come back": the Discord/GitHub tokens are written to
-  // localStorage (shared across tabs of the same origin) as well as
-  // sessionStorage, so a brand-new page in the SAME context restores them with
-  // EMPTY sessionStorage and NO GCP token (no Secret Manager, no step 3).
-  test.describe('Token Persistence (Fresh Tab, no GCP token)', () => {
+  // ---------- No state saving: fresh tab starts empty ----------
+  // State saving was removed from main — verify that tokens entered in one
+  // tab do NOT leak to a fresh tab via browser storage.
+  test.describe('No State Saving (Fresh Tab)', () => {
     test.beforeEach(async () => {
       test.skip(process.env.E2E_APP_MODE !== 'true', 'Wizard route only available in app mode');
       test.skip(!process.env.E2E_GITHUB_PAT || !process.env.E2E_DISCORD_TOKEN,
         'E2E_GITHUB_PAT and E2E_DISCORD_TOKEN required');
     });
 
-    test('steps 1-2 start empty in a fresh tab (no localStorage restore)', async ({ page, context }) => {
+    test('steps 1-2 start empty in a fresh tab (no persistence)', async ({ page, context }) => {
       test.setTimeout(300000);
 
       // ============ Tab 1: enter tokens — NO GCP token injected ============
@@ -1068,41 +980,18 @@ test.describe('Wizard E2E Regression', () => {
       await patInput.fill(process.env.E2E_GITHUB_PAT);
       await page.getByRole('button', { name: 'Save GitHub Configuration' }).click();
 
-      // Verify tokens are persisted to both sessionStorage and localStorage
-      // (the persistence effects write both, but mount only reads sessionStorage).
-      try {
-        await expect.poll(
-          () => page.evaluate(() => localStorage.getItem('wz_discord_bot_token')),
-          { timeout: 15000, message: 'discord token should be in localStorage' }
-        ).toBe(process.env.E2E_DISCORD_TOKEN);
-        console.log('[persist-local] tab1: discord token in localStorage');
-        await expect.poll(
-          () => page.evaluate(() => localStorage.getItem('wz_github_pat')),
-          { timeout: 15000, message: 'github PAT should be in localStorage' }
-        ).toBe(process.env.E2E_GITHUB_PAT);
-        console.log('[persist-local] tab1: github PAT in localStorage');
-      } catch (err) {
-        console.log('--- PERSIST-LOCAL TAB1 DIAGNOSTICS ---');
-        const storage = await page.evaluate(() => ({
-          lsDiscord: localStorage.getItem('wz_discord_bot_token') ? 'set' : 'missing',
-          lsPat: localStorage.getItem('wz_github_pat') ? 'set' : 'missing',
-          ssDiscord: sessionStorage.getItem('wz_discord_bot_token') ? 'set' : 'missing',
-          ssPat: sessionStorage.getItem('wz_github_pat') ? 'set' : 'missing',
-          e2eToken: sessionStorage.getItem('__e2e_token') ? 'set' : 'missing',
-        })).catch(() => ({}));
-        console.log('storage state:', JSON.stringify(storage));
-        console.log('browser console (last 40):');
-        console.log(browserLogs.slice(-40).join('\n') || '(none)');
-        console.log('--- END TAB1 DIAGNOSTICS ---');
-        throw err;
-      }
+      // State saving is disabled — verify no browser storage persistence.
+      const storageState = await page.evaluate(() => ({
+        ssDiscord: sessionStorage.getItem('wz_discord_bot_token') || sessionStorage.getItem('discordBotToken'),
+        ssPat: sessionStorage.getItem('wz_github_pat') || sessionStorage.getItem('githubPat'),
+        lsDiscord: localStorage.getItem('wz_discord_bot_token') || localStorage.getItem('discordBotToken'),
+        lsPat: localStorage.getItem('wz_github_pat') || localStorage.getItem('githubPat'),
+      })).catch(() => ({}));
+      console.log('[no-persist-local] tab1 storage:', JSON.stringify(storageState));
 
       // ============ Tab 2: FRESH PAGE in the SAME context ============
-      // Same origin → localStorage is shared. sessionStorage is per-tab and
-      // therefore empty here. No injection of any kind → step 3's GCP token is
-      // absent. Mount restore reads sessionStorage only (not localStorage) to
-      // prevent cross-project token contamination, so tab 2 starts EMPTY.
-      console.log('[persist-local] tab2: new page in same context (expect empty)');
+      // State saving disabled: tab 2 starts empty regardless of tab 1 state.
+      console.log('[no-persist-local] tab2: new page in same context (expect empty)');
       const page2 = await context.newPage();
       const page2Console = [];
       page2.on('console', (msg) => page2Console.push(`[${msg.type()}] ${msg.text()}`));
@@ -1117,26 +1006,17 @@ test.describe('Wizard E2E Regression', () => {
         await openStepIfNeeded(page2, 'Step 1: Discord Bot', discord2);
         await expect(discord2).toBeVisible({ timeout: 10000 });
 
-        // Fresh tab should start EMPTY — no localStorage restore, no GCP token,
-        // so SM restore also cannot fire. This prevents cross-project contamination.
+        // Fresh tab must start EMPTY — no state saving.
         await expect(discord2).toHaveValue('', { timeout: 15000 });
-        console.log('[persist-local] tab2: Discord input correctly empty in fresh tab');
+        console.log('[no-persist-local] tab2: Discord input correctly empty in fresh tab');
 
         const pat2 = page2.getByPlaceholder(/ghp_/);
         await openStepIfNeeded(page2, 'Step 2: GitHub', pat2);
         await expect(pat2).toBeVisible({ timeout: 10000 });
         await expect(pat2).toHaveValue('', { timeout: 15000 });
-        console.log('[persist-local] tab2: PAT input correctly empty in fresh tab');
-
-        // Sanity: the GCP token must NOT exist in this context, confirming no
-        // SM restore happened (would require a GCP access token).
-        const ssGcp = await page2.evaluate(() => sessionStorage.getItem('__e2e_token')).catch(() => null);
-        if (ssGcp) {
-          throw new Error('GCP token unexpectedly present in fresh tab — test is not exercising the no-step-3 path');
-        }
-        console.log('[persist-local] tab2: confirmed no GCP token — SM restore did not fire');
+        console.log('[no-persist-local] tab2: PAT input correctly empty in fresh tab');
       } catch (err) {
-        console.log('--- PERSIST-LOCAL TAB2 FAILURE DIAGNOSTICS ---');
+        console.log('--- NO-PERSIST TAB2 FAILURE DIAGNOSTICS ---');
         console.log('page2 URL:', page2.url());
         const dom = await page2.evaluate(() => {
           const wizardRoot = document.querySelector('[class*="space-y"]') || document.body;
@@ -1154,13 +1034,13 @@ test.describe('Wizard E2E Regression', () => {
         console.log('tab2 DOM:', JSON.stringify(dom, null, 2));
         console.log('page2 console (last 60):');
         console.log(page2Console.slice(-60).join('\n') || '(no page2 console logs)');
-        console.log('--- END TAB2 DIAGNOSTICS ---');
+        console.log('--- END NO-PERSIST TAB2 DIAGNOSTICS ---');
         throw err;
       } finally {
         await page2.close().catch(() => {});
       }
 
-      console.log('Fresh-tab test passed: steps 1-2 correctly empty in a fresh tab (no cross-project contamination)');
+      console.log('Fresh-tab test passed: steps 1-2 correctly empty in a fresh tab (no persistence)');
     });
   });
 });
