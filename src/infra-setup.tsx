@@ -165,7 +165,6 @@ const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
   // Guardrails: client-side rate limiting for user-triggered actions (5/min min per AGENTS.md)
   const vmRateLimit = useRateLimit('create-vm', 5);
   const saRateLimit = useRateLimit('create-service-account', 5);
-  const configRateLimit = useRateLimit('save-config', 5);
   const githubRateLimit = useRateLimit('upload-github-vars', 5);
   const firebaseRateLimit = useRateLimit('setup-firebase', 5);
   const discordRateLimit = useRateLimit('create-discord-bot', 5);
@@ -190,7 +189,6 @@ const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
   const [copied, setCopied] = useState(false);
-  const [mergeStatus, setMergeStatus] = useState(null);
   
   const [gcpConnected, setGcpConnected] = useState(false);
   const [gcpProjects, setGcpProjects] = useState([]);
@@ -2737,69 +2735,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     }
   }, [projectId, loading]);
 
-  const handleSaveConfig = async () => {
-    if (!projectId.trim()) return;
-
-    const errors = validate({ projectId }, { projectId: SCHEMAS.projectId });
-    if (errors) {
-      setError(errors.projectId);
-      return;
-    }
-    if (!configRateLimit.check()) {
-      setError('Rate limit reached for saving configuration. Try again in a minute.');
-      return;
-    }
-
-    setSaving(true);
-    setError(null);
-
-    try {
-      await saveConfig({
-        created_at: new Date().toISOString(),
-      });
-
-    } catch (err) {
-      console.error('Error saving config:', err);
-      setError('Failed to save configuration');
-    }
-
-    setSaving(false);
-  };
-
-  const handleMergeToAccount = async () => {
-    if (!user) {
-      setError('Please sign in to merge your configuration');
-      return;
-    }
-    if (!configRateLimit.check()) {
-      setError('Rate limit reached. Try again in a minute.');
-      return;
-    }
-
-    setSaving(true);
-    setMergeStatus('merging');
-
-    try {
-      const localConfig = loadFromLocalStorage();
-      if (!localConfig) {
-        setError('No pending configuration to merge');
-        setSaving(false);
-        return;
-      }
-
-      await saveConfig(localConfig);
-      setMergeStatus('success');
-
-    } catch (err) {
-      console.error('Error merging config:', err);
-      setError('Failed to merge configuration');
-      setMergeStatus('error');
-    }
-
-    setSaving(false);
-    setTimeout(() => setMergeStatus(null), 3000);
-  };
-
   const handleDisconnect = async () => {
     const confirmMessage = selectedProjectId 
       ? `Are you sure you want to disconnect your infrastructure? This will PERMANENTLY delete the active project "${projectName}" and clear all local setups.`
@@ -3415,8 +3350,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     wizard.dispatch({ type: 'COLLAPSE_AND_EXPAND', remove: [1], add: 2 });
   };
 
-  const pendingConfig = !user && loadFromLocalStorage();
-
   return (
     <div className="max-w-4xl mx-auto p-6">
       <div className="flex items-center justify-between mb-8">
@@ -3432,16 +3365,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           </button>
         </div>
         <div className="flex items-center gap-2">
-          {pendingConfig && user && (
-            <button
-              onClick={handleMergeToAccount}
-              disabled={saving}
-              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded-lg flex items-center gap-2"
-            >
-              <Check size={18} />
-              {mergeStatus === 'merging' ? 'Merging...' : 'Merge Pending Config'}
-            </button>
-          )}
           <button
             onClick={() => navigate('/')}
             className="text-blue-600 hover:text-blue-700 font-medium"
@@ -3536,38 +3459,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           </div>
         )}
 
-        <div className="flex flex-wrap items-center gap-4 mb-4">
-          {(isCreatingNew || !selectedProjectId) && (
-            <>
-              <label className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  checked={useFirestore}
-                  onChange={(e) => setUseFirestore(e.target.checked)}
-                  className="w-4 h-4"
-                />
-                <span className="text-sm text-gray-700">Save configuration to my account</span>
-              </label>
-              {useFirestore && (
-                <div className="flex items-center gap-2">
-                  <div className="flex items-center gap-2 bg-green-50 border border-green-200 px-3 py-1.5 rounded-lg text-green-700 text-sm font-medium">
-                    <Check size={16} className="text-green-600" />
-                    <span>Configuration references auto-save (secrets stay in Secret Manager)</span>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </div>
       </div>
 
-      {pendingConfig && !user && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-6">
-          <p className="text-yellow-800">
-            ⚠️ Configuration saved locally. Sign in to save to your account.
-          </p>
-        </div>
-      )}
 
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6 flex items-center gap-2">
@@ -4786,20 +4679,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
             <Trash2 size={18} />
             Disconnect Infrastructure
           </button>
-          {!useFirestore && (
-            <button
-              onClick={handleSaveConfig}
-              disabled={saving || !projectId.trim()}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium disabled:opacity-50"
-            >
-              {saving ? 'Saving...' : 'Save Configuration'}
-            </button>
-          )}
-          {useFirestore && (
-            <span className="text-sm text-gray-500">
-              Auto-saving enabled
-            </span>
-          )}
         </div>
 
         <div className="mt-8 pt-6 border-t border-gray-200">
