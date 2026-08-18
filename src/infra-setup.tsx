@@ -2948,6 +2948,21 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     restoreSecretsFromSecretManager(gcpAccessToken);
   }, [gcpAccessToken, githubPat, discordBotToken, projectId, checkingCompletion]);
 
+  // When the user selects a project that has Secret Manager refs but we don't
+  // hold a GCP access token yet, re-trigger the silent Google token refresh.
+  // This uses the Google session from step 0 sign-in — no step 3 GCP connect
+  // needed. The effect fires AFTER the re-render with the new projectId, so
+  // there's no stale-closure problem. Once the token arrives, the SM restore
+  // effect above fires and fills steps 1-2.
+  useEffect(() => {
+    if (e2eInjectedRef.current) return;
+    if (loading) return;
+    if (gcpAccessToken) return;
+    if (!projectId.trim()) return;
+    if (!smSecretsRef.current) return;
+    void silentGcpTokenRefresh();
+  }, [projectId, loading, gcpAccessToken]);
+
   const handleSaveConfig = async () => {
     if (!projectId.trim()) return;
 
