@@ -49,9 +49,8 @@ const signIn = async (page) => {
 };
 
 // Helper: navigate to wizard and wait for it to render.
-// The wizard is reachable signed-out now (step 0 sign-in is optional), and the
-// Discord step (1) auto-expands for everyone on mount, so we wait on its header
-// rather than on auth-dependent text that gets collapsed once complete.
+// The wizard is accessible signed-out, and the Discord step (1) auto-expands
+// for everyone on mount, so we wait on its header.
 const goToWizard = async (page) => {
   await page.goto(`${TEST_URL}/infra-setup`);
   await page.waitForLoadState('domcontentloaded');
@@ -129,7 +128,7 @@ const navigateWithE2E = async (page, extraParams = {}) => {
   const qs = params.toString();
   await page.goto(`${TEST_URL}/infra-setup${qs ? '?' + qs : ''}`);
   await page.waitForLoadState('domcontentloaded');
-  // No redirect to /login anymore — step 0 sign-in is optional.
+  // No redirect to /login — wizard is fully accessible signed-out.
   await expect(page.getByText('Step 1: Discord Bot')).toBeVisible({ timeout: 15000 });
 };
 
@@ -168,15 +167,13 @@ test.describe('Wizard E2E Regression', () => {
 
   // ---------- Signed-out access tests (app mode only) ----------
   test.describe('Signed-out Access', () => {
-    test('loads wizard signed-out without redirect (optional sign-in)', async ({ page }) => {
+    test('loads wizard signed-out without redirect', async ({ page }) => {
       test.skip(process.env.E2E_APP_MODE !== 'true', 'Wizard route only available in app mode');
       await page.goto(`${TEST_URL}/infra-setup`);
       await page.waitForLoadState('domcontentloaded');
-      // Must NOT bounce to /login — sign-in is optional persistence only.
+      // Must NOT bounce to /login — wizard is fully accessible signed-out.
       await expect(page).toHaveURL(new RegExp(`/infra-setup`), { timeout: 10000 });
-      await expect(page.getByText('Step 0: Sign In (Optional)')).toBeVisible();
-      await expect(page.getByRole('button', { name: 'Sign in with Google' })).toBeVisible();
-      // Discord step (1) auto-expands for signed-out users too — never locked.
+      // Discord step (1) auto-expands — never locked.
       await expect(page.getByText('Discord Bot Token:')).toBeVisible({ timeout: 10000 });
     });
   });
@@ -196,10 +193,9 @@ test.describe('Wizard E2E Regression', () => {
       ).toBeVisible();
     });
 
-    test('shows all 4 step headers', async ({ page }) => {
+    test('shows all 3 step headers', async ({ page }) => {
       await goToWizard(page);
       const steps = [
-        'Step 0: Sign In (Optional)',
         'Step 1: Discord Bot',
         'Step 2: GitHub',
         'Step 3: Google Cloud',
@@ -263,8 +259,7 @@ test.describe('Wizard E2E Regression', () => {
       // bodies collapse, so the Discord token input should NOT be visible.
       await expect(page.getByText('Discord Bot Token:')).not.toBeVisible({ timeout: 15000 });
 
-      // All 4 headers always render (even when locked/complete)
-      await expect(page.getByText('Step 0: Sign In (Optional)')).toBeVisible();
+      // All 3 headers always render (even when locked/complete)
       await expect(page.getByText('Step 1: Discord Bot')).toBeVisible();
       await expect(page.getByText('Step 2: GitHub')).toBeVisible();
       await expect(page.getByText('Step 3: Google Cloud')).toBeVisible();

@@ -10,13 +10,16 @@
 // removed in the 4-step consolidation — see map #27 / tickets #32-#33).
 //
 // Step model (post-consolidation):
-//   step 0: OPTIONAL sign-in  — app auth = persistence only. Never locks the
-//                               next step (isStepLocked(1) is always false).
 //   step 1: Discord           — bot token + server invite. No GCP.
 //   step 2: GitHub            — PAT paste + repo vars. No GCP.
 //   step 3: GCP               — ONE Google consent powers all cloud work
 //                               (Firebase apps, deploy SAs + WIF, app-vm +
 //                               agent SA, billing link, secrets, create VM).
+//
+// Step 0 (optional sign-in) is hidden — it was only useful for persistence
+// via the projects collection which has been removed. The user variable is
+// still available (Firestore config save/load, GCP email matching) but does
+// not gate wizard progress.
 //
 // The previous implementation had ~17 scattered setExpandedSteps updater
 // functions, ~12 setStep3Complete calls, and 8 completion cases; this module
@@ -24,7 +27,7 @@
 // are pure functions testable without mounting the 5400-line component.
 
 export const initialWizardProgress = {
-  expandedSteps: [0], // wizard opens on the optional sign-in card
+  expandedSteps: [1], // wizard opens on the Discord step (step 0 hidden)
 };
 
 export const wizardProgressReducer = (state, action) => {
@@ -70,7 +73,6 @@ export const wizardProgressReducer = (state, action) => {
 // flags, no step3Complete (map #27 / #32/#33).
 export const isStepCompleted = (state, ctx, step) => {
   switch (step) {
-    case 0: return !!ctx.user; // optional sign-in (persistence only)
     case 1: return !!ctx.discordBotAdded; // Discord
     case 2: return !!ctx.githubPat; // GitHub
     case 3: return !!ctx.vmIp; // GCP step done = VM created (or manual IP)
@@ -78,17 +80,16 @@ export const isStepCompleted = (state, ctx, step) => {
   }
 };
 
-// Linear lock chain starts at Discord. Step 0 (optional sign-in) is excluded
-// from the chain entirely: isStepLocked(1) must be false even signed out.
+// Linear lock chain: step 1 is never locked (it's the first step).
 export const isStepLocked = (state, ctx, step) => {
-  if (step === 0 || step === 1) return false;
+  if (step === 1) return false;
   return !isStepCompleted(state, ctx, step - 1);
 };
 
 // Active = "the step the operator should currently be working on": the first
-// incomplete step of the linear chain. Step 0 is active only while nothing
-// else has been done (it offers sign-in, then yields to Discord).
+// incomplete step of the linear chain. Step 1 is always active when incomplete
+// (step 0 is hidden, does not gate progress).
 export const isStepActive = (state, ctx, step) => {
-  if (step === 0) return !isStepCompleted(state, ctx, 0) && !isStepCompleted(state, ctx, 1);
+  if (step === 1) return !isStepCompleted(state, ctx, 1);
   return isStepCompleted(state, ctx, step - 1) && !isStepCompleted(state, ctx, step);
 };

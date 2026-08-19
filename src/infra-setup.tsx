@@ -6,7 +6,7 @@ import { doc, getDoc, Firestore } from 'firebase/firestore';
 import { safeSet, safeDelete } from './guardrails/safe-firestore';
 import { validate } from './guardrails/validate';
 import { useRateLimit } from './guardrails/useRateLimit';
-import { Check, AlertTriangle, Trash2, Shield, Server, Bot } from 'lucide-react';
+import { Check, AlertTriangle, Trash2, Server, Bot } from 'lucide-react';
 import { CloudShellScript, getStartupScript } from './framework/infra-setup/scripts';
 import {
   gcpApiFetch, githubApiFetch, setGitHubVariable, ensureGitHubRepo,
@@ -127,7 +127,7 @@ const extractClientIdFromToken = (token) => {
 };
 
 const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
-  const { user, signInWithGoogle } = useAuth();
+  const { user } = useAuth();
   const navigate = useNavigate();
   const { addNotification } = useNotification();
 
@@ -1846,8 +1846,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   };
 
   // Try to refresh the GCP token silently (prior consent + active Google
-  // session in the browser) so a returning operator who is signed in via
-  // step 0 gets their config AND tokens restored without re-consenting.
+  // session in the browser) so config AND tokens restore without re-consenting.
   // Best-effort: on interaction_required it falls back to the manual
   // "Connect Google Cloud Account" button (step 3).
   const silentGcpTokenRefresh = async () => {
@@ -2408,9 +2407,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   };
 
   useEffect(() => {
-    // Auto-expand the first actionable step on mount. Step 0 (Sign In) is
-    // optional, so the Discord step is always the first unlocked step for
-    // signed-out users. Deliberately mount-only: no user dependency.
+    // Auto-expand step 1 (Discord) on mount. Deliberately mount-only.
     if (!expandedSteps.includes(1) && isStepLocked(1) === false) {
       wizard.dispatch({ type: 'EXPAND_STEP', step: 1 });
     }
@@ -2773,7 +2770,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       // broken VM. (e2e/legacy flows have no Google sign-in or god SA, so the
       // default compute SA below is their only accessor — it must resolve.)
       if (members.length === 0) {
-        throw new Error('Cannot store secrets in Secret Manager: no service account granted access. Sign in with Google (Step 0) or connect a service account (Step 3) first.');
+        throw new Error('Cannot store secrets in Secret Manager: no service account granted access. Connect Google Cloud (Step 3) first.');
       }
     }
     if (githubPat) {
@@ -3249,41 +3246,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       )}
 
       <div className="space-y-4">
-
-        {/* Step 0: Sign In (Optional) */}
-        <div className="space-y-2">
-          <StepHeader stepNumber={0} title="Step 0: Sign In (Optional)" icon={<Shield className="text-blue-600" size={24} />} isComplete={isStepCompleted(0)} isActive={isStepActive(0)} isLocked={isStepLocked(0)} info="Optional - saves your configuration so you can resume later. All steps below work without an account." expandedSteps={expandedSteps} toggleStep={toggleStep} />
-        
-          {expandedSteps.includes(0) && (
-            <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2">
-              {user ? (
-                <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
-                  <Check size={20} />
-                  <span className="font-medium">Signed in as {user.email}</span>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <p className="text-gray-600">
-                    Signing in is optional - it only persists your configuration so you can resume later. All steps below work without an account.
-                  </p>
-                  <button
-                    onClick={async () => {
-                      setError(null);
-                      try {
-                        await signInWithGoogle();
-                      } catch (err) {
-                        setError('Sign-in failed: ' + err.message);
-                      }
-                    }}
-                    className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-medium"
-                  >
-                    Sign in with Google
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
 
         {/* Step 1: Discord Bot */}
         <div className="space-y-2">
