@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useAuth } from './firestore-utils/auth-context';
 import { useNavigate } from 'react-router';
 import { useNotification } from './firestore-utils/notification-context';
-import { doc, getDoc, collection, getDocs, query, where, serverTimestamp, Firestore } from 'firebase/firestore';
+import { doc, getDoc, Firestore } from 'firebase/firestore';
 import { safeSet, safeDelete } from './guardrails/safe-firestore';
 import { validate } from './guardrails/validate';
 import { useRateLimit } from './guardrails/useRateLimit';
@@ -64,7 +64,6 @@ interface InfraSetupProps {
 }
 
 const INFRA_COLLECTION = 'infra_configs';
-const PROJECTS_COLLECTION = 'projects';
 const LOCALSTORAGE_KEY = 'infra_config_pending';
 const FORM_PROGRESS_KEY = 'infra_form_progress';
 // Operator-entered secrets: never written to Firestore (GHSA-x49w). Discord
@@ -91,36 +90,6 @@ const loadFormProgress = () => {
     console.error('Error loading form progress:', e);
     return null;
   }
-};
-
-const loadProjectsFromFirestore = async (userId, firestoreDb) => {
-  if (!userId || !firestoreDb) return [];
-  const q = query(collection(firestoreDb, PROJECTS_COLLECTION), where('userId', '==', userId));
-  const snapshot = await getDocs(q);
-  return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-};
-
-const saveProjectToFirestore = async (userId, projectId, name, refs, firestoreDb) => {
-  // References only — never secret values. Secrets live in Secret Manager and
-  // are referenced via sm_secrets; the Firebase web configs are public by
-  // design (shipped to browsers) so they are safe to persist.
-  await safeSet(firestoreDb, PROJECTS_COLLECTION, projectId, {
-    userId,
-    name,
-    ...refs,
-    updated_at: serverTimestamp()
-  }, userId, {
-    allowFields: [
-      'userId', 'name', 'gcp_project_id', 'discord_guild_id',
-      'firebase_staging', 'firebase_production', 'vm_ip', 'vm_zone',
-      'github_repo', 'sm_secrets', 'updated_at'
-    ],
-    merge: true
-  });
-};
-
-const deleteProjectFromFirestore = async (projectId, userId, firestoreDb) => {
-  await safeDelete(firestoreDb, PROJECTS_COLLECTION, projectId, userId);
 };
 
 
@@ -191,8 +160,8 @@ const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState(false);
   
   const [gcpConnected, setGcpConnected] = useState(false);
+  const [gcpProjectsLoading, setGcpProjectsLoading] = useState(false);
   const [gcpProjects, setGcpProjects] = useState([]);
-  const [loadingProjects, setLoadingProjects] = useState(false);
   const [gcpAccessToken, setGcpAccessToken] = useState(null);
   const [gcpTokenExpiry, setGcpTokenExpiry] = useState(0);
   const [apiNotEnabled, setApiNotEnabled] = useState(false);
@@ -205,11 +174,7 @@ const [loading, setLoading] = useState(true);
   const [gcpEmailMismatch, setGcpEmailMismatch] = useState(false);
   const [checkingCompletion, setCheckingCompletion] = useState(true);
 
-  const [projects, setProjects] = useState([]);
-  const [selectedProjectId, setSelectedProjectId] = useState('');
   const [projectName, setProjectName] = useState('');
-  const [isCreatingNew, setIsCreatingNew] = useState(false);
-  const [useFirestore, setUseFirestore] = useState(false);
 
   const [firebaseConfigStaging, setFirebaseConfigStaging] = useState('');
   const [firebaseConfigProduction, setFirebaseConfigProduction] = useState('');
@@ -1776,7 +1741,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   const [deletingVm, setDeletingVm] = useState(false);
 
   const fetchGcpProjects = async (token) => {
-    setLoadingProjects(true);
+    setGcpProjectsLoading(true);
     setApiNotEnabled(false);
     try {
       const response = await fetch('https://cloudresourcemanager.googleapis.com/v1/projects', {
@@ -1802,7 +1767,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       setApiNotEnabled(true);
       setGcpProjects([]);
     } finally {
-      setLoadingProjects(false);
+      setGcpProjectsLoading(false);
     }
     return [];
   };
@@ -2364,9 +2329,10 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         // discord_bot_token intentionally NOT restored from Firestore (GHSA-x49w).
         // Restored from browser storage in the dedicated mount effect below.
         setDiscordGuildId(configData.discord_guild_id || configData.discordGuildId || '');
-        // E2E injection sets discordBotAdded=true via URL params; don't overwrite
-        // with stale Firestore value that would lock Step 8 and block the test
-        if (!e2eInjectedRef.current) setDiscordBotAdded(!!configData.discord_bot_added);
+        // discord_bot_added intentionally NOT restored from Firestore — the
+        // wizard should start with step 1 incomplete each time. The user
+        // re-enters their bot token and clicks "Create Bot" to complete it.
+        // E2E injection still sets it via URL params.
         // Firebase configs are E2E-injected too — skip stale Firestore restore
         if (!e2eInjectedRef.current && configData.firebase_staging) {
           setFirebaseConfigStaging(JSON.stringify(configData.firebase_staging, null, 2));
@@ -2435,68 +2401,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     }
   }, [checkingCompletion]);
 
-  useEffect(() => {
-    const loadProjects = async () => {
-      if (!user) {
-        setProjects([]);
-        return;
-      }
-      setLoadingProjects(true);
-      try {
-        const loadedProjects = await loadProjectsFromFirestore(user.uid, db);
-        setProjects(loadedProjects);
-      } catch (err) {
-        console.error('Error loading projects:', err);
-      }
-      setLoadingProjects(false);
-    };
-    loadProjects();
-  }, [user, db]);
-
-  // After projects and projectId are both loaded, sync the project selector
-  // dropdown so it shows the correct project instead of "Select a project".
-  // Only runs once (first time both are available with a non-empty projectId
-  // and an empty selectedProjectId).
-  // When projects are loaded but none match the Firestore config's projectId,
-  // clear the stale projectId so SM restore doesn't fill tokens for a
-  // non-existent project while the dropdown shows "Select a project".
-  // E2e injection: skip clearing — the test injects credentials directly and
-  // doesn't create project docs, so clearing would break the SM round-trip.
-  const projectSyncedRef = useRef(false);
-  useEffect(() => {
-    if (projectSyncedRef.current) return;
-    if (!projectId || projects.length === 0 || selectedProjectId) return;
-    const match = projects.find(p =>
-      (p.gcp_project_id || p.gcp?.projectId) === projectId
-    );
-    projectSyncedRef.current = true;
-    if (match) {
-      setSelectedProjectId(match.id);
-    } else {
-      // No project matches — clear the stale projectId and SM refs
-      // unless this is an e2e session (injected credentials, no project docs).
-      const isE2E = typeof window !== 'undefined' && sessionStorage.getItem('__e2e_token');
-      if (!isE2E) {
-        setProjectId('');
-      }
-    }
-  }, [projectId, projects, selectedProjectId]);
-
   const handleCopyScript = () => {
     navigator.clipboard.writeText(CloudShellScript({ projectId }));
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
-
-  useEffect(() => {
-    if (!useFirestore || !user || !projectName || !selectedProjectId) return;
-    
-    const timer = setTimeout(() => {
-      autoSaveProject();
-    }, 2000);
-    
-    return () => clearTimeout(timer);
-  }, [projectId, serviceAccountJson, discordBotToken, githubPat, firebaseConfigStaging, firebaseConfigProduction, vmIp, vmZone, useFirestore, user, projectName, selectedProjectId]);
 
   useEffect(() => {
     // Auto-expand the first actionable step on mount. Step 0 (Sign In) is
@@ -2653,52 +2562,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     } else {
       saveToLocalStorage(finalData);
     }
-
-    if (useFirestore && user && projectName) {
-      console.log('Saving project to Firestore (references only):', projectName);
-      try {
-        const projectIdToSave = selectedProjectId || `proj_${Date.now()}`;
-        const discordGuildIdToSave = configData?.discord_guild_id || discordGuildId;
-        console.log('Saving project refs with discordGuildId:', discordGuildIdToSave || 'EMPTY');
-
-        await saveProjectToFirestore(user.uid, projectIdToSave, projectName, buildProjectRefs({ discordGuildId: discordGuildIdToSave }), db);
-        console.log('Project saved successfully');
-        setSelectedProjectId(projectIdToSave);
-        setIsCreatingNew(false);
-        const updatedProjects = await loadProjectsFromFirestore(user.uid, db);
-        setProjects(updatedProjects);
-        console.log('Projects reloaded:', updatedProjects);
-      } catch (err) {
-        console.error('Error saving project:', err);
-      }
-    }
-  };
-
-  // References only — secrets (SA key, PAT, bot token) never touch Firestore.
-  // They live in Secret Manager and are fetched by the VM at boot.
-  const buildProjectRefs = ({ discordGuildId: extraGuildId = discordGuildId } = {}) => ({
-    gcp_project_id: projectId.trim(),
-    discord_guild_id: extraGuildId || discordGuildId || null,
-    firebase_staging: firebaseConfigStaging || null,
-    firebase_production: firebaseConfigProduction || null,
-    vm_ip: vmIp || null,
-    vm_zone: vmZone || null,
-    github_repo: githubRepoName || null
-  });
-
-  const autoSaveProject = async () => {
-    if (!useFirestore || !user || !projectName) return;
-    if (!selectedProjectId) {
-      console.log('No project selected, skipping auto-save');
-      return;
-    }
-    
-    try {
-      await saveProjectToFirestore(user.uid, selectedProjectId, projectName, buildProjectRefs(), db);
-      console.log('Project auto-saved');
-    } catch (err) {
-      console.error('Error auto-saving project:', err);
-    }
   };
 
   // When the operator switches to a different GCP project, clear the
@@ -2736,22 +2599,13 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   }, [projectId, loading]);
 
   const handleDisconnect = async () => {
-    const confirmMessage = selectedProjectId 
-      ? `Are you sure you want to disconnect your infrastructure? This will PERMANENTLY delete the active project "${projectName}" and clear all local setups.`
-      : 'Are you sure you want to disconnect your infrastructure? This will remove your GCP project linkage.';
-      
-    if (!confirm(confirmMessage)) {
+    if (!confirm('Are you sure you want to disconnect your infrastructure? This will clear all local setups.')) {
       return;
     }
 
     try {
       if (user) {
         await safeDelete(db, INFRA_COLLECTION, user.uid, user.uid);
-
-        // If a project is currently selected, delete it from Firestore!
-        if (selectedProjectId) {
-          await deleteProjectFromFirestore(selectedProjectId, user.uid, db);
-        }
       }
       localStorage.removeItem(LOCALSTORAGE_KEY);
       localStorage.removeItem(FORM_PROGRESS_KEY);
@@ -2775,9 +2629,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       setFirebaseStagingData({});
       setFirebaseProductionData({});
       
-      setSelectedProjectId('');
       setProjectName('');
-      setUseFirestore(false);
       
       setGcpConfigLost(false);
       setGcpConsentEmail('');
@@ -2785,14 +2637,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       
       wizard.dispatch({ type: 'CLEAR' });
       setError(null);
-
-      // Reload projects list to reflect the deletion
-      if (user) {
-        const updatedProjects = await loadProjectsFromFirestore(user.uid, db);
-        setProjects(updatedProjects);
-      }
       
-      addNotification('Infrastructure disconnected and project deleted successfully!', 'success');
+      addNotification('Infrastructure disconnected successfully!', 'success');
     } catch (err) {
       console.error('Error disconnecting:', err);
       setError('Failed to disconnect');
@@ -3375,90 +3221,16 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       </div>
 
       <div className="bg-gray-50 border border-gray-200 rounded-lg p-4 mb-6">
-        <div className="flex flex-wrap items-center gap-4 mb-4">
-          <div className="flex items-center gap-2">
-            <label className="font-medium text-gray-700">Project:</label>
-            <select
-              value={selectedProjectId}
-              onChange={async (e) => {
-                const projId = e.target.value;
-                setSelectedProjectId(projId);
-                setIsCreatingNew(false);
-                if (!projId) {
-                  // Clear ALL project-specific state so no stale tokens from
-                  // a previous project leak through.
-                  setProjectName('');
-                  setProjectId('');
-                  setUseFirestore(false);
-                  setDiscordBotToken('');
-                  setDiscordBotTokenInput('');
-                  setDiscordClientId('');
-                  setGithubPat('');
-                  setDiscordBotAdded(false);
-                  return;
-                }
-                const proj = projects.find(p => p.id === projId);
-                if (proj) {
-                  setProjectName(proj.name || '');
-                  setUseFirestore(true);
-                  // References only — secrets (SA key, PAT, bot token) are
-                  // never stored in Firestore. They live in Secret Manager
-                  // and are fetched by the VM at boot, so re-entry restores
-                  // configuration references only. Legacy docs may use the
-                  // nested { gcp: { projectId } } plaintext shape.
-                  setProjectId(proj.gcp_project_id || proj.gcp?.projectId || '');
-                  if (proj.firebase_staging || proj.firebase?.staging) {
-                    setFirebaseConfigStaging(proj.firebase_staging || proj.firebase?.staging || '');
-                  }
-                  if (proj.firebase_production || proj.firebase?.production) {
-                    setFirebaseConfigProduction(proj.firebase_production || proj.firebase?.production || '');
-                  }
-                  setVmIp(proj.vm_ip || proj.vm?.ip || '');
-                  setVmZone(proj.vm_zone || proj.vm?.zone || 'us-east1-b');
-                  setDiscordGuildId(proj.discord_guild_id || '');
-                  setGithubRepoName(proj.github_repo || '');
-                }
-              }}
-              className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-400"
-            >
-              <option value="">Select a project</option>
-              {projects.map(proj => (
-                <option key={proj.id} value={proj.id}>{proj.name}</option>
-              ))}
-            </select>
-          </div>
-          <button
-            onClick={() => {
-              setSelectedProjectId('');
-              setProjectName('');
-              setIsCreatingNew(true);
-              setProjectId('');
-              setServiceAccountJson(null);
-              setDiscordBotToken('');
-              setGithubPat('');
-              setFirebaseConfigStaging('');
-              setFirebaseConfigProduction('');
-              setVmIp('');
-            }}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg flex items-center gap-1"
-          >
-            + New Project
-          </button>
+        <div className="mb-0">
+          <label className="block text-sm font-medium text-gray-700 mb-1">Project Name:</label>
+          <input
+            type="text"
+            value={projectName}
+            onChange={(e) => setProjectName(e.target.value)}
+            placeholder="Enter project name (e.g., my-app-staging)"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-400"
+          />
         </div>
-
-        {isCreatingNew && (
-          <div className="mb-4">
-            <label className="block text-sm font-medium text-gray-700 mb-1">Project Name:</label>
-            <input
-              type="text"
-              value={projectName}
-              onChange={(e) => setProjectName(e.target.value)}
-              placeholder="Enter project name (e.g., my-app-staging)"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:border-blue-400"
-            />
-          </div>
-        )}
-
       </div>
 
 
