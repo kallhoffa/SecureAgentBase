@@ -51,6 +51,29 @@ const RootLayout: React.FC<RootLayoutProps> = ({ db }) => {
   );
 };
 
+// Standalone layout — same chrome as RootLayout but wraps children directly
+// (no Outlet) so routes outside the StagingGate layout can use it.
+const StandaloneLayout: React.FC<RootLayoutProps & { children: React.ReactNode }> = ({ db, children }) => {
+  return (
+    <>
+      <EnvironmentBanner />
+      <NavigationBar db={db} />
+      <div className="pt-24 min-h-[calc(100vh-10rem)]">
+        {children}
+      </div>
+      <footer className="border-t border-gray-200 mt-8">
+        <div className="max-w-6xl mx-auto px-4 py-6 flex flex-col sm:flex-row items-center justify-between gap-2 text-sm text-gray-500">
+          <span>&copy; {new Date().getFullYear()} {appName}</span>
+          <nav className="flex items-center space-x-4">
+            <Link to="/privacy" className="hover:text-blue-600">Privacy Policy</Link>
+            <Link to="/terms" className="hover:text-blue-600">Terms of Service</Link>
+          </nav>
+        </div>
+      </footer>
+    </>
+  );
+};
+
 const HomePage: React.FC = () => {
   const { loading } = useAuth();
   
@@ -105,14 +128,21 @@ const App: React.FC<AppProps> = ({ db }) => {
             <Route path="/terms" element={<Terms />} />
             <Route path="/profile" element={<RequireAuth><Profile db={db} /></RequireAuth>} />
             {isAppMode && (
-              <Route path="/infra-setup" element={<InfraSetup db={db} />} />
-            )}
-            {isAppMode && (
               <Route path="/create-app" element={<RequireAuth><CreateApp db={db} /></RequireAuth>} />
             )}
             <Route path="/tasks" element={<RequireAuth><Tasks db={db} /></RequireAuth>} />
             <Route path="/preview" element={<Dashboard />} />
           </Route>
+          {/* Infra-setup lives outside StagingGate — it doesn't require
+              Firebase auth (works via localStorage fallback) and the wizard
+              operator needs unconditional access during setup. */}
+          {isAppMode && (
+            <Route path="/infra-setup" element={
+              <StandaloneLayout db={db}>
+                <InfraSetup db={db} />
+              </StandaloneLayout>
+            } />
+          )}
           <Route path="/admin" element={<StagingGate db={db}><AdminPanel db={db} /></StagingGate>} />
           <Route path="/admin/feature-flags" element={<StagingGate db={db}><AdminPanel db={db} /></StagingGate>} />
           <Route path="/admin/limits" element={<StagingGate db={db}><AdminPanel db={db} /></StagingGate>} />
