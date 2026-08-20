@@ -898,11 +898,13 @@ test.describe('Wizard E2E Regression', () => {
         await expect(discord2).toHaveValue('', { timeout: 15000 });
         console.log('[no-persist] tab2: Discord input correctly empty');
 
+        // Step 2 is locked when step 1 isn't complete — verify it's locked
+        // (no PAT input visible) rather than checking the input value.
+        const step2Header = page2.getByText('Step 2: GitHub');
+        await expect(step2Header).toBeVisible({ timeout: 10000 });
         const pat2 = page2.getByPlaceholder(/ghp_/);
-        await openStepIfNeeded(page2, 'Step 2: GitHub', pat2);
-        await expect(pat2).toBeVisible({ timeout: 10000 });
-        await expect(pat2).toHaveValue('', { timeout: 15000 });
-        console.log('[no-persist] tab2: PAT input correctly empty');
+        await expect(pat2).not.toBeVisible({ timeout: 5000 });
+        console.log('[no-persist] tab2: Step 2 correctly locked (no PAT input visible)');
       } catch (err) {
         console.log('--- TAB2 FAILURE DIAGNOSTICS ---');
         console.log('page2 URL:', page2.url());
@@ -1005,11 +1007,13 @@ test.describe('Wizard E2E Regression', () => {
         await expect(discord2).toHaveValue('', { timeout: 15000 });
         console.log('[no-persist-local] tab2: Discord input correctly empty in fresh tab');
 
+        // Step 2 is locked when step 1 isn't complete — verify it's locked
+        // rather than checking the PAT input value.
+        const step2Header = page2.getByText('Step 2: GitHub');
+        await expect(step2Header).toBeVisible({ timeout: 10000 });
         const pat2 = page2.getByPlaceholder(/ghp_/);
-        await openStepIfNeeded(page2, 'Step 2: GitHub', pat2);
-        await expect(pat2).toBeVisible({ timeout: 10000 });
-        await expect(pat2).toHaveValue('', { timeout: 15000 });
-        console.log('[no-persist-local] tab2: PAT input correctly empty in fresh tab');
+        await expect(pat2).not.toBeVisible({ timeout: 5000 });
+        console.log('[no-persist-local] tab2: Step 2 correctly locked in fresh tab');
       } catch (err) {
         console.log('--- NO-PERSIST TAB2 FAILURE DIAGNOSTICS ---');
         console.log('page2 URL:', page2.url());
