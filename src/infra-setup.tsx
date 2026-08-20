@@ -589,10 +589,12 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
   const setupFirebaseProject = async (projectIdVal, environment) => {
     setFirebaseAutoConfigMessage(`${environment}: Creating web app...`);
+    const token = await getAccessToken();
+    if (!token) throw new Error('No auth token available for Firebase setup');
     let webApps;
     for (let i = 0; i < 12; i++) {
       try {
-        webApps = await listFirebaseWebApps(gcpAccessToken, projectIdVal);
+        webApps = await listFirebaseWebApps(token, projectIdVal);
         break;
       } catch (e) {
         if (i >= 11) throw e;
@@ -604,19 +606,23 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     if (webApps.length > 0) {
       appId = webApps[0].appId;
     } else {
-      const newApp = await createFirebaseWebApp(gcpAccessToken, projectIdVal, `${projectName} ${environment}`);
+      const newApp = await createFirebaseWebApp(token, projectIdVal, `${projectName} ${environment}`);
       appId = newApp.appId;
     }
 
+    if (!appId) {
+      throw new Error(`Failed to determine web app ID for ${environment} Firebase project`);
+    }
+
     setFirebaseAutoConfigMessage(`${environment}: Fetching SDK config...`);
-    const config = await getFirebaseWebAppConfig(gcpAccessToken, projectIdVal, appId);
+    const config = await getFirebaseWebAppConfig(token, projectIdVal, appId);
 
     const originUrl = `https://${config.projectId}.web.app`;
     setFirebaseAutoConfigMessage(`${environment}: Setting up OAuth client...`);
-    const clientId = await createOrFindOAuthClient(gcpAccessToken, projectIdVal, `${projectName} (${environment})`, originUrl);
+    const clientId = await createOrFindOAuthClient(token, projectIdVal, `${projectName} (${environment})`, originUrl);
 
     setFirebaseAutoConfigMessage(`${environment}: Adding authorized domains...`);
-    await updateAuthDomains(gcpAccessToken, projectIdVal, [
+    await updateAuthDomains(token, projectIdVal, [
       'localhost', config.projectId + '.web.app', config.projectId + '.firebaseapp.com',
     ]);
 
