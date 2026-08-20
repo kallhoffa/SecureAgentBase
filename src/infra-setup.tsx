@@ -655,19 +655,14 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         setFirebaseStagingData(stagingConfig);
         if (stagingClientId) setGcpClientIdStaging(stagingClientId);
       } else {
-        const stagingProjectId = projectId || `${(projectName || 'app').toLowerCase().replace(/[^a-z0-9-]/g, '-')}-staging`;
-        setFirebaseAutoConfigMessage(projectId
-          ? `Enabling Firebase on existing project ${projectId}...`
-          : `Creating staging project: ${stagingProjectId}...`);
-        if (projectId) {
-          await ensureFirebaseOnProject(projectId);
-        } else {
-          await ensureGcpProjectExists(stagingProjectId, `${projectName || 'App'} Staging`, false);
-          await ensureFirebaseOnProject(stagingProjectId, true);
-        }
-        const stagingTarget = projectId || stagingProjectId;
+        // Always create a new staging project named after the app, not
+        // reuse the selected GCP project (that's for the service account).
+        const stagingProjectId = `${(projectName || 'app').toLowerCase().replace(/[^a-z0-9-]/g, '-')}-staging`;
+        setFirebaseAutoConfigMessage(`Creating staging project: ${stagingProjectId}...`);
+        await ensureGcpProjectExists(stagingProjectId, `${projectName || 'App'} Staging`, false);
+        await ensureFirebaseOnProject(stagingProjectId, true);
         setFirebaseAutoConfigMessage('Setting up staging web app...');
-        const stagingResult = await setupFirebaseProject(stagingTarget, 'Staging');
+        const stagingResult = await setupFirebaseProject(stagingProjectId, 'Staging');
         stagingConfig = stagingResult.config;
         stagingClientId = stagingResult.clientId;
         setFirebaseConfigStaging(JSON.stringify(stagingConfig, null, 2));
@@ -683,10 +678,10 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         setFirebaseProductionData(productionConfig);
         if (productionClientId) setGcpClientIdProduction(productionClientId);
       } else if (gcpAccessToken) {
-        const prodProjectId = projectName ? `${projectName.toLowerCase().replace(/[^a-z0-9-]/g, '-')}-production` : `${projectId}-prod`;
+        const prodProjectId = `${(projectName || 'app').toLowerCase().replace(/[^a-z0-9-]/g, '-')}-prod`;
         setFirebaseAutoConfigMessage(`Creating production project ${prodProjectId}...`);
         try {
-          await ensureGcpProjectExists(prodProjectId, projectName || 'Production', false);
+          await ensureGcpProjectExists(prodProjectId, `${projectName || 'App'} Production`, false);
           await ensureFirebaseOnProject(prodProjectId, false);
           setFirebaseAutoConfigMessage('Setting up production web app...');
           const prodResult = await setupFirebaseProject(prodProjectId, 'Production');
@@ -2254,16 +2249,9 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     const formProgress = loadFormProgress();
     console.log('Loading form progress:', formProgress);
     if (formProgress) {
-      if (formProgress.firebaseConfigStaging) {
-        setFirebaseConfigStaging(formProgress.firebaseConfigStaging);
-        const parsed = parseFirebaseConfig(formProgress.firebaseConfigStaging);
-        if (parsed) setFirebaseStagingData(parsed);
-      }
-      if (formProgress.firebaseConfigProduction) {
-        setFirebaseConfigProduction(formProgress.firebaseConfigProduction);
-        const parsed = parseFirebaseConfig(formProgress.firebaseConfigProduction);
-        if (parsed) setFirebaseProductionData(parsed);
-      }
+      // Firebase configs intentionally NOT restored from localStorage.
+      // The wizard re-runs Firebase setup on each session — stale
+      // configs from a prior run cause confusion and 400 errors.
       if (formProgress.vmHttpsUrl) setVmHttpsUrl(formProgress.vmHttpsUrl);
       if (formProgress.expandedSteps) wizard.dispatch({ type: 'SET_EXPANDED', steps: formProgress.expandedSteps });
       // Note: serviceAccountJson is NOT restored from storage since it contains sensitive private_key
@@ -2278,8 +2266,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     
     if (!import.meta.env.DEV) return;
     const formData = {
-      firebaseConfigStaging,
-      firebaseConfigProduction,
       githubPat: githubPat ? 'saved' : null,
       discordBotToken: discordBotToken ? 'saved' : null,
       discordGuildId,
@@ -2290,7 +2276,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       gcpAccessToken: gcpAccessToken ? 'saved' : null,
     };
     saveFormProgress(formData);
-  }, [formProgressLoaded, firebaseConfigStaging, firebaseConfigProduction, githubPat, discordBotToken, discordGuildId, expandedSteps, serviceAccountJson, projectId, godSaEmail, gcpAccessToken]);
+  }, [formProgressLoaded, githubPat, discordBotToken, discordGuildId, expandedSteps, serviceAccountJson, projectId, godSaEmail, gcpAccessToken]);
 
   useEffect(() => {
     const loadInfraConfig = async () => {
@@ -2374,14 +2360,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         if (configData.gcp_project_id && !configData.gcp_access_token) {
           setGcpConfigLost(true);
         }
-      }
-
-      // Signed in via step 0 but no GCP token yet: try a silent Google token
-      // refresh (prior consent) so the saved config AND Secret Manager tokens
-      // restore without the operator re-consenting on step 3. Falls back to
-      // the manual connect button when the browser has no Google session.
-      if (!e2eInjectedRef.current && configData?.gcp_project_id) {
-        void silentGcpTokenRefresh();
       }
 
       setLoading(false);
@@ -3453,25 +3431,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         
           {expandedSteps.includes(3) && !isStepLocked(3) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 space-y-6">
-                      {/* Sub-task progress indicators */}
-                      <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
-                        <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide">Progress</p>
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 text-xs">
-                          {[
-                            { label: 'Connect', done: gcpConnected },
-                            { label: 'Service Account', done: !!godSaEmail },
-                            { label: 'Project', done: !!projectId },
-                            { label: 'Firebase', done: !!(firebaseStagingData && firebaseProductionData) },
-                            { label: 'Billing', done: billingEnabled === true },
-                            { label: 'OIDC', done: !!(gcpWifProviderName && gcpSaStagingEmail && gcpSaProductionEmail) },
-                          ].map(({ label, done }) => (
-                            <div key={label} className={`flex items-center gap-1.5 px-2 py-1 rounded ${done ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-400'}`}>
-                              {done ? <Check size={12} /> : <span className="w-3 h-3 rounded-full border border-gray-300 inline-block" />}
-                              <span>{label}</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
                       {gcpEmailMismatch && (
                         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                           <p className="text-yellow-800 font-medium mb-1">Different Google accounts detected</p>
@@ -3483,8 +3442,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                         </div>
                       )}
                       {/* 1. Connect Google Cloud & Service Account */}
-                      <section>
-                        <h3 className="font-semibold text-gray-700 text-sm mb-3">1. Connect Google Cloud & Service Account</h3>
+                      <section className={`rounded-lg p-4 -mx-4 ${gcpConnected && godSaEmail ? 'bg-green-50 border border-green-200' : ''}`}>
+                        <h3 className={`font-semibold text-sm mb-3 flex items-center gap-2 ${gcpConnected && godSaEmail ? 'text-green-700' : 'text-gray-700'}`}>
+                          {gcpConnected && godSaEmail && <Check size={16} className="text-green-600" />}
+                          1. Connect Google Cloud & Service Account
+                        </h3>
                   {!gcpConnected ? (
                     <div className="bg-blue-50 border border-blue-200 rounded-xl p-5 mb-5 flex items-center justify-between gap-4">
                       <div className="flex-1">
@@ -3584,8 +3546,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                       </section>
 
                       {/* 2. Project */}
-                      <section>
-                        <h3 className="font-semibold text-gray-700 text-sm mb-3">2. Project</h3>
+                      <section className={`rounded-lg p-4 -mx-4 ${projectId ? 'bg-green-50 border border-green-200' : ''}`}>
+                        <h3 className={`font-semibold text-sm mb-3 flex items-center gap-2 ${projectId ? 'text-green-700' : 'text-gray-700'}`}>
+                          {projectId && <Check size={16} className="text-green-600" />}
+                          2. Project
+                        </h3>
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
                     <p className="text-blue-800 font-medium mb-2">Select or enter your GCP Project ID:</p>
                     {gcpAccessToken && gcpProjects.length > 0 && (
@@ -3695,8 +3660,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                       </section>
 
                       {/* 3. Firebase */}
-                      <section>
-                        <h3 className="font-semibold text-gray-700 text-sm mb-3">3. Firebase (staging + production)</h3>
+                      <section className={`rounded-lg p-4 -mx-4 ${firebaseStagingData?.projectId && firebaseProductionData?.projectId ? 'bg-green-50 border border-green-200' : ''}`}>
+                        <h3 className={`font-semibold text-sm mb-3 flex items-center gap-2 ${firebaseStagingData?.projectId && firebaseProductionData?.projectId ? 'text-green-700' : 'text-gray-700'}`}>
+                          {firebaseStagingData?.projectId && firebaseProductionData?.projectId && <Check size={16} className="text-green-600" />}
+                          3. Firebase (staging + production)
+                        </h3>
                   {!gcpAccessToken && (
                     <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
                       <p className="text-yellow-800 font-medium mb-2">Google Cloud Connection Required</p>
@@ -3834,8 +3802,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                       </section>
 
                       {/* 4. Billing */}
-                      <section>
-                        <h3 className="font-semibold text-gray-700 text-sm mb-3">4. Billing</h3>
+                      <section className={`rounded-lg p-4 -mx-4 ${billingEnabled === true ? 'bg-green-50 border border-green-200' : ''}`}>
+                        <h3 className={`font-semibold text-sm mb-3 flex items-center gap-2 ${billingEnabled === true ? 'text-green-700' : 'text-gray-700'}`}>
+                          {billingEnabled === true && <Check size={16} className="text-green-600" />}
+                          4. Billing
+                        </h3>
                 <div className="space-y-4">
                   <p className="text-sm text-gray-600">
                     GCP requires an active billing account linked to your project to enable Compute Engine and create your VM. Select your Google Cloud billing account below to link it programmatically.
@@ -3945,8 +3916,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                       </section>
 
                       {/* 5. CI Deployment (OIDC) */}
-                      <section>
-                        <h3 className="font-semibold text-gray-700 text-sm mb-3">5. CI Deployment (OIDC)</h3>
+                      <section className={`rounded-lg p-4 -mx-4 ${gcpWifProviderName && gcpSaStagingEmail && gcpSaProductionEmail ? 'bg-green-50 border border-green-200' : ''}`}>
+                        <h3 className={`font-semibold text-sm mb-3 flex items-center gap-2 ${gcpWifProviderName && gcpSaStagingEmail && gcpSaProductionEmail ? 'text-green-700' : 'text-gray-700'}`}>
+                          {gcpWifProviderName && gcpSaStagingEmail && gcpSaProductionEmail && <Check size={16} className="text-green-600" />}
+                          5. CI Deployment (OIDC)
+                        </h3>
                   {!gcpAccessToken && (
                     <div className="mb-4 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                       <p className="text-yellow-800 font-medium mb-1">Google Cloud Connection Required</p>
@@ -4128,8 +4102,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                       </section>
 
                       {/* 6. Create VM */}
-                      <section>
-                        <h3 className="font-semibold text-gray-700 text-sm mb-3">6. Create VM</h3>
+                      <section className={`rounded-lg p-4 -mx-4 ${vmIp ? 'bg-green-50 border border-green-200' : ''}`}>
+                        <h3 className={`font-semibold text-sm mb-3 flex items-center gap-2 ${vmIp ? 'text-green-700' : 'text-gray-700'}`}>
+                          {vmIp && <Check size={16} className="text-green-600" />}
+                          6. Create VM
+                        </h3>
                         {isStepCompleted(3) && !showRecreateOptions ? (
                  <div className="space-y-4">
                    <div className="flex items-center gap-2 text-green-600 bg-green-50 p-4 rounded-lg">
