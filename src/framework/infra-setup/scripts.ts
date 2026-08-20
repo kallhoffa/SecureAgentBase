@@ -88,10 +88,6 @@ gcloud projects add-iam-policy-binding $PROJECT_ID \\
 
 gcloud projects add-iam-policy-binding $PROJECT_ID \\
   --member="serviceAccount:secureagent-manager@$PROJECT_ID.iam.gserviceaccount.com" \\
-  --role="roles/billing.user"
-
-gcloud projects add-iam-policy-binding $PROJECT_ID \\
-  --member="serviceAccount:secureagent-manager@$PROJECT_ID.iam.gserviceaccount.com" \\
   --role="roles/serviceusage.serviceUsageAdmin"
 
 gcloud projects add-iam-policy-binding $PROJECT_ID \\

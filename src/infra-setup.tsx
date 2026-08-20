@@ -1513,7 +1513,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     // power (firebase.admin / workloadIdentityPoolAdmin / securityAdmin dropped).
     const roles = [
       'roles/compute.instanceAdmin.v1',
-      'roles/billing.user',
       'roles/billing.viewer',
       'roles/serviceusage.serviceUsageAdmin',
       'roles/iam.serviceAccountUser',
