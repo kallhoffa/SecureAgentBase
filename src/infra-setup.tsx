@@ -1813,7 +1813,9 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     setGcpConfigLost(false);
 
     const projects = await fetchGcpProjects(response.access_token);
-    if (!silent) expandNextStep(3);
+    // NOTE: expandNextStep(3) was removed — it dispatched EXPAND_NEXT which
+    // removed step 3 from expandedSteps (trying to add step 4 which > 3),
+    // collapsing the accordion after GCP connected.
 
     if (user) {
       try {
@@ -2256,7 +2258,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       if (formProgress.expandedSteps) wizard.dispatch({ type: 'SET_EXPANDED', steps: formProgress.expandedSteps });
       // Note: serviceAccountJson is NOT restored from storage since it contains sensitive private_key
       // User must re-upload the service account JSON each session
-      if (formProgress.projectId) setProjectId(formProgress.projectId);
+      // projectId intentionally NOT restored from localStorage either
     }
     setFormProgressLoaded(true);
   }, []);
@@ -2271,12 +2273,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       discordGuildId,
       expandedSteps,
       serviceAccountJson: serviceAccountJson ? 'saved' : null,
-      projectId,
       godSaEmail,
       gcpAccessToken: gcpAccessToken ? 'saved' : null,
     };
     saveFormProgress(formData);
-  }, [formProgressLoaded, githubPat, discordBotToken, discordGuildId, expandedSteps, serviceAccountJson, projectId, godSaEmail, gcpAccessToken]);
+  }, [formProgressLoaded, githubPat, discordBotToken, discordGuildId, expandedSteps, serviceAccountJson, godSaEmail, gcpAccessToken]);
 
   useEffect(() => {
     const loadInfraConfig = async () => {
@@ -2300,13 +2301,10 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       }
 
       if (configData) {
-        // E2E injection sets projectId from URL params; don't overwrite with a
-        // stale Firestore value (e.g. empty string) that would break the VM
-        // creation guard (`if (!serviceAccountJson || !projectId)`) and block
-        // the e2e test. Deploy builds ship VITE_E2E=true, so isE2EMode is true
-        // for real users too — gate on e2eInjectedRef instead (real credentials
-        // injected), otherwise real users would lose their saved config on load.
-        if (!e2eInjectedRef.current) setProjectId(configData.gcp_project_id || '');
+        // projectId intentionally NOT restored from Firestore. The wizard
+        // re-runs setup each session — a stale projectId causes Firebase
+        // setup to target the wrong project. E2E injection still sets it.
+        // setProjectId is skipped for both Firestore and localStorage.
         // GCP access token is NOT restored — it's short-lived (~1h) and
         // gcpTokenExpiry can't be restored either, so getAccessToken() can't
         // tell if it's valid. The user clicks "Connect Google Cloud Account"
@@ -3524,128 +3522,101 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                       <li>Select <strong>JSON</strong> and download</li>
                       <li>Open the JSON file, copy all content, paste below</li>
                     </ol>
-                  </div>
-                      </section>
-
-                      {/* 2. Project */}
-                      <section className={`rounded-lg p-4 -mx-4 ${projectId ? 'bg-green-50 border border-green-200' : ''}`}>
-                        <h3 className={`font-semibold text-sm mb-3 flex items-center gap-2 ${projectId ? 'text-green-700' : 'text-gray-700'}`}>
-                          {projectId && <Check size={16} className="text-green-600" />}
-                          2. Project
-                        </h3>
-                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                    <p className="text-blue-800 font-medium mb-2">Select or enter your GCP Project ID:</p>
-                    {gcpAccessToken && gcpProjects.length > 0 && (
-                      <div className="mb-3">
-                        <label className="block text-xs font-medium text-blue-700 mb-1">Choose from your projects:</label>
-                        <select
-                          value={projectId}
-                          onChange={(e) => setProjectId(e.target.value)}
-                          className="w-full px-3 py-2 border-2 border-gray-200 rounded-lg text-sm focus:outline-none focus:border-blue-400 bg-white"
-                        >
-                          <option value="">-- Select a project --</option>
-                          {gcpProjects.map(p => (
-                            <option key={p.projectId} value={p.projectId}>{p.name} ({p.projectId})</option>
-                          ))}
-                        </select>
                       </div>
-                    )}
-                    <div>
-                      <label className="block text-xs font-medium text-blue-700 mb-1">
-                        {gcpProjects.length > 0 ? 'Or enter a project ID manually:' : 'Enter your GCP Project ID:'}
-                      </label>
-                      <input
-                        type="text"
-                        value={projectId}
-                        onChange={(e) => setProjectId(e.target.value)}
-                        placeholder="my-gcp-project-123"
-                        className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 text-sm"
-                      />
-                    </div>
-                    {serviceAccountJson?.project_id && (
-                      <p className="text-blue-600 text-sm mt-2">
-                        From saved config: <code className="bg-blue-100 px-1">{serviceAccountJson.project_id}</code>
-                        <button
-                          type="button"
-                          onClick={() => setProjectId(serviceAccountJson.project_id)}
-                          className="ml-2 text-blue-600 underline text-xs"
-                        >
-                          Use this
-                        </button>
-                      </p>
-                    )}
-                  </div>
 
-                  <div className="mb-4">
-                    {!showNewProjectForm ? (
-                      <button
-                        type="button"
-                        onClick={() => setShowNewProjectForm(true)}
-                        className="text-blue-600 hover:text-blue-700 text-sm font-medium flex items-center gap-1"
-                      >
-                        <span className="text-lg leading-none">+</span> Create New GCP Project
-                      </button>
-                    ) : (
-                      <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                        <div className="flex items-center justify-between mb-3">
-                          <p className="text-sm font-semibold text-gray-700">Create a new GCP project</p>
-                          <button
-                            type="button"
-                            onClick={() => setShowNewProjectForm(false)}
-                            className="text-gray-400 hover:text-gray-600 text-xs"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                        {!gcpAccessToken ? (
-                          <div className="text-xs text-yellow-700">
-                            Connect your Google Cloud account in section 1 above to create projects programmatically.
-                          </div>
-                        ) : (
-                          <>
-                            <label className="block text-xs font-medium text-gray-700 mb-1">Project Name:</label>
-                            <div className="flex gap-2">
+                      {/* Project selector — part of subtask 1 */}
+                      {gcpConnected && godSaEmail && (
+                        <div className="mt-4 pt-4 border-t border-gray-200">
+                          <h4 className="font-semibold text-gray-700 text-sm mb-3 flex items-center gap-2">
+                            <Check size={16} className="text-green-600" />
+                            Select GCP Project
+                          </h4>
+                          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                            <p className="text-blue-800 font-medium mb-2">Choose the project for your Firebase apps and VM:</p>
+                            {gcpProjects.length > 0 && (
+                              <div className="mb-3">
+                                <label className="block text-xs font-medium text-blue-700 mb-1">Choose from your projects:</label>
+                                <select
+                                  value={projectId}
+                                  onChange={(e) => setProjectId(e.target.value)}
+                                  className="w-full px-3 py-2 border-2 border-gray-200 rounded-lg text-sm focus:outline-none focus:border-blue-400 bg-white"
+                                >
+                                  <option value="">-- Select a project --</option>
+                                  {gcpProjects.map(p => (
+                                    <option key={p.projectId} value={p.projectId}>{p.name} ({p.projectId})</option>
+                                  ))}
+                                </select>
+                              </div>
+                            )}
+                            <div>
+                              <label className="block text-xs font-medium text-blue-700 mb-1">
+                                {gcpProjects.length > 0 ? 'Or enter a project ID manually:' : 'Enter your GCP Project ID:'}
+                              </label>
                               <input
                                 type="text"
-                                value={newProjectName}
-                                onChange={(e) => setNewProjectName(e.target.value)}
-                                placeholder="My App"
-                                className="flex-grow px-3 py-2 border-2 border-gray-200 rounded-lg text-sm focus:outline-none focus:border-blue-400"
+                                value={projectId}
+                                onChange={(e) => setProjectId(e.target.value)}
+                                placeholder="my-gcp-project-123"
+                                className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 text-sm"
                               />
+                            </div>
+                          </div>
+                          <div className="mb-4">
+                            {!showNewProjectForm ? (
                               <button
                                 type="button"
-                                onClick={createGcpProject}
-                                disabled={creatingProject || !newProjectName.trim()}
-                                className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg text-sm whitespace-nowrap"
+                                onClick={() => setShowNewProjectForm(true)}
+                                className="text-blue-600 hover:text-blue-700 text-sm font-medium flex items-center gap-1"
                               >
-                                {creatingProject ? 'Creating...' : 'Create Project'}
+                                <span className="text-lg leading-none">+</span> Create New GCP Project
                               </button>
-                            </div>
-                            <p className="text-xs text-gray-500 mt-1">
-                              A project ID will be auto-generated from the name.
-                            </p>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
+                            ) : (
+                              <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                                <div className="flex items-center justify-between mb-3">
+                                  <p className="text-sm font-semibold text-gray-700">Create a new GCP project</p>
+                                  <button type="button" onClick={() => setShowNewProjectForm(false)} className="text-gray-400 hover:text-gray-600 text-xs">Cancel</button>
+                                </div>
+                                <label className="block text-xs font-medium text-gray-700 mb-1">Project Name:</label>
+                                <div className="flex gap-2">
+                                  <input
+                                    type="text"
+                                    value={newProjectName}
+                                    onChange={(e) => setNewProjectName(e.target.value)}
+                                    placeholder="My App"
+                                    className="flex-grow px-3 py-2 border-2 border-gray-200 rounded-lg text-sm focus:outline-none focus:border-blue-400"
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={createGcpProject}
+                                    disabled={creatingProject || !newProjectName.trim()}
+                                    className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg text-sm whitespace-nowrap"
+                                  >
+                                    {creatingProject ? 'Creating...' : 'Create Project'}
+                                  </button>
+                                </div>
+                                <p className="text-xs text-gray-500 mt-1">A project ID will be auto-generated from the name.</p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
 
-                  {billingEnabled === false && (
-                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
-                      <p className="text-yellow-800 font-semibold text-xs mb-1">⚠️ Billing Not Linked</p>
-                      <p className="text-yellow-700 text-xs">
-                        Billing is linked in the Billing section below. You can continue and come back to link it later.
-                      </p>
-                    </div>
-                  )}
+                      {billingEnabled === false && (
+                        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
+                          <p className="text-yellow-800 font-semibold text-xs mb-1">⚠️ Billing Not Linked</p>
+                          <p className="text-yellow-700 text-xs">
+                            Billing is linked in the Billing section below. You can continue and come back to link it later.
+                          </p>
+                        </div>
+                      )}
 
                       </section>
 
-                      {/* 3. Firebase */}
+                      {/* 2. Firebase */}
                       <section className={`rounded-lg p-4 -mx-4 ${firebaseStagingData?.projectId && firebaseProductionData?.projectId ? 'bg-green-50 border border-green-200' : ''}`}>
                         <h3 className={`font-semibold text-sm mb-3 flex items-center gap-2 ${firebaseStagingData?.projectId && firebaseProductionData?.projectId ? 'text-green-700' : 'text-gray-700'}`}>
                           {firebaseStagingData?.projectId && firebaseProductionData?.projectId && <Check size={16} className="text-green-600" />}
-                          3. Firebase (staging + production)
+                          2. Firebase (staging + production)
                         </h3>
                   {!gcpAccessToken && (
                     <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
@@ -3783,11 +3754,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                   </div>
                       </section>
 
-                      {/* 4. Billing */}
+                      {/* 3. Billing */}
                       <section className={`rounded-lg p-4 -mx-4 ${billingEnabled === true ? 'bg-green-50 border border-green-200' : ''}`}>
                         <h3 className={`font-semibold text-sm mb-3 flex items-center gap-2 ${billingEnabled === true ? 'text-green-700' : 'text-gray-700'}`}>
                           {billingEnabled === true && <Check size={16} className="text-green-600" />}
-                          4. Billing
+                          3. Billing
                         </h3>
                 <div className="space-y-4">
                   <p className="text-sm text-gray-600">
@@ -3897,11 +3868,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                 </div>
                       </section>
 
-                      {/* 5. CI Deployment (OIDC) */}
+                      {/* 4. CI Deployment (OIDC) */}
                       <section className={`rounded-lg p-4 -mx-4 ${gcpWifProviderName && gcpSaStagingEmail && gcpSaProductionEmail ? 'bg-green-50 border border-green-200' : ''}`}>
                         <h3 className={`font-semibold text-sm mb-3 flex items-center gap-2 ${gcpWifProviderName && gcpSaStagingEmail && gcpSaProductionEmail ? 'text-green-700' : 'text-gray-700'}`}>
                           {gcpWifProviderName && gcpSaStagingEmail && gcpSaProductionEmail && <Check size={16} className="text-green-600" />}
-                          5. CI Deployment (OIDC)
+                          4. CI Deployment (OIDC)
                         </h3>
                   {!gcpAccessToken && (
                     <div className="mb-4 bg-yellow-50 border border-yellow-200 rounded-lg p-4">
@@ -4083,11 +4054,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                   )}
                       </section>
 
-                      {/* 6. Create VM */}
+                      {/* 5. Create VM */}
                       <section className={`rounded-lg p-4 -mx-4 ${vmIp ? 'bg-green-50 border border-green-200' : ''}`}>
                         <h3 className={`font-semibold text-sm mb-3 flex items-center gap-2 ${vmIp ? 'text-green-700' : 'text-gray-700'}`}>
                           {vmIp && <Check size={16} className="text-green-600" />}
-                          6. Create VM
+                          5. Create VM
                         </h3>
                         {isStepCompleted(3) && !showRecreateOptions ? (
                  <div className="space-y-4">
