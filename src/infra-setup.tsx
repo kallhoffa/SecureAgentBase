@@ -525,7 +525,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
 
   const ensureGcpProjectExists = async (projectIdVal, displayName, useSaToken = false) => {
-    const token = useSaToken ? (await getServiceAccountToken()) : gcpAccessToken;
+    const token = useSaToken ? (await getServiceAccountToken()) : (await getAccessToken());
     if (!token) throw new Error('No auth token available');
 
     const listRes = await fetch(`https://cloudresourcemanager.googleapis.com/v1/projects/${projectIdVal}`, {
@@ -556,7 +556,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   };
 
   const ensureFirebaseOnProject = async (projectIdVal, useSaToken = false) => {
-    const token = useSaToken ? (await getServiceAccountToken()) : gcpAccessToken;
+    const token = useSaToken ? (await getServiceAccountToken()) : (await getAccessToken());
     if (!token) throw new Error('No auth token available');
 
     // Only ever send requests for a syntactically valid project ID.
@@ -660,7 +660,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         const stagingProjectId = `${(projectName || 'app').toLowerCase().replace(/[^a-z0-9-]/g, '-')}-staging`;
         setFirebaseAutoConfigMessage(`Creating staging project: ${stagingProjectId}...`);
         await ensureGcpProjectExists(stagingProjectId, `${projectName || 'App'} Staging`, false);
-        await ensureFirebaseOnProject(stagingProjectId, true);
+        await ensureFirebaseOnProject(stagingProjectId, false);
         setFirebaseAutoConfigMessage('Setting up staging web app...');
         const stagingResult = await setupFirebaseProject(stagingProjectId, 'Staging');
         stagingConfig = stagingResult.config;
@@ -3469,6 +3469,42 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                               ))}
                             </select>
                           </div>
+
+                          {!showNewProjectForm ? (
+                            <button
+                              type="button"
+                              onClick={() => setShowNewProjectForm(true)}
+                              className="text-blue-600 hover:text-blue-700 text-xs font-medium flex items-center gap-1"
+                            >
+                              <span className="text-lg leading-none">+</span> Create New GCP Project
+                            </button>
+                          ) : (
+                            <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                              <div className="flex items-center justify-between mb-2">
+                                <p className="text-xs font-semibold text-gray-700">Create a new GCP project</p>
+                                <button type="button" onClick={() => setShowNewProjectForm(false)} className="text-gray-400 hover:text-gray-600 text-xs">Cancel</button>
+                              </div>
+                              <label className="block text-xs font-medium text-gray-700 mb-1">Project Name:</label>
+                              <div className="flex gap-2">
+                                <input
+                                  type="text"
+                                  value={newProjectName}
+                                  onChange={(e) => setNewProjectName(e.target.value)}
+                                  placeholder="My App"
+                                  className="flex-grow px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:border-blue-400"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={createGcpProject}
+                                  disabled={creatingProject || !newProjectName.trim()}
+                                  className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-3 py-1.5 rounded-lg text-xs whitespace-nowrap"
+                                >
+                                  {creatingProject ? 'Creating...' : 'Create'}
+                                </button>
+                              </div>
+                              <p className="text-xs text-gray-500 mt-1">A project ID will be auto-generated from the name.</p>
+                            </div>
+                          )}
                           
                           {autoGenProjectId && (
                             <button
@@ -3523,83 +3559,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                       <li>Open the JSON file, copy all content, paste below</li>
                     </ol>
                       </div>
-
-                      {/* Project selector — part of subtask 1 */}
-                      {gcpConnected && godSaEmail && (
-                        <div className="mt-4 pt-4 border-t border-gray-200">
-                          <h4 className="font-semibold text-gray-700 text-sm mb-3 flex items-center gap-2">
-                            <Check size={16} className="text-green-600" />
-                            Select GCP Project
-                          </h4>
-                          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                            <p className="text-blue-800 font-medium mb-2">Choose the project for your Firebase apps and VM:</p>
-                            {gcpProjects.length > 0 && (
-                              <div className="mb-3">
-                                <label className="block text-xs font-medium text-blue-700 mb-1">Choose from your projects:</label>
-                                <select
-                                  value={projectId}
-                                  onChange={(e) => setProjectId(e.target.value)}
-                                  className="w-full px-3 py-2 border-2 border-gray-200 rounded-lg text-sm focus:outline-none focus:border-blue-400 bg-white"
-                                >
-                                  <option value="">-- Select a project --</option>
-                                  {gcpProjects.map(p => (
-                                    <option key={p.projectId} value={p.projectId}>{p.name} ({p.projectId})</option>
-                                  ))}
-                                </select>
-                              </div>
-                            )}
-                            <div>
-                              <label className="block text-xs font-medium text-blue-700 mb-1">
-                                {gcpProjects.length > 0 ? 'Or enter a project ID manually:' : 'Enter your GCP Project ID:'}
-                              </label>
-                              <input
-                                type="text"
-                                value={projectId}
-                                onChange={(e) => setProjectId(e.target.value)}
-                                placeholder="my-gcp-project-123"
-                                className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 text-sm"
-                              />
-                            </div>
-                          </div>
-                          <div className="mb-4">
-                            {!showNewProjectForm ? (
-                              <button
-                                type="button"
-                                onClick={() => setShowNewProjectForm(true)}
-                                className="text-blue-600 hover:text-blue-700 text-sm font-medium flex items-center gap-1"
-                              >
-                                <span className="text-lg leading-none">+</span> Create New GCP Project
-                              </button>
-                            ) : (
-                              <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                                <div className="flex items-center justify-between mb-3">
-                                  <p className="text-sm font-semibold text-gray-700">Create a new GCP project</p>
-                                  <button type="button" onClick={() => setShowNewProjectForm(false)} className="text-gray-400 hover:text-gray-600 text-xs">Cancel</button>
-                                </div>
-                                <label className="block text-xs font-medium text-gray-700 mb-1">Project Name:</label>
-                                <div className="flex gap-2">
-                                  <input
-                                    type="text"
-                                    value={newProjectName}
-                                    onChange={(e) => setNewProjectName(e.target.value)}
-                                    placeholder="My App"
-                                    className="flex-grow px-3 py-2 border-2 border-gray-200 rounded-lg text-sm focus:outline-none focus:border-blue-400"
-                                  />
-                                  <button
-                                    type="button"
-                                    onClick={createGcpProject}
-                                    disabled={creatingProject || !newProjectName.trim()}
-                                    className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 text-white px-4 py-2 rounded-lg text-sm whitespace-nowrap"
-                                  >
-                                    {creatingProject ? 'Creating...' : 'Create Project'}
-                                  </button>
-                                </div>
-                                <p className="text-xs text-gray-500 mt-1">A project ID will be auto-generated from the name.</p>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )}
 
                       {billingEnabled === false && (
                         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4 mb-4">
