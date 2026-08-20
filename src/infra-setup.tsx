@@ -356,14 +356,24 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   };
 
   const getFirebaseWebAppConfig = async (token, firebaseProjectId, appId) => {
-    const resp = await fetch(`https://firebase.googleapis.com/v1beta1/projects/${firebaseProjectId}/webApps/${appId}/config`, {
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-    if (!resp.ok) {
+    // After creating a new web app, the config endpoint may return 400 briefly
+    // while Firebase provisions the app. Retry with backoff.
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const resp = await fetch(`https://firebase.googleapis.com/v1beta1/projects/${firebaseProjectId}/webApps/${appId}/config`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (resp.ok) {
+        return await resp.json();
+      }
+      if (resp.status === 400 && attempt < 5) {
+        console.warn(`getFirebaseWebAppConfig 400 (attempt ${attempt + 1}), retrying...`);
+        await new Promise(r => setTimeout(r, 3000));
+        continue;
+      }
       const err = await resp.text().catch(() => resp.statusText);
       throw new Error(`Failed to get web app config (${resp.status}): ${err}`);
     }
-    return await resp.json();
+    throw new Error('Failed to get web app config after retries');
   };
 
   const updateAuthDomains = async (token, projectId, newDomains) => {
@@ -2330,15 +2340,10 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         // wizard should start with step 1 incomplete each time. The user
         // re-enters their bot token and clicks "Create Bot" to complete it.
         // E2E injection still sets it via URL params.
-        // Firebase configs are E2E-injected too — skip stale Firestore restore
-        if (!e2eInjectedRef.current && configData.firebase_staging) {
-          setFirebaseConfigStaging(JSON.stringify(configData.firebase_staging, null, 2));
-          setFirebaseStagingData(configData.firebase_staging);
-        }
-        if (!e2eInjectedRef.current && configData.firebase_production) {
-          setFirebaseConfigProduction(JSON.stringify(configData.firebase_production, null, 2));
-          setFirebaseProductionData(configData.firebase_production);
-        }
+        // Firebase configs intentionally NOT restored from Firestore.
+        // The wizard re-runs Firebase setup on each session — pre-populating
+        // with stale data from a prior run causes confusion and 400 errors.
+        // E2E injection still sets them via URL params.
         // github_pat intentionally NOT restored from Firestore (GHSA-x49w).
         // Restored from browser storage in the dedicated mount effect below.
         
@@ -2386,17 +2391,9 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     loadInfraConfig();
   }, [db, user]);
 
-  useEffect(() => {
-    if (checkingCompletion) return;
-    // Collapse any expanded steps that have become complete. Reads current
-    // state via the bound selector and dispatches a SET_EXPANDED only when
-    // the array actually changes (preserves the prev.length guard).
-    const current = wizard.expandedSteps;
-    const next = current.filter((s) => !isStepCompleted(s));
-    if (next.length !== current.length) {
-      wizard.dispatch({ type: 'SET_EXPANDED', steps: next });
-    }
-  }, [checkingCompletion]);
+  // NOTE: Auto-collapse of completed steps was removed — it collapsed step 3
+  // on sign-in when vm_ip was restored from Firestore, confusing the operator.
+  // Users control step expansion manually via the accordion headers.
 
   const handleCopyScript = () => {
     navigator.clipboard.writeText(CloudShellScript({ projectId }));
@@ -3456,6 +3453,25 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         
           {expandedSteps.includes(3) && !isStepLocked(3) && (
             <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 -mt-2 space-y-6">
+                      {/* Sub-task progress indicators */}
+                      <div className="bg-gray-50 border border-gray-200 rounded-lg p-3">
+                        <p className="text-xs font-semibold text-gray-500 mb-2 uppercase tracking-wide">Progress</p>
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2 text-xs">
+                          {[
+                            { label: 'Connect', done: gcpConnected },
+                            { label: 'Service Account', done: !!godSaEmail },
+                            { label: 'Project', done: !!projectId },
+                            { label: 'Firebase', done: !!(firebaseStagingData && firebaseProductionData) },
+                            { label: 'Billing', done: billingEnabled === true },
+                            { label: 'OIDC', done: !!(gcpWifProviderName && gcpSaStagingEmail && gcpSaProductionEmail) },
+                          ].map(({ label, done }) => (
+                            <div key={label} className={`flex items-center gap-1.5 px-2 py-1 rounded ${done ? 'bg-green-50 text-green-700' : 'bg-gray-100 text-gray-400'}`}>
+                              {done ? <Check size={12} /> : <span className="w-3 h-3 rounded-full border border-gray-300 inline-block" />}
+                              <span>{label}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
                       {gcpEmailMismatch && (
                         <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                           <p className="text-yellow-800 font-medium mb-1">Different Google accounts detected</p>
@@ -3571,17 +3587,34 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                       <section>
                         <h3 className="font-semibold text-gray-700 text-sm mb-3">2. Project</h3>
                   <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                    <p className="text-blue-800 font-medium mb-2">Enter your GCP Project ID:</p>
-                    <p className="text-blue-700 text-sm mb-3">
-                      This is the project where your VM will be created. Pick an existing project below, or create a new one.
-                    </p>
-                    <input
-                      type="text"
-                      value={projectId}
-                      onChange={(e) => setProjectId(e.target.value)}
-                      placeholder="my-gcp-project-123"
-                      className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400"
-                    />
+                    <p className="text-blue-800 font-medium mb-2">Select or enter your GCP Project ID:</p>
+                    {gcpAccessToken && gcpProjects.length > 0 && (
+                      <div className="mb-3">
+                        <label className="block text-xs font-medium text-blue-700 mb-1">Choose from your projects:</label>
+                        <select
+                          value={projectId}
+                          onChange={(e) => setProjectId(e.target.value)}
+                          className="w-full px-3 py-2 border-2 border-gray-200 rounded-lg text-sm focus:outline-none focus:border-blue-400 bg-white"
+                        >
+                          <option value="">-- Select a project --</option>
+                          {gcpProjects.map(p => (
+                            <option key={p.projectId} value={p.projectId}>{p.name} ({p.projectId})</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    <div>
+                      <label className="block text-xs font-medium text-blue-700 mb-1">
+                        {gcpProjects.length > 0 ? 'Or enter a project ID manually:' : 'Enter your GCP Project ID:'}
+                      </label>
+                      <input
+                        type="text"
+                        value={projectId}
+                        onChange={(e) => setProjectId(e.target.value)}
+                        placeholder="my-gcp-project-123"
+                        className="w-full px-4 py-2 border-2 border-gray-200 rounded-lg focus:outline-none focus:border-blue-400 text-sm"
+                      />
+                    </div>
                     {serviceAccountJson?.project_id && (
                       <p className="text-blue-600 text-sm mt-2">
                         From saved config: <code className="bg-blue-100 px-1">{serviceAccountJson.project_id}</code>
@@ -3619,7 +3652,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                         </div>
                         {!gcpAccessToken ? (
                           <div className="text-xs text-yellow-700">
-                            Connect your Google Cloud account below (section 1) to create projects programmatically.
+                            Connect your Google Cloud account in section 1 above to create projects programmatically.
                           </div>
                         ) : (
                           <>
