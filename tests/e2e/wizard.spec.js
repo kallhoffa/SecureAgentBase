@@ -137,9 +137,9 @@ const navigateWithE2E = async (page, extraParams = {}) => {
 //
 // Why retry: the shared e2e user's Firestore doc carries completion flags
 // (e.g. discord_bot_added) from previous runs — a step can therefore load
-// already-complete and collapsed. It can also flip mid-interaction: the async
-// config restore sets those flags AFTER first paint, and the collapse effect
-// then lands a moment after our first click.
+// already-complete and open. It can also flip mid-interaction: the async
+// config restore sets those flags AFTER first paint, so a step that was
+// locked on initial render may unlock moments after our first click.
 //
 // Opens via a direct DOM click (no Playwright actionability waiting, so it
 // cannot hang on animations/overlays/navigations). A failure leaves a precise
@@ -255,9 +255,10 @@ test.describe('Wizard E2E Regression', () => {
       // Navigate to wizard with e2e creds
       await navigateWithE2E(page);
 
-      // E2E injection completes Discord (step 1) + GitHub (step 2) — their
-      // bodies collapse, so the Discord token input should NOT be visible.
-      await expect(page.getByText('Discord Bot Token:')).not.toBeVisible({ timeout: 15000 });
+      // E2E injection completes Discord (step 1) + GitHub (step 2).
+      // Completed steps stay expanded (no auto-collapse), so just verify
+      // the step headers are visible and step 3 is unlocked.
+      await page.waitForTimeout(2000); // allow injection to settle
 
       // All 3 headers always render (even when locked/complete)
       await expect(page.getByText('Step 1: Discord Bot')).toBeVisible();
@@ -305,14 +306,15 @@ test.describe('Wizard E2E Regression', () => {
       // Navigate to wizard with e2e creds
       await navigateWithE2E(page);
 
-      // E2E injection auto-completes Discord + GitHub — Discord body collapses
-      await expect(page.getByText('Discord Bot Token:')).not.toBeVisible({ timeout: 15000 });
+      // E2E injection auto-completes Discord + GitHub. Completed steps
+      // stay expanded (no auto-collapse).
+      await page.waitForTimeout(2000); // allow injection to settle
       await page.waitForTimeout(1000);
 
       // Step 3 (Google Cloud) holds the Create VM section. The e2e auto-OIDC
       // setup dispatches EXPAND_STEP 3 once all creds are injected, so the
       // section usually appears on its own. If not, toggle the header (with
-      // a re-click guard in case the toggle collapsed it).
+      // a re-click guard in case step 3 is still locked/collapsed).
       const sectionOne = page.getByText('1. Connect Google Cloud & Service Account');
       if (!(await sectionOne.isVisible().catch(() => false))) {
         await page.getByText('Step 3: Google Cloud').first().click();
@@ -766,8 +768,8 @@ test.describe('Wizard E2E Regression', () => {
       // Inject everything except the GitHub PAT so step 2 stays open for typing
       await navigateWithE2E(page, { skipGithubPat: true });
 
-      // Discord (step 1) is completed via injection → GitHub (step 2) unlocks.
-      // Its body collapses, so expand the header to reach the PAT input.
+      // Discord (step 1) is completed via injection → GitHub (step 2) unlocks
+      // but starts collapsed. Click the header to expand it and reach the PAT input.
       await page.getByText('Step 2: GitHub').click();
       await page.waitForTimeout(300);
 
