@@ -2546,29 +2546,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   // would wipe freshly-entered tokens mid-test. The wasLoadingRef
   // captures the config-loaded projectId as the baseline so the very
   // first post-load render never clears.
-  const prevProjectIdForClearRef = useRef('');
-  const wasLoadingRef = useRef(true);
-  useEffect(() => {
-    if (loading) {
-      wasLoadingRef.current = true;
-      return;
-    }
-    // First render after config loads: snapshot the baseline, don't clear.
-    if (wasLoadingRef.current) {
-      wasLoadingRef.current = false;
-      prevProjectIdForClearRef.current = projectId;
-      return;
-    }
-    const prev = prevProjectIdForClearRef.current;
-    prevProjectIdForClearRef.current = projectId;
-    if (prev !== projectId && prev.trim()) {
-      setDiscordBotToken('');
-      setDiscordBotTokenInput('');
-      setDiscordClientId('');
-      setGithubPat('');
-      setDiscordBotAdded(false);
-    }
-  }, [projectId, loading]);
+  // NOTE: The project-switch clear (lines 2562-2570) was removed. The
+  // dropdown in step 3 changes projectId, which previously wiped the
+  // Discord token, client ID, GitHub PAT, and discordBotAdded state —
+  // resetting steps 1-2 mid-wizard. In the no-persistence design, there's
+  // no need to clear step 1-2 state when the project changes.
 
   const handleDisconnect = async () => {
     if (!confirm('Are you sure you want to disconnect your infrastructure? This will clear all local setups.')) {
