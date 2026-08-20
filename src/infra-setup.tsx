@@ -2547,9 +2547,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           'gcp_project_id', 'gcp_connected', 'gcp_token_expiry',
           'service_account_email', 'service_account_project_id',
           'github_app_installed', 'god_sa_email', 'vm_ip', 'github_repo',
+          'firebase_staging', 'firebase_production',
           'firebase_staging_project_id', 'firebase_production_project_id',
-          'discord_client_id', 'discord_guild_id', 'discord_bot_added',
-          'updated_at'
+          'gcp_wif_provider', 'gcp_sa_staging', 'gcp_sa_production',
+          'sm_secrets', 'discord_client_id', 'discord_guild_id',
+          'discord_bot_added', 'updated_at'
         ],
         merge: true
       });
@@ -3415,7 +3417,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                                 setError(`Rate limit. Try again in ${Math.ceil(githubSaveRateLimit.resetIn / 1000)}s.`);
                                 return;
                               }
-                              if (validate({ githubPat }, SCHEMAS.githubPat)) {
+                              if (validate({ githubPat }, { githubPat: SCHEMAS.githubPat })) {
                                 setError('Please enter a valid GitHub PAT (starts with ghp_ or github_pat_)');
                                 return;
                               }
