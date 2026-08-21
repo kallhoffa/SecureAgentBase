@@ -1367,7 +1367,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     const account = accountName || selectedBillingAccount || '';
     if (!projectId || !account) return;
 
-    const tryLink = async (token) => {
+    const tryLink = async (token, attempt = 0) => {
       if (!token) return 'no_token';
       const response = await fetch(`https://cloudbilling.googleapis.com/v1/projects/${projectId}/billingInfo`, {
         method: 'PUT',
@@ -1380,8 +1380,17 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       });
       if (response.ok) return 'ok';
       if (response.status === 401 || response.status === 403) return 'forbidden';
-      const err = await response.json();
-      return err.error?.message || `HTTP ${response.status}`;
+      const err = await response.json().catch(() => ({}));
+      const msg = err.error?.message || `HTTP ${response.status}`;
+      // "Precondition check failed" typically means the Cloud Billing API
+      // hasn't fully propagated yet — retry with backoff (up to 3 attempts).
+      if (response.status === 400 && msg.includes('Precondition') && attempt < 3) {
+        const delay = [3000, 8000, 15000][attempt];
+        console.log(`linkBillingAccount: precondition failed, retry ${attempt + 1}/3 after ${delay}ms`);
+        await new Promise(r => setTimeout(r, delay));
+        return tryLink(token, attempt + 1);
+      }
+      return msg;
     };
 
     setLinkingBilling(true);
@@ -1417,7 +1426,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         }
       }
 
-      setError('Cannot link billing via API — insufficient permissions. Please link billing manually in the GCP Console, then click Refresh.');
+      setError('Cannot link billing via API — ensure the Cloud Billing API is enabled on your project and your account has billing admin permissions. You can also link billing manually in the GCP Console, then click Re-check.');
     } catch (e) {
       console.error('Error linking billing account:', e);
       setError(e.message || 'Error linking billing account');
@@ -2342,10 +2351,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         // github_pat intentionally NOT restored from Firestore (GHSA-x49w).
         // Restored from browser storage in the dedicated mount effect below.
         
-        // Restore OIDC values so Step 7 can build VM metadata on reload
-        if (configData.gcp_wif_provider) setGcpWifProviderName(configData.gcp_wif_provider);
-        if (configData.gcp_sa_staging) setGcpSaStagingEmail(configData.gcp_sa_staging);
-        if (configData.gcp_sa_production) setGcpSaProductionEmail(configData.gcp_sa_production);
+        // OIDC values intentionally NOT restored from Firestore — they mark
+        // subtask 4 as complete before the user has run OIDC setup.
         if (configData.github_repo) setGithubRepoName(configData.github_repo);
         
         // Restore operator-entered secrets (Discord token, GitHub PAT, SA key)
@@ -3725,9 +3732,9 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                       </section>
 
                       {/* 3. Billing */}
-                      <section className={`rounded-lg p-4 -mx-4 ${billingEnabled === true ? 'bg-green-50 border border-green-200' : ''}`}>
-                        <h3 className={`font-semibold text-sm mb-3 flex items-center gap-2 ${billingEnabled === true ? 'text-green-700' : 'text-gray-700'}`}>
-                          {billingEnabled === true && <Check size={16} className="text-green-600" />}
+                      <section className={`rounded-lg p-4 -mx-4 ${billingLinkedSuccess ? 'bg-green-50 border border-green-200' : ''}`}>
+                        <h3 className={`font-semibold text-sm mb-3 flex items-center gap-2 ${billingLinkedSuccess ? 'text-green-700' : 'text-gray-700'}`}>
+                          {billingLinkedSuccess && <Check size={16} className="text-green-600" />}
                           3. Billing
                         </h3>
                 <div className="space-y-4">
@@ -3741,6 +3748,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                       Detecting billing accounts from your Google Cloud profile...
                     </p>
                   )}
+
 
                   {!billingChecking && billingAccounts.length > 0 && (
                     <div className="space-y-3">
@@ -3827,6 +3835,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                     type="button"
                     onClick={async () => {
                       setBillingChecking(true);
+                      setError(null);
                       await checkBillingStatus();
                       await fetchBillingAccounts();
                       setBillingChecking(false);
@@ -3835,6 +3844,13 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                   >
                     Re-check Billing Status
                   </button>
+
+                  {error && (
+                    <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                      {error}
+                      <button onClick={() => setError(null)} className="ml-2 text-red-500 underline text-xs">Dismiss</button>
+                    </div>
+                  )}
                 </div>
                       </section>
 
@@ -3859,11 +3875,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                     </div>
                   )}
 
-                  {error && (
-                    <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-                      {error}
-                    </div>
-                  )}
                   <button
                     onClick={async () => {
                       setError(null);
