@@ -1393,6 +1393,17 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       return msg;
     };
 
+    const friendlyError = (raw) => {
+      if (!raw) return 'Unknown error linking billing account.';
+      if (raw.includes('Precondition') || raw.includes('precondition')) {
+        return 'GCP returned "Precondition check failed" — this usually means the Cloud Billing API is still propagating. Wait 2–3 minutes and try again. If it persists, link billing manually at console.cloud.google.com/billing and click Re-check below.';
+      }
+      if (raw.includes('PERMISSION_DENIED') || raw.includes('permission')) {
+        return 'Permission denied. Ensure your Google account has the Billing Account User role on the billing account, then try again.';
+      }
+      return raw;
+    };
+
     setLinkingBilling(true);
     setError(null);
     try {
@@ -1405,7 +1416,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           return;
         }
         if (result !== 'forbidden' && result !== 'no_token') {
-          setError(result);
+          setError(friendlyError(result));
           return;
         }
       }
@@ -1421,7 +1432,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           return;
         }
         if (result !== 'forbidden' && result !== 'no_token') {
-          setError(result);
+          setError(friendlyError(result));
           return;
         }
       }
