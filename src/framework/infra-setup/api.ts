@@ -432,44 +432,65 @@ export const smReadSecret = async (token: string, secretResourceName: string, lo
 export const grantPoolAccessToSA = async (token: string, gcpProjectId: string, saEmail: string, poolName: string, repoFullName: string, log: (msg: string) => void) => {
   log(`Granting pool access to impersonate ${saEmail}...`);
   const member = `principalSet://iam.googleapis.com/${poolName}/attribute.repository/${repoFullName}`;
-  try {
-    const policy = await gcpApiFetch(
-      `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts/${saEmail}:getIamPolicy`,
-      token,
-      { method: 'POST' }
-    );
-    const bindings = policy.bindings || [];
-    const existing = bindings.find(b => b.role === 'roles/iam.workloadIdentityUser');
-    if (!existing || !existing.members.includes(member)) {
-      if (!existing) {
-        bindings.push({ role: 'roles/iam.workloadIdentityUser', members: [member] });
+
+  // GCP may take a few seconds to propagate a freshly-created Workload
+  // Identity Pool. The setIamPolicy call validates the principal reference,
+  // so retry with back-off if the pool isn't ready yet.
+  for (let attempt = 0; attempt < 6; attempt++) {
+    try {
+      const policy = await gcpApiFetch(
+        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts/${saEmail}:getIamPolicy`,
+        token,
+        { method: 'POST' }
+      );
+      const bindings = policy.bindings || [];
+      const existing = bindings.find(b => b.role === 'roles/iam.workloadIdentityUser');
+      if (!existing || !existing.members.includes(member)) {
+        if (!existing) {
+          bindings.push({ role: 'roles/iam.workloadIdentityUser', members: [member] });
+        } else {
+          existing.members.push(member);
+        }
+      }
+      await gcpApiFetch(
+        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts/${saEmail}:setIamPolicy`,
+        token,
+        {
+          method: 'POST',
+          body: JSON.stringify({ policy: { bindings, etag: policy.etag } })
+        }
+      );
+      return; // success
+    } catch (e) {
+      const isPoolError = e.message?.includes('Identity Pool does not exist');
+      if (isPoolError && attempt < 5) {
+        const delay = 5000 * (attempt + 1);
+        log(`Pool not yet propagated (attempt ${attempt + 1}), retrying in ${delay / 1000}s...`);
+        await new Promise(r => setTimeout(r, delay));
+        continue;
+      }
+      // Fall through to default-policy approach for non-pool errors
+      if (!isPoolError) {
+        log(`setIamPolicy failed (${e.message}), trying with default policy...`);
       } else {
-        existing.members.push(member);
+        throw new Error(`Workload Identity Pool did not propagate after retries. Please wait a minute and try again.`);
       }
+      const defaultPolicy = {
+        bindings: [{
+          role: 'roles/iam.workloadIdentityUser',
+          members: [member]
+        }]
+      };
+      await gcpApiFetch(
+        `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts/${saEmail}:setIamPolicy`,
+        token,
+        {
+          method: 'POST',
+          body: JSON.stringify({ policy: defaultPolicy })
+        }
+      );
+      return;
     }
-    await gcpApiFetch(
-      `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts/${saEmail}:setIamPolicy`,
-      token,
-      {
-        method: 'POST',
-        body: JSON.stringify({ policy: { bindings, etag: policy.etag } })
-      }
-    );
-  } catch (e) {
-    const defaultPolicy = {
-      bindings: [{
-        role: 'roles/iam.workloadIdentityUser',
-        members: [member]
-      }]
-    };
-    await gcpApiFetch(
-      `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts/${saEmail}:setIamPolicy`,
-      token,
-      {
-        method: 'POST',
-        body: JSON.stringify({ policy: defaultPolicy })
-      }
-    );
   }
 };
 

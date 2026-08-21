@@ -748,6 +748,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       const poolName = await createWorkloadIdentityPool(token, gcpProject, poolId, addOidcLog);
       setGcpWifPoolName(poolName);
 
+      // GCP needs a few seconds to propagate a freshly-created pool before
+      // IAM bindings referencing it can be validated.
+      setOidcSetupStep('Waiting for pool propagation...');
+      await new Promise(r => setTimeout(r, 5000));
+
       // Create workload identity provider
       setOidcSetupStep('Creating GitHub OIDC provider...');
       const providerName = await createWorkloadIdentityProvider(token, gcpProject, poolId, providerId, repoFullName, addOidcLog);
