@@ -752,30 +752,11 @@ test.describe('Wizard E2E Regression', () => {
       const instanceName = 'secureagent-manager';
       const zones = ['us-east1-b', 'us-central1-b', 'us-central1-c', 'us-west1-a', 'us-west1-b', 'us-east1-c', 'us-east1-d', 'europe-west1-d', 'asia-east1-a'];
 
-      // --- Unlink billing so the next run can test the full billing link flow ---
-      console.log(`Teardown: unlinking billing from project ${projectId}...`);
-      try {
-        const billingResp = await fetch(
-          `https://cloudbilling.googleapis.com/v1/projects/${projectId}/billingInfo`,
-          {
-            method: 'PUT',
-            headers: {
-              'Authorization': `Bearer ${E2E_GCP_TOKEN}`,
-              'Content-Type': 'application/json',
-              'x-goog-user-project': projectId,
-            },
-            body: JSON.stringify({ billingAccountName: '' }),
-          }
-        );
-        if (billingResp.ok) {
-          console.log('Teardown: billing unlinked successfully');
-        } else {
-          const body = await billingResp.text().catch(() => '');
-          console.warn(`Teardown: billing unlink returned ${billingResp.status}: ${body.slice(0, 300)}`);
-        }
-      } catch (e) {
-        console.warn(`Teardown: billing unlink error: ${e.message}`);
-      }
+      // NOTE: billing is intentionally NOT unlinked during teardown.
+      // The e2e SA token cannot re-link billing (requires account-level billing
+      // manager), so unlinking it breaks all subsequent runs. Billing stays
+      // linked; the wizard's billing section shows the "already linked" success
+      // card, which still validates the billing detection logic.
 
       // --- Delete VM instances ---
       console.log(`Teardown: searching for VM "${instanceName}" across ${zones.length} zones...`);
