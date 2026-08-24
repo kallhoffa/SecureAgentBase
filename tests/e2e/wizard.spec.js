@@ -117,9 +117,9 @@ const navigateWithE2E = async (page, extraParams = {}) => {
   if (process.env.E2E_DISCORD_BOT_ADDED === 'true') {
     params.set('__e2e_discord_bot_added', Buffer.from('true').toString('base64'));
   }
-  if (process.env.E2E_BILLING_ENABLED === 'true') {
-    params.set('__e2e_billing_enabled', Buffer.from('true').toString('base64'));
-  }
+  // NOTE: __e2e_billing_enabled is intentionally NOT injected anymore. The
+  // wizard now performs a REAL billing check + link in e2e mode (the previous
+  // run's teardown unlinks billing), so the full billing flow gets tested.
 
   for (const [key, val] of Object.entries(restParams)) {
     if (val) params.set(key, val);
@@ -346,6 +346,26 @@ test.describe('Wizard E2E Regression', () => {
         await page.getByRole('button', { name: /Recreate VM/i }).first().click();
         await page.waitForTimeout(400);
       }
+
+      // Wait for the REAL billing link to land before creating the VM. The
+      // wizard's e2e auto-billing effect runs on injection (check → list →
+      // link → verify) and flips data-billing-linked="true" when done. If it
+      // stays false, the e2e-test-runner SA is missing roles/billing.user on
+      // the billing account — fail fast with the fix instead of a vague
+      // "Billing is required" error 3 minutes later.
+      const billingSection = page.locator('[data-billing-linked="true"]');
+      try {
+        await billingSection.first().waitFor({ timeout: 90000 });
+        console.log('E2E: billing is linked (real check + link flow ran)');
+      } catch (_) {
+        throw new Error(
+          'E2E: billing was not linked within 90s. The e2e-test-runner SA needs roles/billing.user on the billing account:\n' +
+          '  gcloud billing accounts add-iam-policy-binding <BILLING_ACCOUNT> \\\n' +
+          '    --member="serviceAccount:e2e-test-runner@agentbase-test-staging.iam.gserviceaccount.com" \\\n' +
+          '    --role="roles/billing.user"'
+        );
+      }
+
       await expect(createBtn).toBeVisible({ timeout: 5000 });
       await createBtn.click();
 

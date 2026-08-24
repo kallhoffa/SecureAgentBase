@@ -1115,14 +1115,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   const checkBillingStatus = async () => {
     if (!projectId) return null;
 
-    // E2E mode: skip real billing API call, force billing enabled
-    // Must set state here too — the E2E injection effect may not have
-    // committed yet (effects run in same phase, state is stale).
-    if (!import.meta.env.DEV && import.meta.env.VITE_E2E === 'true') {
-      setBillingEnabled(true);
-      return true;
-    }
-
     await tryEnableBillingApi();
 
     const tryToken = async (token) => {
@@ -2127,7 +2119,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     const e2eDiscordToken = read('__e2e_discord_token');
     const e2eDiscordGuild = read('__e2e_discord_guild');
     const e2eDiscordBotAdded = read('__e2e_discord_bot_added');
-    const e2eBillingEnabled = read('__e2e_billing_enabled');
 
     if (e2eSA) {
       try {
@@ -2216,18 +2207,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         console.warn('E2E: Failed to decode __e2e_discord_bot_added:', e);
       }
     }
-    if (e2eBillingEnabled) {
-      try {
-        const val = atob(e2eBillingEnabled);
-        if (val === 'true' || val === '1') {
-          setBillingEnabled(true);
-        }
-      } catch (e) {
-        console.warn('E2E: Failed to decode __e2e_billing_enabled:', e);
-      }
-    }
 
-    // Capability-only injections (GCP access token, project id, billing flag)
+    // Capability-only injections (GCP access token, project id)
     // do NOT flip the e2e flag: they only stand in for a connected Google
     // account, so the REAL sync/restore/config-restore paths still run against
     // live credentials (token-persistence regression test). Only actual
@@ -2277,6 +2258,46 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       }
     })();
   }, [e2eInjected, githubPat, githubRepoName, gcpAccessToken, firebaseStagingData, firebaseProductionData]);
+
+  // E2E auto-setup: link billing for real. The previous run's teardown unlinks
+  // billing from the test project, so this run must exercise the actual link
+  // flow (check status → list accounts → link → verify) instead of faking
+  // billingEnabled=true. This requires the e2e-test-runner SA to hold
+  // roles/billing.user on the billing account (see
+  // .github/workflows/generate-e2e-key.yml for the one-time grant).
+  const e2eBillingDoneRef = useRef(false);
+  useEffect(() => {
+    if (e2eBillingDoneRef.current) return;
+    if (!e2eInjected) return;
+    if (!gcpAccessToken || !projectId) return;
+
+    e2eBillingDoneRef.current = true;
+    console.log('E2E: checking billing status for real (no fake injection)...');
+
+    (async () => {
+      try {
+        const ok = await checkBillingStatus();
+        console.log(`E2E: billing status: ${ok}`);
+        if (ok === true) {
+          // Already linked (e.g. previous run failed before teardown) —
+          // mirror the green check so the UI reflects the real state.
+          setBillingLinkedSuccess(true);
+          return;
+        }
+        const accounts = await fetchBillingAccounts();
+        if (accounts.length > 0) {
+          console.log(`E2E: linking billing account ${accounts[0].name}...`);
+          await linkBillingAccount(accounts[0].name);
+          const verified = await checkBillingStatus();
+          console.log(`E2E: billing link verified: ${verified}`);
+        } else {
+          console.warn(`E2E: no billing accounts visible to the e2e SA — grant roles/billing.user on the billing account to e2e-test-runner@${projectId}.iam.gserviceaccount.com`);
+        }
+      } catch (err) {
+        console.error('E2E: auto billing link failed:', err);
+      }
+    })();
+  }, [e2eInjected, gcpAccessToken, projectId]);
 
   useEffect(() => {
     const formProgress = loadFormProgress();
@@ -3743,7 +3764,10 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                       </section>
 
                       {/* 3. Billing */}
-                      <section className={`rounded-lg p-4 -mx-4 ${billingLinkedSuccess ? 'bg-green-50 border border-green-200' : ''}`}>
+                      <section
+                        className={`rounded-lg p-4 -mx-4 ${billingLinkedSuccess ? 'bg-green-50 border border-green-200' : ''}`}
+                        data-billing-linked={billingLinkedSuccess || billingEnabled === true ? 'true' : 'false'}
+                      >
                         <h3 className={`font-semibold text-sm mb-3 flex items-center gap-2 ${billingLinkedSuccess ? 'text-green-700' : 'text-gray-700'}`}>
                           {billingLinkedSuccess && <Check size={16} className="text-green-600" />}
                           3. Billing

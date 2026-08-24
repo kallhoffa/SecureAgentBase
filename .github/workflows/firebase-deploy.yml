@@ -221,7 +221,6 @@ jobs:
           E2E_GITHUB_PAT: ${{ secrets.E2E_GITHUB_PAT }}
           E2E_DISCORD_TOKEN: ${{ secrets.E2E_DISCORD_BOT_TOKEN }}
           E2E_DISCORD_BOT_ADDED: 'true'
-          E2E_BILLING_ENABLED: 'true'
           E2E_APP_MODE: 'true'
           E2E_PROJECT_NAME: 'agentbase-testing'
           E2E_GITHUB_OWNER: 'kallhoffa'

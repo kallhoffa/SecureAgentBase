@@ -108,6 +108,16 @@ jobs:
             --role="roles/billing.projectManager" \
             --condition=None 2>&1 || true
 
+          # NOTE (billing link e2e): project-level billing.projectManager only
+          # allows UNLINKING. The wizard e2e performs a real billing LINK after
+          # each run's teardown unlinks it, which additionally requires
+          # roles/billing.user on the BILLING ACCOUNT (account-level). This SA
+          # cannot self-grant account-level roles — run ONCE manually as the
+          # billing account owner:
+          #   gcloud billing accounts add-iam-policy-binding <BILLING_ACCOUNT> \
+          #     --member="serviceAccount:e2e-test-runner@agentbase-test-staging.iam.gserviceaccount.com" \
+          #     --role="roles/billing.user"
+
           echo "Granting secretmanager.admin to e2e-runner SA..."
           gcloud projects add-iam-policy-binding "${PROJECT}" \
             --member="serviceAccount:${E2E_SA}" \

@@ -126,6 +126,41 @@ jobs:
             --member="serviceAccount:${{ vars.GCP_SA_STAGING }}" \
             --role="roles/iam.serviceAccountUser"
 
+      - name: Ensure e2e SA can link billing (best-effort)
+        # The wizard e2e now performs a REAL billing link (the previous run's
+        # teardown unlinks billing). Linking requires roles/billing.user on the
+        # BILLING ACCOUNT (account-level, not project-level) for
+        # e2e-test-runner@agentbase-test-staging. This grant is best-effort —
+        # CI credentials may lack billing admin on the account. If it fails,
+        # run once manually as the billing account owner:
+        #   gcloud billing accounts add-iam-policy-binding <BILLING_ACCOUNT> \
+        #     --member="serviceAccount:e2e-test-runner@agentbase-test-staging.iam.gserviceaccount.com" \
+        #     --role="roles/billing.user"
+        continue-on-error: true
+        run: |
+          E2E_SA="e2e-test-runner@agentbase-test-staging.iam.gserviceaccount.com"
+          BILLING_ACCT=""
+          # Discover the billing account from a still-linked project (teardown
+          # only unlinks agentbase-test-staging).
+          for proj in agentbase-test-production agentbase-staging; do
+            BILLING_ACCT=$(gcloud billing projects describe "$proj" --format="value(billingAccountName)" 2>/dev/null || true)
+            [ -n "$BILLING_ACCT" ] && break
+          done
+          if [ -z "$BILLING_ACCT" ]; then
+            echo "WARNING: could not discover billing account — the e2e billing link will fail until the one-time manual grant above is applied."
+            exit 0
+          fi
+          echo "Discovered billing account: $BILLING_ACCT"
+          if gcloud billing accounts get-iam-policy "$BILLING_ACCT" --format="value(bindings.members)" 2>/dev/null | grep -q "$E2E_SA"; then
+            echo "e2e SA already has a role on the billing account — skipping grant."
+            exit 0
+          fi
+          gcloud billing accounts add-iam-policy-binding "$BILLING_ACCT" \
+            --member="serviceAccount:${E2E_SA}" \
+            --role="roles/billing.user" && \
+            echo "Granted roles/billing.user on $BILLING_ACCT to $E2E_SA" || \
+            echo "WARNING: grant failed (CI credentials lack billing admin on the account). Apply the one-time manual grant above."
+
       - name: Build
         run: npm run build
         env:
@@ -244,7 +279,6 @@ jobs:
           E2E_GITHUB_PAT: ${{ secrets.E2E_GITHUB_PAT }}
           E2E_DISCORD_TOKEN: ${{ secrets.E2E_DISCORD_BOT_TOKEN }}
           E2E_DISCORD_BOT_ADDED: 'true'
-          E2E_BILLING_ENABLED: 'true'
           E2E_APP_MODE: 'true'
           E2E_PROJECT_NAME: 'agentbase-testing'
           E2E_GITHUB_OWNER: 'kallhoffa'
