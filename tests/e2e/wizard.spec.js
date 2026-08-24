@@ -453,6 +453,7 @@ test.describe('Wizard E2E Regression', () => {
       // Pre-check 1: Fetch serial port output from VM to see startup script progress
       let serialOutput = '';
       let repoStale = false;
+      let foundVmZone = null; // saved for periodic diagnostics
       if (E2E_GCP_TOKEN) {
         const instanceName = 'secureagent-manager';
         const zones = ['us-east1-b', 'us-central1-b', 'us-central1-c', 'us-west1-a', 'us-west1-b', 'us-east1-c', 'us-east1-d', 'europe-west1-d', 'asia-east1-a'];
@@ -465,6 +466,7 @@ test.describe('Wizard E2E Regression', () => {
             if (resp.ok) {
               const data = await resp.json();
               serialOutput = data.contents || '';
+              foundVmZone = zone;
               break;
             }
           } catch (_) { /* zone not found, try next */ }
@@ -515,6 +517,35 @@ test.describe('Wizard E2E Regression', () => {
       // (previous test) failed — no point polling for 10 minutes.
       if (serialOutput === '' && repoStale) {
         throw new Error(`Staging deploy test: VM not found and repo untouched >30 min — VM creation failed.`);
+      }
+
+      // Fail-fast: if serial port shows the PAT lacks actions scope, the deploy
+      // workflow can't authenticate to GCP (OIDC variables never set) — no
+      // deployment will ever land.
+      if (serialOutput) {
+        const tail = serialOutput.slice(-3000);
+        const permsMatch = tail.match(/PAT_PERMS:\s*(.+)/);
+        if (permsMatch) {
+          const perms = permsMatch[1];
+          if (/actions:FAIL/.test(perms)) {
+            throw new Error(`Staging deploy test: PAT lacks actions:write scope (${perms}) — OIDC variables cannot be set, deploy will not trigger. Regenerate E2E_GITHUB_PAT with repo + actions scopes.`);
+          }
+          if (/repo:FAIL/.test(perms)) {
+            throw new Error(`Staging deploy test: PAT lacks repo access (${perms}) — code push will fail, deploy will not trigger. Regenerate E2E_GITHUB_PAT with repo scope.`);
+          }
+        }
+        // Also detect the SCRIPT_COMPLETE marker with push result
+        const scriptMatch = tail.match(/SCRIPT_COMPLETE\|PUSH=(\w+)/);
+        if (scriptMatch) {
+          const pushStatus = scriptMatch[1];
+          if (pushStatus === 'PUSH_FAILED' || pushStatus === 'ALL_PUSH_FAILED') {
+            throw new Error(`Staging deploy test: VM startup push result: ${pushStatus} — GitHub push failed, deploy will not trigger.`);
+          }
+          if (pushStatus === 'NOT_ATTEMPTED') {
+            throw new Error('Staging deploy test: VM startup push was NOT_ATTEMPTED — GITHUB_PAT was empty or missing, deploy will not trigger.');
+          }
+          console.log(`Staging deploy test: VM push status from serial: ${pushStatus}`);
+        }
       }
 
       // Step 1: Snapshot current content to detect when a NEW deployment lands
@@ -613,7 +644,7 @@ test.describe('Wizard E2E Regression', () => {
             if (E2E_GCP_TOKEN) {
               try {
                 const serialResp = await fetch(
-                  `https://compute.googleapis.com/compute/v1/projects/${stagingProjectId}/zones/${serialZone || 'us-east1-b'}/instances/${instanceName}/serialPort?port=1`,
+                  `https://compute.googleapis.com/compute/v1/projects/${stagingProjectId}/zones/${foundVmZone || 'us-east1-b'}/instances/${instanceName}/serialPort?port=1`,
                   { headers: { Authorization: `Bearer ${E2E_GCP_TOKEN}` } }
                 );
                 if (serialResp.ok) {
@@ -633,7 +664,7 @@ test.describe('Wizard E2E Regression', () => {
                     throw new Error('Staging deploy test: VM startup script completed but GITHUB_PAT is missing — Secret Manager fetch failed on the VM, deploy will not trigger.');
                   }
                 } else {
-                  console.log(`[diag ${elapsed}s] Serial port fetch failed: HTTP ${serialResp.status} (zone ${serialZone || 'us-east1-b'})`);
+                  console.log(`[diag ${elapsed}s] Serial port fetch failed: HTTP ${serialResp.status} (zone ${foundVmZone || 'us-east1-b'})`);
                 }
               } catch (e) {
                 if (e.message?.startsWith('Staging deploy test:')) throw e;

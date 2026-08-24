@@ -271,6 +271,21 @@ if [ -n "$GITHUB_PAT" ]; then
   echo "$GITHUB_PAT" | gh auth login --with-token 2>/dev/null
   gh auth setup-git 2>/dev/null || true
 
+  # Probe PAT permissions — write a compact summary to serial so diagnostics
+  # can confirm the PAT has repo + actions scope (survives buffer overflow)
+  PAT_PERMS=""
+  if gh api repos/"${REPO_OWNER}/${REPO_NAME}" >/dev/null 2>&1; then
+    PAT_PERMS="repo:ok"
+  else
+    PAT_PERMS="repo:FAIL"
+  fi
+  if gh variable list -R "${REPO_OWNER}/${REPO_NAME}" >/dev/null 2>&1; then
+    PAT_PERMS="${PAT_PERMS},actions:ok"
+  else
+    PAT_PERMS="${PAT_PERMS},actions:FAIL"
+  fi
+  echo "PAT_PERMS: ${PAT_PERMS}" > /dev/ttyS0 2>/dev/null || true
+
       # Create new repo or force-push if it already exists
       if gh repo view "${REPO_OWNER}/${REPO_NAME}" 2>/dev/null; then
         git remote remove origin 2>/dev/null || true
@@ -523,6 +538,7 @@ touch /root/.kimaki/.provisioned
 
 # Final compact marker — this is the LAST output before kimaki-register starts
 # Non-sensitive status only — no secrets or project identifiers leaked
-echo "SCRIPT_COMPLETE" > /dev/ttyS0 2>/dev/null || true
+# Include PUSH_RESULT and REPO so serial-port diagnostics survive buffer overflow
+echo "SCRIPT_COMPLETE|PUSH=${PUSH_RESULT:-UNKNOWN}|REPO=${REPO_OWNER:-?}/${REPO_NAME:-?}" > /dev/ttyS0 2>/dev/null || true
 
 systemctl start kimaki-register.service &
