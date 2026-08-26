@@ -139,13 +139,16 @@ jobs:
         continue-on-error: true
         run: |
           E2E_SA="e2e-test-runner@agentbase-test-staging.iam.gserviceaccount.com"
-          BILLING_ACCT=""
-          # Discover the billing account from a still-linked project (teardown
-          # only unlinks agentbase-test-staging).
-          for proj in agentbase-test-production agentbase-staging; do
-            BILLING_ACCT=$(gcloud billing projects describe "$proj" --format="value(billingAccountName)" 2>/dev/null || true)
-            [ -n "$BILLING_ACCT" ] && break
-          done
+          # Preferred: explicit BILLING_ACCOUNT repo variable (deterministic).
+          BILLING_ACCT="${{ vars.BILLING_ACCOUNT }}"
+          if [ -z "$BILLING_ACCT" ]; then
+            # Fallback: discover from a still-linked project (teardown only
+            # unlinks agentbase-test-staging).
+            for proj in agentbase-test-production agentbase-staging; do
+              BILLING_ACCT=$(gcloud billing projects describe "$proj" --format="value(billingAccountName)" 2>/dev/null || true)
+              [ -n "$BILLING_ACCT" ] && break
+            done
+          fi
           if [ -z "$BILLING_ACCT" ]; then
             echo "WARNING: could not discover billing account — the e2e billing link will fail until the one-time manual grant above is applied."
             exit 0
