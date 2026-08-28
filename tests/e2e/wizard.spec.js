@@ -474,8 +474,8 @@ test.describe('Wizard E2E Regression', () => {
       let serialOutput = '';
       let repoStale = false;
       let foundVmZone = null; // saved for periodic diagnostics
+      const instanceName = 'secureagent-manager'; // hoisted: periodic diag uses it too
       if (E2E_GCP_TOKEN) {
-        const instanceName = 'secureagent-manager';
         const zones = ['us-east1-b', 'us-central1-b', 'us-central1-c', 'us-west1-a', 'us-west1-b', 'us-east1-c', 'us-east1-d', 'europe-west1-d', 'asia-east1-a'];
         for (const zone of zones) {
           try {
@@ -669,16 +669,28 @@ test.describe('Wizard E2E Regression', () => {
                 );
                 if (serialResp.ok) {
                   const sd = await serialResp.json();
-                  const tail = (sd.contents || '').slice(-3000);
+                  const full = sd.contents || '';
+                  const tail = full.slice(-3000);
                   console.log(`[diag ${elapsed}s] Serial port (last 3000 chars):\n${tail}`);
+                  // Search the FULL buffer for markers — the compact markers
+                  // can scroll past the 3000-char tail on verbose boots.
+                  const allMarkers = [
+                    ...full.matchAll(/PAT_PERMS:[^\n]*/g),
+                    ...full.matchAll(/PUSH_RESULT=\w+/g),
+                    ...full.matchAll(/SCRIPT_COMPLETE\|[^\n]*/g),
+                    ...full.matchAll(/GITHUB_PAT=(set|missing)/g),
+                  ].map(m => m[0]);
+                  if (allMarkers.length > 0) {
+                    console.log(`[diag ${elapsed}s] Serial markers (full buffer): ${[...new Set(allMarkers)].join(' | ')}`);
+                  }
                   // Fail fast: if the startup script already completed but the
                   // secrets were missing (or the push failed), no deployment
                   // will ever land — don't burn the full 10-minute poll.
-                  const patMissing = /GITHUB_PAT=missing/i.test(tail);
-                  const scriptDone = /SCRIPT_COMPLETE/i.test(tail);
-                  const pushFailed = /PUSH_RESULT=(PUSH_FAILED|ALL_PUSH_FAILED)/i.test(tail);
+                  const patMissing = /GITHUB_PAT=missing/i.test(full);
+                  const scriptDone = /SCRIPT_COMPLETE/i.test(full);
+                  const pushFailed = /PUSH_RESULT=(PUSH_FAILED|ALL_PUSH_FAILED)/i.test(full);
                   if (pushFailed) {
-                    throw new Error(`Staging deploy test: VM startup script finished with ${tail.match(/PUSH_RESULT=\w+/i)[0]} — GitHub push failed, deploy will not trigger.`);
+                    throw new Error(`Staging deploy test: VM startup script finished with ${(full.match(/PUSH_RESULT=\w+/i) || ['PUSH_FAILED'])[0]} — GitHub push failed, deploy will not trigger.`);
                   }
                   if (patMissing && scriptDone) {
                     throw new Error('Staging deploy test: VM startup script completed but GITHUB_PAT is missing — Secret Manager fetch failed on the VM, deploy will not trigger.');
