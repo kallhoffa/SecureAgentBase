@@ -265,41 +265,56 @@ git commit -m "Initial commit of SecureAgentBase template"
 check_disk
 PUSH_RESULT="NOT_ATTEMPTED"
 if [ -n "$GITHUB_PAT" ]; then
-  # Clear stale gh credentials first — a revoked PAT or old token causes 401s that
-  # persist across boots because gh caches the failed login state.
-  gh auth logout --hostname github.com 2>/dev/null || true
-  echo "$GITHUB_PAT" | gh auth login --with-token 2>/dev/null
-  gh auth setup-git 2>/dev/null || true
+  # GH_TOKEN bypasses `gh auth login` entirely: gh's login flow VALIDATES the
+  # token against a user-scoped endpoint and rejects fine-grained PATs that
+  # carry no user permissions (exit 1, "error validating token"), leaving gh
+  # unauthenticated while the PAT itself is perfectly valid. All gh commands
+  # below read GH_TOKEN directly, with no login-time validation.
+  export GH_TOKEN="$GITHUB_PAT"
 
-      # Create new repo or force-push if it already exists
-      if gh repo view "${REPO_OWNER}/${REPO_NAME}" 2>/dev/null; then
-        git remote remove origin 2>/dev/null || true
-        git remote add origin "https://github.com/${REPO_OWNER}/${REPO_NAME}.git" || true
-        if git push -u origin main --force 2>&1; then
-          PUSH_RESULT="PUSH_OK"
-        else
-          PUSH_RESULT="PUSH_FAILED"
-        fi
-      else
-        if gh repo create "${REPO_OWNER}/${REPO_NAME}" --public --source=. --push 2>&1; then
-          PUSH_RESULT="CREATE_OK"
-        else
-          # Fallback: try force-push (repo may exist but PAT can't view it)
-          git remote remove origin 2>/dev/null || true
-          git remote add origin "https://github.com/${REPO_OWNER}/${REPO_NAME}.git" || true
-          if git push -u origin main --force 2>&1; then
-            PUSH_RESULT="FALLBACK_PUSH_OK"
-          else
-            PUSH_RESULT="ALL_PUSH_FAILED"
-          fi
-        fi
-      fi
+  # Git-native credentials for the push itself. gh's git credential helper
+  # only works after a successful gh auth login, so the push previously
+  # inherited gh's login failure. git's own credential store authenticates
+  # the push with the PAT directly, independent of gh.
+  git config --global credential.helper store
+  printf 'https://x-access-token:%s@github.com\n' "$GITHUB_PAT" > /root/.git-credentials
+  chmod 600 /root/.git-credentials
 
-      # Write push result marker to serial port (compact, survives buffer overflow)
-      echo "PUSH_RESULT=$PUSH_RESULT" > /dev/ttyS0 2>/dev/null || true
+  # Probe PAT + transport health — verbose diagnostics to serial (no secrets).
+  # curl tests the raw PAT value against the repo API (gh-independent); the
+  # gh probe reports whether the gh path is usable for repo-create/variables.
+  PAT_TYPE="unknown"
+  case "$GITHUB_PAT" in
+    github_pat_*) PAT_TYPE="fine-grained(${#GITHUB_PAT})" ;;
+    ghp_*)        PAT_TYPE="classic(${#GITHUB_PAT})" ;;
+  esac
+  # curl prints the HTTP status code, or 000 when the request itself fails
+  # (DNS/network/timeout) — no fallback echo needed.
+  CURL_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 \
+    -H "Authorization: Bearer $GITHUB_PAT" \
+    "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}" 2>/dev/null)
+  if gh api "repos/${REPO_OWNER}/${REPO_NAME}" >/dev/null 2>&1; then
+    GH_STATE="ok"
+  else
+    GH_STATE="FAIL"
+    GH_PROBE_ERR=$(gh api "repos/${REPO_OWNER}/${REPO_NAME}" 2>&1 | head -c 200 | tr '\n' ' ')
+    echo "GH_PROBE_ERR: ${GH_PROBE_ERR:-no output}" > /dev/ttyS0 2>/dev/null || true
+  fi
+  echo "PAT_PROBE: type=$PAT_TYPE curl=$CURL_CODE gh=$GH_STATE" > /dev/ttyS0 2>/dev/null || true
 
-      # Set GitHub variables
-      gh auth status 2>/dev/null || true
+  # Push first — the repo usually already exists (the wizard creates it
+  # browser-side before VM creation). Fall back to gh repo create for the
+  # fresh-user path where it doesn't.
+  git remote remove origin 2>/dev/null || true
+  git remote add origin "https://github.com/${REPO_OWNER}/${REPO_NAME}.git" || true
+  if git push -u origin main --force 2>&1; then
+    PUSH_RESULT="PUSH_OK"
+  elif gh repo create "${REPO_OWNER}/${REPO_NAME}" --public --source=. --push 2>&1; then
+    PUSH_RESULT="CREATE_OK"
+  else
+    PUSH_RESULT="ALL_PUSH_FAILED"
+  fi
+  echo "PUSH_RESULT=$PUSH_RESULT" > /dev/ttyS0 2>/dev/null || true
 
   # Set Firebase project IDs as VARIABLES (workflow reads vars.FIREBASE_PROJECT_ID_STAGING)
   gh variable set FIREBASE_PROJECT_ID_STAGING --body "$FIREBASE_STAGING" -R "${REPO_OWNER}/${REPO_NAME}" 2>/dev/null || echo "WARN: Failed to set FIREBASE_PROJECT_ID_STAGING"
@@ -337,6 +352,12 @@ if [ -n "$GITHUB_PAT" ]; then
 
   echo "VAR_RESULT=DONE" > /dev/ttyS0 2>/dev/null || true
   echo "GitHub variables set successfully" > /dev/null 2>&1
+
+  # Scrub the plaintext git credential — the push is done, and later reboots
+  # skip this entire block (.provisioned guard). GH_TOKEN stays scoped to
+  # this script run only (exported, not persisted).
+  rm -f /root/.git-credentials
+  unset GH_TOKEN
 fi
 
 # Install Kimaki globally and create its configuration
@@ -523,6 +544,7 @@ touch /root/.kimaki/.provisioned
 
 # Final compact marker — this is the LAST output before kimaki-register starts
 # Non-sensitive status only — no secrets or project identifiers leaked
-echo "SCRIPT_COMPLETE" > /dev/ttyS0 2>/dev/null || true
+# Include PUSH_RESULT and REPO so serial-port diagnostics survive buffer overflow
+echo "SCRIPT_COMPLETE|PUSH=${PUSH_RESULT:-UNKNOWN}|REPO=${REPO_OWNER:-?}/${REPO_NAME:-?}" > /dev/ttyS0 2>/dev/null || true
 
 systemctl start kimaki-register.service &

@@ -210,10 +210,26 @@ describe('getStartupScript', () => {
   });
 
   describe('GitHub integration', () => {
-    it('logs in with GITHUB_PAT via gh auth and sets up git credential helper', () => {
+    it('authenticates gh via GH_TOKEN env (no gh auth login validation) and git via credential store', () => {
       const script = getStartupScript(false);
-      expect(script).toContain('gh auth login --with-token');
-      expect(script).toContain('gh auth setup-git');
+      // gh auth login VALIDATES fine-grained PATs against a user-scoped
+      // endpoint and rejects tokens with no user permissions — GH_TOKEN
+      // bypasses that check entirely.
+      expect(script).toContain('export GH_TOKEN="$GITHUB_PAT"');
+      expect(script).not.toContain('gh auth login --with-token');
+      // The git push authenticates via git's own credential store so it does
+      // not inherit gh's login state.
+      expect(script).toContain('git config --global credential.helper store');
+      expect(script).toContain('.git-credentials');
+      // Plaintext credential is scrubbed after the push completes.
+      expect(script).toContain('rm -f /root/.git-credentials');
+    });
+
+    it('probes PAT health with raw curl (gh-independent) and writes markers to serial', () => {
+      const script = getStartupScript(false);
+      expect(script).toContain('PAT_PROBE: type=');
+      expect(script).toContain('GH_PROBE_ERR:');
+      expect(script).toContain('api.github.com/repos/${REPO_OWNER}/${REPO_NAME}');
     });
 
     it('creates a public repo with gh repo create', () => {
@@ -330,9 +346,13 @@ describe('getStartupScript', () => {
       expect(script).toContain('reusing existing checkout');
     });
 
-    it('clears stale gh credentials before re-login', () => {
+    it('does not rely on gh auth login state (GH_TOKEN takes precedence over stored credentials)', () => {
       const script = getStartupScript(false);
-      expect(script).toContain('gh auth logout --hostname github.com');
+      // GH_TOKEN env takes precedence over any cached hosts.yml login, so a
+      // stale credential from a previous provision cannot shadow the PAT —
+      // no gh auth logout needed anymore.
+      expect(script).toContain('export GH_TOKEN="$GITHUB_PAT"');
+      expect(script).not.toContain('gh auth logout');
     });
 
     it('skips project registration when already registered', () => {

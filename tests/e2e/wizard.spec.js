@@ -539,19 +539,27 @@ test.describe('Wizard E2E Regression', () => {
         throw new Error(`Staging deploy test: VM not found and repo untouched >30 min — VM creation failed.`);
       }
 
-      // Fail-fast: if serial port shows the PAT lacks actions scope, the deploy
-      // workflow can't authenticate to GCP (OIDC variables never set) — no
-      // deployment will ever land.
+      // Fail-fast: if serial port shows the PAT itself is broken (curl probe
+      // 401/403/404), no deployment can ever land — the VM push will fail.
+      // (The gh probe failing is NOT fatal — the push uses git's credential
+      // store and no longer depends on gh auth.)
       if (serialOutput) {
         const tail = serialOutput.slice(-3000);
-        const permsMatch = tail.match(/PAT_PERMS:\s*(.+)/);
-        if (permsMatch) {
-          const perms = permsMatch[1];
-          if (/actions:FAIL/.test(perms)) {
-            throw new Error(`Staging deploy test: PAT lacks actions:write scope (${perms}) — OIDC variables cannot be set, deploy will not trigger. Regenerate E2E_GITHUB_PAT with repo + actions scopes.`);
+        const probeMatch = tail.match(/PAT_PROBE: type=(\S+) curl=(\w+) gh=(\w+)/);
+        if (probeMatch) {
+          const [, patType, curlCode, ghState] = probeMatch;
+          console.log(`Staging deploy test: VM PAT probe — type=${patType}, curl=${curlCode}, gh=${ghState}`);
+          if (curlCode === '401') {
+            throw new Error('Staging deploy test: VM PAT probe returned 401 (invalid token) — the Secret Manager github-pat secret does not match the current E2E_GITHUB_PAT. Update the secret and retry.');
           }
-          if (/repo:FAIL/.test(perms)) {
-            throw new Error(`Staging deploy test: PAT lacks repo access (${perms}) — code push will fail, deploy will not trigger. Regenerate E2E_GITHUB_PAT with repo scope.`);
+          if (curlCode === '403') {
+            throw new Error('Staging deploy test: VM PAT probe returned 403 (token valid but forbidden) — check the PAT\'s repository access includes the target repo.');
+          }
+          if (curlCode === '404') {
+            throw new Error('Staging deploy test: VM PAT probe returned 404 (no visibility of the repo) — check the PAT\'s repository access scope and Metadata permission.');
+          }
+          if (curlCode === '000' || curlCode === 'ERR') {
+            throw new Error('Staging deploy test: VM PAT probe could not reach api.github.com (curl failed) — VM network issue.');
           }
         }
         // Also detect the SCRIPT_COMPLETE marker with push result
@@ -675,7 +683,8 @@ test.describe('Wizard E2E Regression', () => {
                   // Search the FULL buffer for markers — the compact markers
                   // can scroll past the 3000-char tail on verbose boots.
                   const allMarkers = [
-                    ...full.matchAll(/PAT_PERMS:[^\n]*/g),
+                    ...full.matchAll(/PAT_PROBE:[^\n]*/g),
+                    ...full.matchAll(/GH_PROBE_ERR:[^\n]*/g),
                     ...full.matchAll(/PUSH_RESULT=\w+/g),
                     ...full.matchAll(/SCRIPT_COMPLETE\|[^\n]*/g),
                     ...full.matchAll(/GITHUB_PAT=(set|missing)/g),
