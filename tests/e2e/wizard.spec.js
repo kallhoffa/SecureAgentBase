@@ -287,7 +287,12 @@ test.describe('Wizard E2E Regression', () => {
       test.skip(process.env.E2E_FULL !== 'true',
         'E2E_FULL=true required — creates real GCP VM, GitHub repo, and Discord bot');
 
-      test.setTimeout(300000); // 5 minutes for VM creation + API enablement
+      // 8 minutes total: up to 90s waiting for the real billing link to land
+      // BEFORE the click, plus VM creation (API enablement polls up to 30s per
+      // API across ~5 APIs, zone-capacity fallbacks, instance provisioning).
+      // 4 minutes of race budget proved marginal — creation completed at ~5min
+      // while the test had already given up.
+      test.setTimeout(480000);
 
       // Capture browser console logs for debugging
       const consoleLogs = [];
@@ -393,11 +398,14 @@ test.describe('Wizard E2E Regression', () => {
       // false 'button' result even though VM creation is proceeding.
       await expect(retryBtn).not.toBeVisible({ timeout: 15000 });
 
-      // Race: wait for init modal (success) OR error text OR retry button
+      // Race: wait for init modal (success) OR error text OR retry button.
+      // 6 minutes: VM creation includes API enablement polls (up to 30s per
+      // API) plus zone-capacity fallbacks — 4 minutes was marginal and failed
+      // while the VM was still being created successfully in the background.
       const result = await Promise.race([
-        initModal.waitFor({ timeout: 240000 }).then(() => 'modal').catch(() => 'timeout'),
-        errorText.first().waitFor({ timeout: 240000 }).then(() => 'error').catch(() => 'timeout'),
-        retryBtn.waitFor({ state: 'visible', timeout: 240000 }).then(() => 'button').catch(() => 'timeout'),
+        initModal.waitFor({ timeout: 360000 }).then(() => 'modal').catch(() => 'timeout'),
+        errorText.first().waitFor({ timeout: 360000 }).then(() => 'error').catch(() => 'timeout'),
+        retryBtn.waitFor({ state: 'visible', timeout: 360000 }).then(() => 'button').catch(() => 'timeout'),
       ]);
 
       if (result === 'timeout') {
@@ -406,7 +414,7 @@ test.describe('Wizard E2E Regression', () => {
         if (consoleLogs.length > 0) {
           console.log('Browser console logs:', consoleLogs.join('\n'));
         }
-        throw new Error('VM creation timed out after 4 minutes');
+        throw new Error('VM creation timed out after 6 minutes');
       }
 
       if (result === 'error' || result === 'button') {
