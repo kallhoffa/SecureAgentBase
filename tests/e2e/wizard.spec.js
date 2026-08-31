@@ -287,12 +287,11 @@ test.describe('Wizard E2E Regression', () => {
       test.skip(process.env.E2E_FULL !== 'true',
         'E2E_FULL=true required — creates real GCP VM, GitHub repo, and Discord bot');
 
-      // 8 minutes total: up to 90s waiting for the real billing link to land
-      // BEFORE the click, plus VM creation (API enablement polls up to 30s per
-      // API across ~5 APIs, zone-capacity fallbacks, instance provisioning).
-      // 4 minutes of race budget proved marginal — creation completed at ~5min
-      // while the test had already given up.
-      test.setTimeout(480000);
+      // 10 minutes total: up to 90s billing link wait + up to 90s GitHub
+      // variables wait (both BEFORE the click), plus VM creation (API
+      // enablement polls up to 30s per API across ~5 APIs, zone-capacity
+      // fallbacks, instance provisioning) with a 6-minute race budget.
+      test.setTimeout(600000);
 
       // Capture browser console logs for debugging
       const consoleLogs = [];
@@ -369,6 +368,59 @@ test.describe('Wizard E2E Regression', () => {
           '    --member="serviceAccount:e2e-test-runner@agentbase-test-staging.iam.gserviceaccount.com" \\\n' +
           '    --role="roles/billing.user"'
         );
+      }
+
+      // Assert the GitHub variable upload REALLY landed — against the GitHub
+      // API, not console logs. uploadGitHubVars swallows upload errors in e2e
+      // mode (so a failing PAT can't trip this test with an error box), which
+      // means the old "vars uploaded successfully" console line could lie
+      // while every setGitHubVariable call 403'd. The deploy-critical set
+      // must exist AND have been refreshed by THIS run (updated_at within
+      // the last 15 minutes — stale variables from a previous run don't
+      // count, the OIDC values are per-run).
+      const e2eGithubPat = process.env.E2E_GITHUB_PAT || '';
+      if (e2eGithubPat) {
+        const requiredVars = ['GCP_WIF_PROVIDER', 'GCP_SA_STAGING', 'FIREBASE_PROJECT_ID_STAGING', 'VITE_APP_NAME'];
+        const varsUrl = `https://api.github.com/repos/${process.env.E2E_GITHUB_OWNER || 'kallhoffa'}/${process.env.E2E_PROJECT_NAME || 'agentbase-testing'}/actions/variables?per_page=100`;
+        let varsOk = false;
+        let lastVarsDetail = 'not fetched yet';
+        const varsDeadline = Date.now() + 90000;
+        while (Date.now() < varsDeadline) {
+          try {
+            const varsResp = await fetch(varsUrl, {
+              headers: { Authorization: `token ${e2eGithubPat}`, Accept: 'application/vnd.github+json' },
+            });
+            if (varsResp.ok) {
+              const varsData = await varsResp.json();
+              const byName = Object.fromEntries((varsData.variables || []).map(v => [v.name, v]));
+              const staleOrMissing = requiredVars.filter(name => {
+                const v = byName[name];
+                if (!v) return true;
+                return (Date.now() - new Date(v.updated_at).getTime()) / 60000 >= 15;
+              });
+              lastVarsDetail = `present ${requiredVars.length - staleOrMissing.length}/${requiredVars.length}` +
+                (staleOrMissing.length ? `, stale/missing: ${staleOrMissing.join(', ')}` : '');
+              if (staleOrMissing.length === 0) {
+                varsOk = true;
+                break;
+              }
+              console.log(`E2E: waiting for GitHub variables upload (${lastVarsDetail})`);
+            } else {
+              console.log(`E2E: GitHub variables fetch HTTP ${varsResp.status} — check E2E_GITHUB_PAT Variables read permission`);
+            }
+          } catch (e) {
+            console.log(`E2E: GitHub variables fetch error: ${e.message}`);
+          }
+          await page.waitForTimeout(5000);
+        }
+        if (!varsOk) {
+          throw new Error(
+            `E2E: deploy-critical GitHub variables were not refreshed by the wizard upload within 90s (${lastVarsDetail}). ` +
+            'The staging deploy cannot authenticate without GCP_WIF_PROVIDER/GCP_SA_STAGING. ' +
+            'Check E2E_GITHUB_PAT has Variables Read and Write, and the wizard console for "Failed to upload GitHub vars".'
+          );
+        }
+        console.log('E2E: GitHub variables verified fresh via API (GCP_WIF_PROVIDER, GCP_SA_STAGING, FIREBASE_PROJECT_ID_STAGING, VITE_APP_NAME)');
       }
 
       await expect(createBtn).toBeVisible({ timeout: 5000 });

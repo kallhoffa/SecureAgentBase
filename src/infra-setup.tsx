@@ -811,22 +811,26 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     }
   };
 
+  // Returns true only when every variable call succeeded. The e2e catch
+  // swallows upload errors (so a failing PAT cannot trip the VM-creation
+  // test with a blocking error box) — the boolean lets the e2e caller and
+  // the e2e test distinguish a real success from a swallowed failure.
   const uploadGitHubVars = async (oidcData) => {
-    if (!githubPat || !githubRepoName) return;
+    if (!githubPat || !githubRepoName) return false;
     const errors = validate({ githubPat }, { githubPat: SCHEMAS.githubPat });
     if (errors) {
       setError(errors.githubPat);
       addOidcLog('GitHub variable upload blocked: invalid PAT format');
       setGithubVarUploading(false);
-      return;
+      return false;
     }
     if (!githubRateLimit.check()) {
       setError('Rate limit reached for GitHub uploads. Try again in a minute.');
       setGithubVarUploading(false);
-      return;
+      return false;
     }
     setGithubVarUploading(true);
-    
+
     try {
       // Ensure the GitHub repo exists before uploading variables
       await ensureGitHubRepo(githubPat, githubRepoName, addOidcLog);
@@ -884,17 +888,18 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       }
 
       setGithubVarUploaded(true);
+      return true;
     } catch (err) {
       console.error('Failed to upload GitHub vars:', err);
       if (e2eInjectedRef.current) {
-        // E2E: the test repo's variables already exist with the correct values
-        // from the wizard setup, and the e2e PAT may lack the Actions-variables
-        // write scope (403 'Resource not accessible'). A failed upload must not
-        // render a blocking error box that trips the VM-creation test.
-        addOidcLog(`WARNING: GitHub variable upload failed (${err.message}). Existing variables will be used; VM creation can proceed.`);
+        // E2E: a failed upload must not render a blocking error box that
+        // trips the VM-creation test. The e2e test verifies variables via
+        // the GitHub API instead of trusting console output.
+        addOidcLog(`WARNING: GitHub variable upload failed (${err.message}). The e2e test will fail its variables assertion if the deploy set is missing.`);
       } else {
         setError('Failed to upload GitHub variables: ' + err.message);
       }
+      return false;
     } finally {
       setGithubVarUploading(false);
     }
@@ -2248,8 +2253,15 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         const oidcData = await setupOidcInfrastructure(githubRepoName);
         if (oidcData) {
           console.log('E2E: OIDC setup complete, uploading GitHub vars...');
-          await uploadGitHubVars(oidcData);
-          console.log('E2E: GitHub vars uploaded successfully');
+          const uploaded = await uploadGitHubVars(oidcData);
+          // uploadGitHubVars swallows upload errors in e2e mode — this log
+          // reflects the real outcome so it can't lie like the old
+          // unconditional success message did.
+          if (uploaded) {
+            console.log('E2E: GitHub vars uploaded successfully');
+          } else {
+            console.warn('E2E: GitHub vars upload FAILED — the e2e variables assertion will fail if the deploy set is missing');
+          }
         } else {
           console.warn('E2E: OIDC setup returned null — variables not uploaded');
         }
