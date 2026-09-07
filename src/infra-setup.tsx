@@ -2996,7 +2996,9 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                 autoDelete: true,
                 initializeParams: {
                   diskSizeGb: '10',
-                  sourceImage: 'projects/debian-cloud/global/images/family/debian-11',
+                  // debian-11 hit EOS 2026-08-31 (family removed → 404 on create).
+                  // debian-12 is GA to 2028.
+                  sourceImage: 'projects/debian-cloud/global/images/family/debian-12',
                 },
               }],
               networkInterfaces: [{

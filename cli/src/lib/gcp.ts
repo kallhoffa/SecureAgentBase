@@ -190,7 +190,9 @@ export async function createVm(
         boot: true,
         autoDelete: true,
         initializeParams: {
-          sourceImage: 'projects/debian-cloud/global/images/family/debian-11',
+          // debian-11 hit EOS 2026-08-31 and its image family was removed —
+          // creating with it now 404s in every zone. debian-12 is GA to 2028.
+          sourceImage: 'projects/debian-cloud/global/images/family/debian-12',
           diskSizeGb: '10',
         },
       },
