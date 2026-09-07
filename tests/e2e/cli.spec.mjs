@@ -52,6 +52,43 @@ function run(bin, args, opts = {}) {
   };
 }
 
+async function verifyGithubVariables({ pat, owner, repo, requiredVars, timeoutMs = 90_000, label = '' }) {
+  const varsUrl = `https://api.github.com/repos/${owner}/${repo}/actions/variables?per_page=100`;
+  const deadline = Date.now() + timeoutMs;
+  let lastDetail = 'not fetched yet';
+  while (Date.now() < deadline) {
+    try {
+      const resp = await fetch(varsUrl, {
+        headers: { Authorization: `token ${pat}`, Accept: 'application/vnd.github+json' },
+      });
+      if (resp.ok) {
+        const data = await resp.json();
+        const byName = Object.fromEntries((data.variables || []).map((v) => [v.name, v]));
+        const staleOrMissing = requiredVars.filter((name) => {
+          const v = byName[name];
+          if (!v) return false;
+          // 15-minute freshness window: a stale variable from a previous
+          // run does NOT count — OIDC/provider values are per-run and the
+          // deploy-critical set must be refreshed by THIS init.
+          return (Date.now() - new Date(v.updated_at).getTime()) / 60000 >= 15;
+        });
+        const present = requiredVars.filter((name) => byName[name]);
+        lastDetail = requiredVars.map((n) => (byName[n] && !staleOrMissing.includes(n) ? n : `${n}(stale/missing)`)).join(', ');
+        if (staleOrMissing.length === 0) {
+          return { ok: true, detail: lastDetail };
+        }
+        console.log(`  ${label}waiting for GitHub variables (present ${present.length}/${requiredVars.length}, stale/missing refresh pending)`);
+      } else {
+        console.log(`  ${label}GitHub variables fetch HTTP ${resp.status} — check E2E_GITHUB_PAT has Variables Read`);
+      }
+    } catch (e) {
+      console.log(`  ${label}GitHub variables fetch error: ${e.message}`);
+    }
+    await new Promise((r) => setTimeout(r, 5000));
+  }
+  return { ok: false, detail: lastDetail };
+}
+
 async function main() {
   const cliPackage = process.env.CLI_PACKAGE;
   const projectId = process.env.GCP_PROJECT_ID || process.env.E2E_GCP_PROJECT_ID;
@@ -168,6 +205,24 @@ async function main() {
       assert(r.stdout.includes('GitHub') || r.stdout.includes('github') || r.stdout.includes('Skipping GitHub') === false, 'init includes GitHub setup');
       assert(r.stdout.includes('Discord') || r.stdout.includes('discord') || r.stdout.includes('Skipping Discord') === false, 'init includes Discord setup');
       assert(r.stdout.includes('VM created') || r.stdout.includes('vm') || r.stdout.includes('Skipping VM') === false, 'init includes VM creation');
+
+      // REAL API assertion (mirrors wizard.spec.js): the "init exits 0" +
+      // stdout checks above only prove the CLI THINKS it set the GitHub
+      // variables — init swallows setGitHubVariable errors with a warn
+      // ("may already exist") and can 403 on Variables write scope while
+      // still exiting 0. Poll the GitHub API and require the deploy-critical
+      // set to exist AND be refreshed by THIS run (updated_at < 15 min old;
+      // stale values from a previous run don't count).
+      if (githubPat) {
+        const requiredVars = ['GCP_WIF_PROVIDER', 'GCP_SA_STAGING', 'GCP_SA_PRODUCTION', 'FIREBASE_PROJECT_ID_STAGING'];
+        const result = await verifyGithubVariables({ pat: githubPat, owner: githubOwner, repo: repoName, requiredVars, label: 'Github vars: ' });
+        if (result.ok) {
+          assert(true, `GitHub variables verified fresh via API (${result.detail})`);
+        } else {
+          console.log(`  GHA vars detail: ${result.detail}`);
+          assert(false, 'deploy-critical GitHub variables were not refreshed by init within 90s (GCP_WIF_PROVIDER, GCP_SA_STAGING, GCP_SA_PRODUCTION, FIREBASE_PROJECT_ID_STAGING). Check E2E_GITHUB_PAT has Variables Read and Write.');
+        }
+      }
     }
   } else {
     // Minimal mode: fast smoke test
