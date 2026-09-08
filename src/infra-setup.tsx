@@ -1408,8 +1408,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       return { kind: 'error', message: msg, violations };
     };
 
-    const friendlyError = (res) => {
-      // res is { kind, message, violations } from tryLink.
+    const friendlyError = (res, who = 'user') => {
+      // res is { kind, message, violations } from tryLink. Messages describe
+      // what the wizard already TRIED programmatically — no "go do it
+      // manually in the console" instructions, and every recoverable case
+      // offers an in-wizard retry via Re-check.
       if (!res) return 'Unknown error linking billing account.';
       const raw = res.message || '';
       const violations = res.violations || [];
@@ -1417,30 +1420,57 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       if (violations.length > 0) {
         const lower = detail.toLowerCase();
         if (lower.includes('quota')) {
-          return `The billing account hit its project-attachment quota: ${detail} — link billing manually at console.cloud.google.com/billing or request a quota increase, then click Re-check.`;
+          return `The billing account has reached its project-attachment quota: ${detail} Free up space on the account (or have its administrator request an increase), then click Re-check — no console steps needed.`;
         }
         if (lower.includes('constraint') || lower.includes('whitelist') || lower.includes('outsidegooglebilling')) {
-          return `An organization policy blocks linking this project to that billing account: ${detail} — link billing manually at console.cloud.google.com/billing and click Re-check.`;
+          return `An organization policy on the billing account blocks linking this project: ${detail} Have your organization administrator update the constraint, then click Re-check.`;
         }
         if (lower.includes('permission') || lower.includes('resourceassociations') || lower.includes('billing.user')) {
-          return `Permission denied on the billing account: ${detail} — ask the billing admin to grant your account the Billing Account User role (roles/billing.user) on it, or link billing manually at console.cloud.google.com/billing, then click Re-check.`;
+          const whoTxt = who === 'sa' ? 'the service account' : 'your Google account';
+          return `Linking requires the Billing Account User role (roles/billing.user) on the billing account for ${whoTxt}. The wizard tried to grant it automatically but the caller was not Billing Account Admin on the account. Reconnect Google Cloud with an account that is admin on this billing account, or click Re-check after it has been granted.`;
         }
-        return `GCP refused to link billing: ${detail} — link billing manually at console.cloud.google.com/billing and click Re-check if this persists.`;
+        return `GCP refused to link billing: ${detail} Click Re-check to retry in-wizard.`;
       }
       if (raw.includes('Precondition') || raw.includes('precondition')) {
-        return 'GCP returned "Precondition check failed" with no further detail. If this project was just created, the Cloud Billing API may still be propagating — wait a couple of minutes and retry. If the billing account already exists and has been linked before, propagation is not the issue; link billing manually at console.cloud.google.com/billing and click Re-check below.';
+        return 'GCP returned "Precondition check failed" with no further detail. If this project was just created, the Cloud Billing API may still be propagating. Click Re-check in a couple of minutes to retry automatically.';
       }
       if (raw.includes('PERMISSION_DENIED') || raw.includes('permission')) {
-        return 'Permission denied. Ensure your Google account has the Billing Account User role on the billing account, then try again.';
+        return 'Permission denied: the identity needs Billing Account User (roles/billing.user) on the billing account. The wizard attempted to grant it automatically if possible — click Re-check after reconnecting with a billing-admin account.';
       }
       return raw;
+    };
+
+    // Try a link, and if it fails with a permission-class violation, attempt a
+    // programmatic self-heal: grant roles/billing.user ON THE BILLING ACCOUNT
+    // to the identity that must perform the link, wait for propagation, retry.
+    // Succeeds when the calling token is Billing Account Admin on the account
+    // (true for the owner of a preexisting account) — no console visit needed.
+    const linkWithSelfHeal = async (token, targetEmail) => {
+      let result = await tryLink(token);
+      if (result.kind === 'error') {
+        const detail = [...(result.violations || []), result.message || ''].join(' ').toLowerCase();
+        const looksLikePermission = /permission|resourceassociations|billing\.user|denied|access/i.test(detail);
+        if (looksLikePermission && targetEmail) {
+          console.log('linkBillingAccount: attempting programmatic billing.user grant on account');
+          const granted = await grantUserBillingAccountRole(account, token, targetEmail);
+          if (granted) {
+            console.log('linkBillingAccount: grant succeeded, retrying link');
+            result = await tryLink(token);
+            if (result.kind === 'ok') console.log('linkBillingAccount: link succeeded after self-heal');
+          } else {
+            console.log('linkBillingAccount: self-heal grant not possible (caller not billing admin on account)');
+          }
+        }
+      }
+      return result;
     };
 
     setLinkingBilling(true);
     setError(null);
     try {
+      const userEmail = gcpConsentEmail || user?.email || null;
       if (gcpAccessToken) {
-        const result = await tryLink(gcpAccessToken);
+        const result = await linkWithSelfHeal(gcpAccessToken, userEmail);
         if (result.kind === 'ok') {
           setBillingLinkedSuccess(true);
           setBillingEnabled(true);
@@ -1448,7 +1478,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           return;
         }
         if (result.kind !== 'forbidden' && result.kind !== 'no_token') {
-          setError(friendlyError(result));
+          setError(friendlyError(result, 'user'));
           return;
         }
       }
@@ -1456,7 +1486,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       // Fallback: try with SA token
       const saToken = await getServiceAccountToken().catch(() => null);
       if (saToken) {
-        const result = await tryLink(saToken);
+        const saEmail = serviceAccountJson?.client_email || godSaEmail || null;
+        const result = await linkWithSelfHeal(saToken, saEmail);
         if (result.kind === 'ok') {
           setBillingLinkedSuccess(true);
           setBillingEnabled(true);
@@ -1464,12 +1495,12 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           return;
         }
         if (result.kind !== 'forbidden' && result.kind !== 'no_token') {
-          setError(friendlyError(result));
+          setError(friendlyError(result, 'sa'));
           return;
         }
       }
 
-      setError('Cannot link billing via API — ensure the Cloud Billing API is enabled on your project and your account has billing admin permissions. You can also link billing manually in the GCP Console, then click Re-check.');
+      setError('Cannot link billing via API — ensure the Cloud Billing API is enabled on your project and the connected identity has billing permissions on the chosen billing account. Click Re-check to retry automatically once that is in place.');
     } catch (e) {
       console.error('Error linking billing account:', e);
       setError(e.message || 'Error linking billing account');
@@ -1521,6 +1552,46 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       bindings.push({ role, members: [member] });
     } else if (!binding.members.includes(member)) {
       binding.members.push(member);
+    }
+  };
+
+  const grantUserBillingAccountRole = async (accountName, token, targetEmail) => {
+    // Grant roles/billing.user ON the billing account to the given identity.
+    // Linking a project to an EXISTING billing account requires the caller to
+    // hold billing.resourceAssociations.create ON THE ACCOUNT — a project-level
+    // billing.projectManager grant (grantUserBillingRole) is not enough. When
+    // the operator owns the account (the common "preexisting account" case this
+    // is used for), the owner IS billing admin and setIamPolicy succeeds —
+    // fully programmatic, no console visit needed.
+    const accountId = accountName?.split('/').pop();
+    if (!accountId || !token || !targetEmail) return false;
+    try {
+      const policyResp = await fetch(`https://cloudbilling.googleapis.com/v1/billingAccounts/${accountId}:getIamPolicy`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!policyResp.ok) {
+        console.log('grantUserBillingAccountRole: getIamPolicy failed', policyResp.status);
+        return false;
+      }
+      const policy = await policyResp.json();
+      const bindings = policy.bindings || [];
+      addMemberToBinding(bindings, 'roles/billing.user', `user:${targetEmail}`);
+      const setResp = await fetch(`https://cloudbilling.googleapis.com/v1/billingAccounts/${accountId}:setIamPolicy`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ policy: { bindings, etag: policy.etag } })
+      });
+      if (!setResp.ok) {
+        const errText = await setResp.text().catch(() => '');
+        console.log('grantUserBillingAccountRole: setIamPolicy failed', setResp.status, errText.slice(0, 300));
+        return false;
+      }
+      console.log('grantUserBillingAccountRole: billing.user granted, waiting 10s for propagation');
+      await new Promise(r => setTimeout(r, 10000));
+      return true;
+    } catch (e) {
+      console.error('grantUserBillingAccountRole: exception', e);
+      return false;
     }
   };
 
@@ -2864,17 +2935,18 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     setStep4Message('Checking billing status...');
     log(`Starting VM ${processLabel} process...`);
 
-    // Check billing with user's OAuth token first. Billing must be linked
-    // manually (or via the Billing section above) — the wizard never
-    // auto-links an account on the operator's behalf.
+    // Check billing with user's OAuth token first. Use the Billing section
+    // above to link (which auto-grants the account-level Billing Account User
+    // role when the connected identity is admin on the account) — no console
+    // steps required.
     const billingOk = await checkBillingStatus();
     if (billingOk === null) {
       log('Billing API not accessible, skipping auto-check');
     } else if (billingOk === true) {
       log('Billing is enabled');
     } else {
-      log('Billing not enabled - operator must link a billing account first');
-      setError(`Billing is required. Link a billing account at https://console.cloud.google.com/billing/linkedaccount?project=${projectId} then retry.`);
+      log('Billing not enabled - link a billing account in the Billing section above first');
+      setError('Billing is required before creating the VM. Use the Billing section above to link a billing account (the wizard will handle permissions automatically), then retry.');
       setStep4Status('error');
       return;
     }
@@ -3903,15 +3975,40 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                     </div>
                   )}
 
-                  {!billingChecking && billingAccounts.length === 0 && billingApiError === 'no_accounts' && (
-                    <div className="text-xs text-yellow-700">
-                      No billing accounts found on your Google Cloud profile. Please click <a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener noreferrer" className="underline font-semibold text-yellow-800 hover:text-yellow-950">here to configure billing manually</a>, then click <strong>Re-check Billing</strong>.
-                    </div>
-                  )}
-
-                  {!billingChecking && billingAccounts.length === 0 && (billingApiError === 'api_error' || billingApiError === 'not_connected') && (
-                    <div className="text-xs text-yellow-700">
-                      Could not connect to Google Cloud billing APIs. Please reconnect your Google Cloud account below and try again.
+                  {!billingChecking && billingAccounts.length === 0 && (billingApiError === 'no_accounts' || billingApiError === 'api_error' || billingApiError === 'not_connected') && (
+                    <div className="text-xs text-yellow-700 space-y-2">
+                      {billingApiError === 'not_connected' ? (
+                        <>
+                          <p>
+                            Your Google Cloud session ended, so billing accounts can't be loaded. Reconnect to refresh it.
+                          </p>
+                          <button
+                            type="button"
+                            onClick={handleConnectGoogle}
+                            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm"
+                          >
+                            Connect Google Cloud Account
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <p>
+                            {billingApiError === 'api_error'
+                              ? 'Temporarily could not reach the Cloud Billing API. Reconnecting refreshes the connection and retries automatically.'
+                              : 'No billing accounts are accessible to the connected Google Cloud identity. Reconnect with a Google account that owns or has been granted access to a billing account.'}
+                          </p>
+                          <button
+                            type="button"
+                            onClick={handleConnectGoogle}
+                            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm"
+                          >
+                            Reconnect Google Cloud Account
+                          </button>
+                        </>
+                      )}
+                      <p className="text-[11px] text-gray-500">
+                        You can also try Re-check below — it re-runs discovery using the current connection.
+                      </p>
                     </div>
                   )}
 
@@ -4313,55 +4410,43 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                              )}
                            </button>
                          </div>
-                        ) : (
-                          <div className="text-xs text-yellow-700 space-y-2">
-                            <p>No billing accounts found via API. You can enable billing at{' '}
-                              <a href={gcpConsoleUrl('billing/linkedaccount', projectId)} target="_blank" rel="noopener noreferrer" className="underline font-semibold">Cloud Console</a>, then click{' '}
-                              <button
-                                type="button"
-                                onClick={async () => {
-                                  await checkBillingStatus();
-                                  await fetchBillingAccounts();
-                                }}
-                                className="underline font-semibold"
-                              >
-                                Re-check
-                              </button>.
-                            </p>
-                            <p className="mt-2">
-                              Or paste your billing account ID manually (find it in Cloud Console → Billing):
-                            </p>
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="text"
-                                value={selectedBillingAccount}
-                                onChange={(e) => setSelectedBillingAccount(e.target.value)}
-                                placeholder="billingAccounts/XXXXXX-XXXXXX-XXXXXX"
-                                className="flex-grow px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:border-blue-400"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => linkBillingAccount()}
-                                disabled={linkingBilling || !selectedBillingAccount}
-                                className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-400 text-white px-3 py-1.5 rounded-lg text-xs font-semibold"
-                              >
-                                {linkingBilling ? 'Linking...' : 'Link'}
-                              </button>
-                            </div>
-                          </div>
-                       )}
-                       <button
-                         type="button"
-                         onClick={async () => {
-                           await checkBillingStatus();
-                           await fetchBillingAccounts();
-                         }}
-                         className="mt-2 text-xs text-yellow-800 underline hover:text-yellow-950 font-semibold block"
-                       >
-                         Re-check Billing Status
-                       </button>
-                     </div>
-                   )}
+) : (
+                           <div className="text-xs text-yellow-700 space-y-2">
+                             <p>No billing accounts were discovered automatically. If your account exists, the wizard can link it directly — just paste its billing account ID below:</p>
+                             <div className="flex items-center gap-2">
+                               <input
+                                 type="text"
+                                 value={selectedBillingAccount}
+                                 onChange={(e) => setSelectedBillingAccount(e.target.value)}
+                                 placeholder="billingAccounts/XXXXXX-XXXXXX-XXXXXX"
+                                 className="flex-grow px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:border-blue-400"
+                               />
+                               <button
+                                 type="button"
+                                 onClick={() => linkBillingAccount()}
+                                 disabled={linkingBilling || !selectedBillingAccount}
+                                 className="bg-yellow-600 hover:bg-yellow-700 disabled:bg-gray-400 text-white px-3 py-1.5 rounded-lg text-xs font-semibold"
+                               >
+                                 {linkingBilling ? 'Linking...' : 'Link'}
+                               </button>
+                             </div>
+                             <p className="text-[11px] text-gray-500">
+                               Your billing account ID is listed in the Google Cloud Billing page (Billing account ID), or appears as <code>billingAccounts/...</code> in any project's billing history.
+                             </p>
+                           </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await checkBillingStatus();
+                            await fetchBillingAccounts();
+                          }}
+                          className="mt-2 text-xs text-yellow-800 underline hover:text-yellow-950 font-semibold block"
+                        >
+                          Re-check Billing Status
+                        </button>
+                      </div>
+                    )}
                    
                     {step4Status === 'idle' && (
                      <div className="flex gap-2 flex-wrap">
