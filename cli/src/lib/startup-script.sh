@@ -283,11 +283,8 @@ if [ -n "$GITHUB_PAT" ]; then
   # Probe PAT + transport health — verbose diagnostics to serial (no secrets).
   # curl tests the raw PAT value against the repo API (gh-independent); the
   # gh probe reports whether the gh path is usable for repo-create/variables.
-  PAT_TYPE="unknown"
-  case "$GITHUB_PAT" in
-    github_pat_*) PAT_TYPE="fine-grained(${#GITHUB_PAT})" ;;
-    ghp_*)        PAT_TYPE="classic(${#GITHUB_PAT})" ;;
-  esac
+  # NOTE: no PAT type/token metadata is written to /dev/ttyS0 (serial console
+  # must never carry secrets or metadata about credentials).
   # curl prints the HTTP status code, or 000 when the request itself fails
   # (DNS/network/timeout) — no fallback echo needed.
   CURL_CODE=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 \
@@ -300,7 +297,7 @@ if [ -n "$GITHUB_PAT" ]; then
     GH_PROBE_ERR=$(gh api "repos/${REPO_OWNER}/${REPO_NAME}" 2>&1 | head -c 200 | tr '\n' ' ')
     echo "GH_PROBE_ERR: ${GH_PROBE_ERR:-no output}" > /dev/ttyS0 2>/dev/null || true
   fi
-  echo "PAT_PROBE: type=$PAT_TYPE curl=$CURL_CODE gh=$GH_STATE" > /dev/ttyS0 2>/dev/null || true
+  echo "GH_PROBE: curl=$CURL_CODE gh=$GH_STATE" > /dev/ttyS0 2>/dev/null || true
 
   # Push first — the repo usually already exists (the wizard creates it
   # browser-side before VM creation). Fall back to gh repo create for the
@@ -543,8 +540,8 @@ systemctl enable kimaki-register.service
 touch /root/.kimaki/.provisioned
 
 # Final compact marker — this is the LAST output before kimaki-register starts
-# Non-sensitive status only — no secrets or project identifiers leaked
-# Include PUSH_RESULT and REPO so serial-port diagnostics survive buffer overflow
-echo "SCRIPT_COMPLETE|PUSH=${PUSH_RESULT:-UNKNOWN}|REPO=${REPO_OWNER:-?}/${REPO_NAME:-?}" > /dev/ttyS0 2>/dev/null || true
+# Non-sensitive status only — push result is kept (survives buffer overflow)
+# but no repo/owner/project identifiers are written to the serial console.
+echo "SCRIPT_COMPLETE|PUSH=${PUSH_RESULT:-UNKNOWN}" > /dev/ttyS0 2>/dev/null || true
 
 systemctl start kimaki-register.service &

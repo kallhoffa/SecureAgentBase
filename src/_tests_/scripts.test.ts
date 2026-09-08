@@ -225,9 +225,13 @@ describe('getStartupScript', () => {
       expect(script).toContain('rm -f /root/.git-credentials');
     });
 
-    it('probes PAT health with raw curl (gh-independent) and writes markers to serial', () => {
+    it('probes PAT health with raw curl (gh-independent) and writes marker-free serial diagnostics', () => {
       const script = getStartupScript(false);
-      expect(script).toContain('PAT_PROBE: type=');
+      // Serial console must not carry secrets or credential metadata: the probe
+      // reports HTTP/gh states only, never PAT type or token values.
+      expect(script).toContain('GH_PROBE: curl=');
+      expect(script).not.toContain('PAT_PROBE');
+      expect(script).not.toContain('PAT_TYPE');
       expect(script).toContain('GH_PROBE_ERR:');
       expect(script).toContain('api.github.com/repos/${REPO_OWNER}/${REPO_NAME}');
     });

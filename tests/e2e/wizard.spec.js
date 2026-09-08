@@ -605,10 +605,10 @@ test.describe('Wizard E2E Regression', () => {
       // store and no longer depends on gh auth.)
       if (serialOutput) {
         const tail = serialOutput.slice(-3000);
-        const probeMatch = tail.match(/PAT_PROBE: type=(\S+) curl=(\w+) gh=(\w+)/);
+        const probeMatch = tail.match(/GH_PROBE: curl=(\w+) gh=(\w+)/);
         if (probeMatch) {
-          const [, patType, curlCode, ghState] = probeMatch;
-          console.log(`Staging deploy test: VM PAT probe — type=${patType}, curl=${curlCode}, gh=${ghState}`);
+          const [, curlCode, ghState] = probeMatch;
+          console.log(`Staging deploy test: VM PAT probe — curl=${curlCode}, gh=${ghState}`);
           if (curlCode === '401') {
             throw new Error('Staging deploy test: VM PAT probe returned 401 (invalid token) — the Secret Manager github-pat secret does not match the current E2E_GITHUB_PAT. Update the secret and retry.');
           }
@@ -743,7 +743,7 @@ test.describe('Wizard E2E Regression', () => {
                   // Search the FULL buffer for markers — the compact markers
                   // can scroll past the 3000-char tail on verbose boots.
                   const allMarkers = [
-                    ...full.matchAll(/PAT_PROBE:[^\n]*/g),
+                    ...full.matchAll(/GH_PROBE:[^\n]*/g),
                     ...full.matchAll(/GH_PROBE_ERR:[^\n]*/g),
                     ...full.matchAll(/PUSH_RESULT=\w+/g),
                     ...full.matchAll(/SCRIPT_COMPLETE\|[^\n]*/g),
