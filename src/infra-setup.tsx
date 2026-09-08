@@ -1365,7 +1365,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     if (!projectId || !account) return;
 
     const tryLink = async (token, attempt = 0) => {
-      if (!token) return 'no_token';
+      if (!token) return { kind: 'no_token' };
       const response = await fetch(`https://cloudbilling.googleapis.com/v1/projects/${projectId}/billingInfo`, {
         method: 'PUT',
         headers: {
@@ -1375,25 +1375,60 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         },
         body: JSON.stringify({ billingAccountName: account })
       });
-      if (response.ok) return 'ok';
-      if (response.status === 401 || response.status === 403) return 'forbidden';
+      if (response.ok) return { kind: 'ok' };
+      if (response.status === 401 || response.status === 403) return { kind: 'forbidden' };
       const err = await response.json().catch(() => ({}));
       const msg = err.error?.message || `HTTP ${response.status}`;
-      // "Precondition check failed" typically means the Cloud Billing API
-      // hasn't fully propagated yet — retry with backoff (up to 3 attempts).
-      if (response.status === 400 && msg.includes('Precondition') && attempt < 3) {
+      // GCP's "Precondition check failed" (HTTP 400) is a GENERIC wrapper —
+      // the real cause lives in err.error.details as QuotaFailure /
+      // PreconditionFailure violations (billing-account project quota
+      // exhausted, org-policy constraint like
+      // constraints/billing.outsideGoogleBillingMdbWhitelist, or a login
+      // missing the billing.resourceAssociations.create permission). Extract
+      // them so we surface WHY a preexisting account can't be linked instead
+      // of guessing "API propagation".
+      const violations = [];
+      for (const d of err.error?.details || []) {
+        const list = d.violations || d.constraints || [];
+        for (const v of list) {
+          const desc = v.description || (typeof v === 'string' ? v : '');
+          if (desc && !violations.includes(desc)) violations.push(desc);
+        }
+      }
+      // Retry ONLY the genuinely-transient case: a bare precondition (no
+      // details at all) after the Cloud Billing API was just enabled.
+      // Precondition errors WITH a detail (quota, org policy, permission)
+      // are deterministic — retrying cannot fix them, so surface immediately.
+      if (violations.length === 0 && response.status === 400 && msg.includes('Precondition') && attempt < 3) {
         const delay = [3000, 8000, 15000][attempt];
-        console.log(`linkBillingAccount: precondition failed, retry ${attempt + 1}/3 after ${delay}ms`);
+        console.log(`linkBillingAccount: precondition without details, retry ${attempt + 1}/3 after ${delay}ms`);
         await new Promise(r => setTimeout(r, delay));
         return tryLink(token, attempt + 1);
       }
-      return msg;
+      return { kind: 'error', message: msg, violations };
     };
 
-    const friendlyError = (raw) => {
-      if (!raw) return 'Unknown error linking billing account.';
+    const friendlyError = (res) => {
+      // res is { kind, message, violations } from tryLink.
+      if (!res) return 'Unknown error linking billing account.';
+      const raw = res.message || '';
+      const violations = res.violations || [];
+      const detail = violations.join('; ');
+      if (violations.length > 0) {
+        const lower = detail.toLowerCase();
+        if (lower.includes('quota')) {
+          return `The billing account hit its project-attachment quota: ${detail} — link billing manually at console.cloud.google.com/billing or request a quota increase, then click Re-check.`;
+        }
+        if (lower.includes('constraint') || lower.includes('whitelist') || lower.includes('outsidegooglebilling')) {
+          return `An organization policy blocks linking this project to that billing account: ${detail} — link billing manually at console.cloud.google.com/billing and click Re-check.`;
+        }
+        if (lower.includes('permission') || lower.includes('resourceassociations') || lower.includes('billing.user')) {
+          return `Permission denied on the billing account: ${detail} — ask the billing admin to grant your account the Billing Account User role (roles/billing.user) on it, or link billing manually at console.cloud.google.com/billing, then click Re-check.`;
+        }
+        return `GCP refused to link billing: ${detail} — link billing manually at console.cloud.google.com/billing and click Re-check if this persists.`;
+      }
       if (raw.includes('Precondition') || raw.includes('precondition')) {
-        return 'GCP returned "Precondition check failed" — this usually means the Cloud Billing API is still propagating. Wait 2–3 minutes and try again. If it persists, link billing manually at console.cloud.google.com/billing and click Re-check below.';
+        return 'GCP returned "Precondition check failed" with no further detail. If this project was just created, the Cloud Billing API may still be propagating — wait a couple of minutes and retry. If the billing account already exists and has been linked before, propagation is not the issue; link billing manually at console.cloud.google.com/billing and click Re-check below.';
       }
       if (raw.includes('PERMISSION_DENIED') || raw.includes('permission')) {
         return 'Permission denied. Ensure your Google account has the Billing Account User role on the billing account, then try again.';
@@ -1406,13 +1441,13 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     try {
       if (gcpAccessToken) {
         const result = await tryLink(gcpAccessToken);
-        if (result === 'ok') {
+        if (result.kind === 'ok') {
           setBillingLinkedSuccess(true);
           setBillingEnabled(true);
           addNotification('Billing account linked successfully!', 'success');
           return;
         }
-        if (result !== 'forbidden' && result !== 'no_token') {
+        if (result.kind !== 'forbidden' && result.kind !== 'no_token') {
           setError(friendlyError(result));
           return;
         }
@@ -1422,13 +1457,13 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       const saToken = await getServiceAccountToken().catch(() => null);
       if (saToken) {
         const result = await tryLink(saToken);
-        if (result === 'ok') {
+        if (result.kind === 'ok') {
           setBillingLinkedSuccess(true);
           setBillingEnabled(true);
           addNotification('Billing account linked successfully!', 'success');
           return;
         }
-        if (result !== 'forbidden' && result !== 'no_token') {
+        if (result.kind !== 'forbidden' && result.kind !== 'no_token') {
           setError(friendlyError(result));
           return;
         }
