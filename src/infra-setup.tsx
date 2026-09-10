@@ -802,12 +802,19 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       if (err.message?.includes('401')) {
         setGcpAccessToken(null);
         setOidcSetupStep('Failed: Google Cloud session expired');
-        setError('Your Google Cloud session has expired. Click "Connect Google Cloud Account" in Step 3 to refresh, then try again.');
+        const friendly = 'Your Google Cloud session expired. Use the "Connect Google Cloud Account" button in this section to refresh, then try again.';
+        setError(friendly);
+        // Re-throw so the caller's error box shows the actionable message
+        // (the token is now null, so the in-section connect banner renders).
+        throw new Error(friendly);
       } else {
         setOidcSetupStep(`Failed: ${err.message}`);
         setError('OIDC setup failed: ' + err.message);
+        // Re-throw the REAL error — swallowing it made proceedWithOidcSetup
+        // blame the Google session for what was actually a propagation/
+        // API failure (e.g. Workload Identity Pool retry exhaustion).
+        throw err;
       }
-      return null;
     }
   };
 
@@ -2668,15 +2675,16 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     console.log('Discord invite URL regenerated from saved token and client ID');
   }, [discordBotToken, discordClientId]);
 
-  // Check billing when the GCP step opens
+  // Check billing whenever the GCP step opens. Runs even without a selected
+// project so the state block (project picker / reconnect / accounts list)
+// appears immediately instead of requiring a manual "Re-check".
   useEffect(() => {
-    if (expandedSteps.includes(3) && projectId && gcpAccessToken) {
-      setBillingChecking(true);
-      (async () => {
-        await checkBillingStatus();
-        await fetchBillingAccounts();
-      })().catch(() => {}).finally(() => setBillingChecking(false));
-    }
+    if (!expandedSteps.includes(3)) return;
+    setBillingChecking(true);
+    (async () => {
+      await checkBillingStatus();
+      await fetchBillingAccounts();
+    })().catch(() => {}).finally(() => setBillingChecking(false));
   }, [expandedSteps, gcpAccessToken, projectId]);
 
   // Try to refresh the GCP token silently once when step 3 opens without one.
@@ -3286,7 +3294,10 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
     const oidcData = await setupOidcInfrastructure(actualRepoName);
     if (!oidcData) {
-      throw new Error('Google Cloud session expired. Click "Connect Google Cloud Account" in Step 3 to refresh, then try again.');
+      // Real failures re-throw inside setupOidcInfrastructure; this branch only
+      // runs for precondition returns (missing PAT/repo/token) which the
+      // caller already guards, so never mislabel it as an expired session.
+      throw new Error('OIDC setup could not start. Connect Google Cloud and GitHub, then try again.');
     }
 
     await saveConfig({
@@ -3628,10 +3639,20 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                       )}
                       {/* 1. Connect Google Cloud & Service Account */}
                       <section id="gcp-connect-section" className={`rounded-lg p-4 -mx-4 ${gcpConnected && godSaEmail ? 'bg-green-50 border border-green-200' : ''}`}>
-                        <h3 className={`font-semibold text-sm mb-3 flex items-center gap-2 ${gcpConnected && godSaEmail ? 'text-green-700' : 'text-gray-700'}`}>
-                          {gcpConnected && godSaEmail && <Check size={16} className="text-green-600" />}
-                          1. Connect Google Cloud & Service Account
-                        </h3>
+<h3 className={`font-semibold text-sm mb-3 flex items-center gap-2 ${gcpConnected && godSaEmail ? 'text-green-700' : 'text-gray-700'}`}>
+  {gcpConnected && godSaEmail && <Check size={16} className="text-green-600" />}
+  1. Connect Google Cloud & Service Account
+  {gcpConnected && godSaEmail && (
+    <button
+      type="button"
+      onClick={handleConnectGoogle}
+      className="ml-auto text-[11px] font-medium text-blue-600 underline hover:text-blue-800"
+      title="Refresh your Google Cloud access token"
+    >
+      Reconnect Google Cloud Account
+    </button>
+  )}
+</h3>
                   {!gcpConnected ? (
                     <div className="bg-blue-50 border border-blue-200 rounded-xl p-5 mb-5 flex items-center justify-between gap-4">
                       <div className="flex-1">
@@ -3663,11 +3684,22 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                         <div className="space-y-3">
                           <div className="flex items-center gap-2">
                             <label className="text-xs font-semibold text-gray-700">Select GCP Project:</label>
-                            <select
-                              value={autoGenProjectId}
-                              onChange={(e) => setAutoGenProjectId(e.target.value)}
-                              className="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:border-blue-400 text-gray-800 font-medium"
-                            >
+<select
+  value={autoGenProjectId}
+  onChange={(e) => {
+    const val = e.target.value;
+    setAutoGenProjectId(val);
+    // Carry the selection straight into billing (and any other project-
+    // scoped checks) so picking a project here immediately enables the
+    // billing accounts dropdown in section 3 below. The auto-preselect
+    // effect above never sets projectId — only an explicit user choice does.
+    if (val) {
+      setProjectId(val);
+      setBillingApiError(null);
+    }
+  }}
+  className="flex-1 px-3 py-1.5 border border-gray-300 rounded-lg text-xs focus:outline-none focus:border-blue-400 text-gray-800 font-medium"
+>
                               <option value="">-- Choose project --</option>
                               {gcpProjects.map(p => (
                                 <option key={p.projectId} value={p.projectId}>{p.name} ({p.projectId})</option>
@@ -4031,15 +4063,16 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                             accounts against. Pick the project this app will be deployed into:
                           </p>
                           {gcpProjects.length > 0 ? (
-                            <select
-                              value={projectId || ''}
-                              onChange={(e) => {
-                                if (!e.target.value) return;
-                                setProjectId(e.target.value);
-                                setBillingApiError(null);
-                              }}
-                              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
-                            >
+<select
+  value={projectId || ''}
+  onChange={(e) => {
+    if (!e.target.value) return;
+    setProjectId(e.target.value);
+    setAutoGenProjectId(e.target.value);
+    setBillingApiError(null);
+  }}
+  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+>
                               <option value="" disabled>Select a GCP project…</option>
                               {gcpProjects.map((p) => (
                                 <option key={p.projectId} value={p.projectId}>{p.name || p.projectId}</option>
