@@ -433,10 +433,11 @@ export const grantPoolAccessToSA = async (token: string, gcpProjectId: string, s
   log(`Granting pool access to impersonate ${saEmail}...`);
   const member = `principalSet://iam.googleapis.com/${poolName}/attribute.repository/${repoFullName}`;
 
-  // GCP may take a few seconds to propagate a freshly-created Workload
-  // Identity Pool. The setIamPolicy call validates the principal reference,
-  // so retry with back-off if the pool isn't ready yet.
-  for (let attempt = 0; attempt < 6; attempt++) {
+  // GCP may take a while to propagate a freshly-created Workload Identity
+  // Pool. The setIamPolicy call validates the principal reference, so retry
+  // with back-off if the pool isn't ready yet. Retries span ~2.5 minutes
+  // (5s→30s ramp, capped); pools can take a minute or more to settle.
+  for (let attempt = 0; attempt < 9; attempt++) {
     try {
       const policy = await gcpApiFetch(
         `https://iam.googleapis.com/v1/projects/${gcpProjectId}/serviceAccounts/${saEmail}:getIamPolicy`,
@@ -463,9 +464,9 @@ export const grantPoolAccessToSA = async (token: string, gcpProjectId: string, s
       return; // success
     } catch (e) {
       const isPoolError = e.message?.includes('Identity Pool does not exist');
-      if (isPoolError && attempt < 5) {
-        const delay = 5000 * (attempt + 1);
-        log(`Pool not yet propagated (attempt ${attempt + 1}), retrying in ${delay / 1000}s...`);
+      if (isPoolError && attempt < 8) {
+        const delay = Math.min(5000 * (attempt + 1), 30000);
+        log(`Pool not yet propagated (attempt ${attempt + 1}/${9}), retrying in ${delay / 1000}s...`);
         await new Promise(r => setTimeout(r, delay));
         continue;
       }
