@@ -1917,14 +1917,21 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   // complete with the keys entered.
   const handleGcpOAuthResponse = async (response, { silent = false } = {}) => {
     if (response.error) {
+      const code = response.error;
       if (silent) {
         // Silent refresh failed (e.g. no prior consent or expired Google
         // session) — the manual connect button on step 3 remains the path.
-        console.info('Silent Google token refresh unavailable:', response.error);
+        console.info('Silent Google token refresh unavailable:', code);
         return;
       }
-      console.error('Google OAuth error:', response.error);
-      setError('Failed to connect to Google');
+      console.error('Google OAuth error:', code, response);
+      const msg =
+        code === 'popup_closed_by_user' ? 'The Google sign-in window was closed before connecting — click Connect again and complete sign-in.'
+        : code === 'access_denied' ? 'Access to Google Cloud was denied in the sign-in window — click Connect and allow access.'
+        : code === 'invalid_client' ? 'Google sign-in is misconfigured (invalid OAuth client). Please report this error.'
+        : code === 'prompt_aborted' ? 'Google sign-in was cancelled before it completed.'
+        : `Google sign-in failed (${code}). If no sign-in window appeared, open this wizard in a standalone browser tab and disable popup blockers for this site.`;
+      setError(msg);
       return;
     }
     const grantedScopes = response.scope || '';
@@ -1970,9 +1977,13 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       setError('GCP Client ID not configured. Add VITE_GCP_CLIENT_ID to .env.local');
       return null;
     }
-    const googleClient = (window as unknown as { google?: { accounts: { oauth2: { initTokenClient: (config: { client_id: string; scope: string; prompt?: string; callback: (response: { error?: string; access_token?: string; scope?: string }) => void }) => { open(): void; requestAccessToken(): void } } } } }).google;
-    if (!googleClient) return null;
-    return googleClient.accounts.oauth2.initTokenClient({
+    const google = (window as unknown as { google?: { accounts?: { oauth2?: { initTokenClient: (config: { client_id: string; scope: string; prompt?: string; callback: (response: { error?: string; access_token?: string; scope?: string }) => void }) => { open(): void; requestAccessToken(): void } } } } }).google;
+    const googleClient = google && google.accounts && google.accounts.oauth2;
+    if (!googleClient) {
+      setError("Google Sign-In couldn't load — this usually means a popup/third-party blocker (or an in-app browser) is restricting accounts.google.com. Open this page in a standalone browser tab with popups allowed, then reconnect.");
+      return null;
+    }
+    return googleClient.initTokenClient({
       client_id: clientId,
       scope: GCP_OAUTH_SCOPES,
       prompt,
@@ -2662,6 +2673,24 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       })().catch(() => {}).finally(() => setBillingChecking(false));
     }
   }, [expandedSteps, gcpAccessToken, projectId]);
+
+  // Try to refresh the GCP token silently once when step 3 opens without one.
+  // If the operator consented before in this browser, GIS re-issues a token
+  // without popping a window, and the gcpAccessToken change above then
+  // auto-populates the billing dropdown. Best-effort; the manual Connect
+  // button remains the primary path.
+  const silentRefreshAttemptedRef = useRef(false);
+  useEffect(() => {
+    if (!expandedSteps.includes(3)) return;
+    if (gcpAccessToken) return;
+    if (silentRefreshAttemptedRef.current) return;
+    silentRefreshAttemptedRef.current = true;
+    try {
+      void silentGcpTokenRefresh();
+    } catch (e) {
+      console.info('Silent GCP token refresh trigger failed:', e);
+    }
+  }, [expandedSteps, gcpAccessToken]);
 
   const saveConfig = async (configData) => {
     const finalData = {
