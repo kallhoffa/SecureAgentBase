@@ -1044,7 +1044,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   };
 
   const tryEnableBillingApi = async () => {
-    if (!projectId || !gcpAccessToken) return 'no_token';
+    if (!projectId) return 'no_project';
+    if (!gcpAccessToken) return 'no_token';
     try {
       console.log('tryEnableBillingApi: enabling cloudbilling.googleapis.com');
       const resp = await fetch(`https://serviceusage.googleapis.com/v1/projects/${projectId}/services/cloudbilling.googleapis.com:enable`, {
@@ -1184,6 +1185,10 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     const enableStatus = await tryEnableBillingApi();
     if (enableStatus === 'no_token') {
       setBillingApiError('not_connected');
+      return [];
+    }
+    if (enableStatus === 'no_project') {
+      setBillingApiError('no_project');
       return [];
     }
 
@@ -3622,7 +3627,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                         </div>
                       )}
                       {/* 1. Connect Google Cloud & Service Account */}
-                      <section className={`rounded-lg p-4 -mx-4 ${gcpConnected && godSaEmail ? 'bg-green-50 border border-green-200' : ''}`}>
+                      <section id="gcp-connect-section" className={`rounded-lg p-4 -mx-4 ${gcpConnected && godSaEmail ? 'bg-green-50 border border-green-200' : ''}`}>
                         <h3 className={`font-semibold text-sm mb-3 flex items-center gap-2 ${gcpConnected && godSaEmail ? 'text-green-700' : 'text-gray-700'}`}>
                           {gcpConnected && godSaEmail && <Check size={16} className="text-green-600" />}
                           1. Connect Google Cloud & Service Account
@@ -4004,7 +4009,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                     </div>
                   )}
 
-                  {!billingChecking && billingAccounts.length === 0 && (billingApiError === 'no_accounts' || billingApiError === 'api_error' || billingApiError === 'not_connected') && (
+                  {!billingChecking && billingAccounts.length === 0 && (billingApiError === 'no_accounts' || billingApiError === 'api_error' || billingApiError === 'not_connected' || billingApiError === 'no_project') && (
                     <div className="text-xs text-yellow-700 space-y-2">
                       {billingApiError === 'not_connected' ? (
                         <>
@@ -4018,6 +4023,38 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                           >
                             Connect Google Cloud Account
                           </button>
+                        </>
+                      ) : billingApiError === 'no_project' ? (
+                        <>
+                          <p>
+                            Your Google Cloud connection is active, but billing needs a GCP project to look up billing
+                            accounts against. Pick the project this app will be deployed into:
+                          </p>
+                          {gcpProjects.length > 0 ? (
+                            <select
+                              value={projectId || ''}
+                              onChange={(e) => {
+                                if (!e.target.value) return;
+                                setProjectId(e.target.value);
+                                setBillingApiError(null);
+                              }}
+                              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+                            >
+                              <option value="" disabled>Select a GCP project…</option>
+                              {gcpProjects.map((p) => (
+                                <option key={p.projectId} value={p.projectId}>{p.name || p.projectId}</option>
+                              ))}
+                            </select>
+                          ) : (
+                            <p className="text-[11px] text-gray-500">
+                              No projects are loaded yet — click “Reconnect Google Cloud Account” below (or use the
+                              programmatic setup above) to refresh the project list.
+                            </p>
+                          )}
+                          <p className="text-[11px] text-gray-500">
+                            No project listed? Create one with “+ Create New Project” or “⚡ Programmatically Setup Service Account”
+                            in the <button type="button" onClick={() => document.getElementById('gcp-connect-section')?.scrollIntoView({ behavior: 'smooth' })} className="underline font-semibold text-yellow-800 hover:text-yellow-950">Connect Google Cloud &amp; Service Account</button> section above.
+                          </p>
                         </>
                       ) : (
                         <>
