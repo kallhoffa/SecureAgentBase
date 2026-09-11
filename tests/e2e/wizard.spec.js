@@ -634,6 +634,20 @@ test.describe('Wizard E2E Regression', () => {
           }
           console.log(`Staging deploy test: VM push status from serial: ${pushStatus}`);
         }
+        // Fail-fast: template clone verdict. A placeholder repo (fallback path)
+        // has no .github/workflows/ — GitHub Actions never fires and a deploy
+        // can never land, so don't burn the 10-minute poll.
+        const cloneMatch = serialOutput.match(/TEMPLATE_CLONE=(OK|FALLBACK)/);
+        const repoCreateMatch = serialOutput.match(/REPO_CREATE=(CREATED|EXISTS|FAIL)/);
+        if (cloneMatch && cloneMatch[1] === 'FALLBACK') {
+          throw new Error('Staging deploy test: VM startup fell back to a placeholder repo (TEMPLATE_CLONE=FALLBACK) — no template app, no workflows, deploy will not trigger.');
+        }
+        if (repoCreateMatch && repoCreateMatch[1] === 'FAIL') {
+          throw new Error('Staging deploy test: VM failed to create the destination repo (REPO_CREATE=FAIL) — no push, no deploy.');
+        }
+        if (cloneMatch || repoCreateMatch) {
+          console.log(`Staging deploy test: template clone=${cloneMatch ? cloneMatch[1] : 'unknown'}, repo create=${repoCreateMatch ? repoCreateMatch[1] : 'unknown'}`);
+        }
       }
 
       // Step 1: Snapshot current content to detect when a NEW deployment lands
@@ -656,6 +670,61 @@ test.describe('Wizard E2E Regression', () => {
       } catch (e) {
         console.log(`Staging deploy test: baseline fetch error — ${e.message}`);
       }
+
+      // Positive verification — run AFTER the deploy poll passes. Closes the
+      // historical gap where a clone bug (cloning the destination instead of
+      // the template) went undetected because the destination repo already had
+      // stale template content + workflows from a previous run: the deploy
+      // poll passed, but the VM shipped a placeholder/stale repo. Verifies:
+      //   1. Serial verdicts: TEMPLATE_CLONE=OK, REPO_CREATE=EXISTS|CREATED,
+      //      PUSH_RESULT=PUSH_OK from the VM's own startup script.
+      //   2. The destination repo actually contains the template skeleton
+      //      (contents/package.json) — a placeholder repo has no package.json.
+      const verifyPushAndRepo = async () => {
+        const gpat = process.env.E2E_GITHUB_PAT || '';
+        const repoOwner = process.env.E2E_GITHUB_OWNER || 'kallhoffa';
+        const repoName = process.env.E2E_PROJECT_NAME || 'agentbase-testing';
+        const repoFull = `${repoOwner}/${repoName}`;
+
+        // 1) Serial verdicts from the VM's own startup script
+        if (E2E_GCP_TOKEN) {
+          let full = '';
+          try {
+            const resp = await fetch(
+              `https://compute.googleapis.com/compute/v1/projects/${stagingProjectId}/zones/${foundVmZone || 'us-east1-b'}/instances/${instanceName}/serialPort?port=1`,
+              { headers: { Authorization: `Bearer ${E2E_GCP_TOKEN}` } }
+            );
+            if (resp.ok) {
+              full = (await resp.json()).contents || '';
+            }
+          } catch (e) {
+            console.log(`Staging deploy test: post-deploy serial fetch error — ${e.message}`);
+          }
+          const clone = (full.match(/TEMPLATE_CLONE=(OK|FALLBACK)/) || [])[1];
+          const created = (full.match(/REPO_CREATE=(CREATED|EXISTS|FAIL)/) || [])[1];
+          const push = (full.match(/PUSH_RESULT=(\w+)/) || [])[1];
+          console.log(`Staging deploy test: post-deploy serial verdict — clone=${clone || 'unknown'}, repo=${created || 'unknown'}, push=${push || 'unknown'}`);
+          if (clone === 'FALLBACK') {
+            throw new Error('Staging deploy test: deploy passed but the VM fell back to a placeholder repo (TEMPLATE_CLONE=FALLBACK) — this deployment did NOT come from the template clone.');
+          }
+          if (push && push !== 'PUSH_OK') {
+            throw new Error(`Staging deploy test: deploy passed but the VM's push was ${push} — this deployment cannot be from this VM.`);
+          }
+        }
+
+        // 2) The destination repo must carry the real template skeleton.
+        // A placeholder repo (.gitignore + README.md only) has no package.json.
+        if (gpat) {
+          const contentResp = await fetch(`https://api.github.com/repos/${repoFull}/contents/package.json`, {
+            headers: { Authorization: `token ${gpat}`, Accept: 'application/vnd.github+json' },
+          });
+          if (contentResp.ok) {
+            console.log(`Staging deploy test: VERIFIED template skeleton in ${repoFull} (contents/package.json present)`);
+          } else {
+            throw new Error(`Staging deploy test: ${repoFull} has no package.json (HTTP ${contentResp.status}) — the VM pushed a placeholder repo, not the SecureAgentBase template.`);
+          }
+        }
+      };
 
       // Step 2: Poll until content changes or new deployment appears
       const startTime = Date.now();
@@ -694,6 +763,7 @@ test.describe('Wizard E2E Regression', () => {
             } else {
               console.log(`Staging deploy test: PASSED — content changed (version: ${newVersion}, ${elapsed}s)`);
             }
+            await verifyPushAndRepo();
             return;
           }
 
@@ -713,6 +783,7 @@ test.describe('Wizard E2E Regression', () => {
                 } else {
                   console.log(`Staging deploy test: PASSED — deployment verified via rendered DOM (${elapsed}s, version: ${newVersion})`);
                 }
+                await verifyPushAndRepo();
                 return;
               }
 
@@ -748,6 +819,8 @@ test.describe('Wizard E2E Regression', () => {
                     ...full.matchAll(/PUSH_RESULT=\w+/g),
                     ...full.matchAll(/SCRIPT_COMPLETE\|[^\n]*/g),
                     ...full.matchAll(/GITHUB_PAT=(set|missing)/g),
+                    ...full.matchAll(/TEMPLATE_CLONE=(OK|FALLBACK)/g),
+                    ...full.matchAll(/REPO_CREATE=(CREATED|EXISTS|FAIL)/g),
                   ].map(m => m[0]);
                   if (allMarkers.length > 0) {
                     console.log(`[diag ${elapsed}s] Serial markers (full buffer): ${[...new Set(allMarkers)].join(' | ')}`);
@@ -758,8 +831,16 @@ test.describe('Wizard E2E Regression', () => {
                   const patMissing = /GITHUB_PAT=missing/i.test(full);
                   const scriptDone = /SCRIPT_COMPLETE/i.test(full);
                   const pushFailed = /PUSH_RESULT=(PUSH_FAILED|ALL_PUSH_FAILED)/i.test(full);
+                  const cloneFallback = /TEMPLATE_CLONE=FALLBACK/i.test(full);
+                  const repoCreateFail = /REPO_CREATE=FAIL/i.test(full);
                   if (pushFailed) {
                     throw new Error(`Staging deploy test: VM startup script finished with ${(full.match(/PUSH_RESULT=\w+/i) || ['PUSH_FAILED'])[0]} — GitHub push failed, deploy will not trigger.`);
+                  }
+                  if (cloneFallback) {
+                    throw new Error('Staging deploy test: VM fell back to a placeholder repo (TEMPLATE_CLONE=FALLBACK) — no template app, no workflows, deploy will not trigger.');
+                  }
+                  if (repoCreateFail) {
+                    throw new Error('Staging deploy test: VM failed to create the destination repo (REPO_CREATE=FAIL) — no push, deploy will not trigger.');
                   }
                   if (patMissing && scriptDone) {
                     throw new Error('Staging deploy test: VM startup script completed but GITHUB_PAT is missing — Secret Manager fetch failed on the VM, deploy will not trigger.');
