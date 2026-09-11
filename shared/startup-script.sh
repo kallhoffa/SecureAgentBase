@@ -29,18 +29,41 @@ GCP_SA_PRODUCTION=$(curl -sf "http://metadata.google.internal/computeMetadata/v1
 FIREBASE_STAGING_CONFIG=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_staging_config" -H "Metadata-Flavor: Google")
 FIREBASE_PRODUCTION_CONFIG=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/firebase_production_config" -H "Metadata-Flavor: Google")
 VITE_APP_NAME=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/vite_app_name" -H "Metadata-Flavor: Google")
+TEMPLATE_REPO=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/template_repo" -H "Metadata-Flavor: Google")
+OPENCODE_MODEL=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/opencode_model" -H "Metadata-Flavor: Google")
+OPENCODE_AUTH_JSON=$(curl -sf "http://metadata.google.internal/computeMetadata/v1/instance/attributes/opencode_auth_json" -H "Metadata-Flavor: Google")
 # Secret values (GITHUB_PAT / DISCORD_BOT_TOKEN) are NOT carried in VM metadata —
 # they are fetched from Secret Manager below via the metadata-server identity.
 # The agent SA is identity-only (map #36 decision #6): no gcp_sa_key
 # metadata, no key file on disk — the SA authenticates via the metadata server.
 
 # Clean up any potential HTML responses from failed requests or unconfigured metadata
-for var in FIREBASE_STAGING FIREBASE_PRODUCTION DISCORD_GUILD_ID GCP_WIF_PROVIDER GCP_SA_STAGING GCP_SA_PRODUCTION FIREBASE_STAGING_CONFIG FIREBASE_PRODUCTION_CONFIG VITE_APP_NAME; do
+for var in FIREBASE_STAGING FIREBASE_PRODUCTION DISCORD_GUILD_ID GCP_WIF_PROVIDER GCP_SA_STAGING GCP_SA_PRODUCTION FIREBASE_STAGING_CONFIG FIREBASE_PRODUCTION_CONFIG VITE_APP_NAME TEMPLATE_REPO OPENCODE_MODEL OPENCODE_AUTH_JSON; do
   val=${!var}
   if [[ "$val" =~ "<html" || "$val" =~ "<!" || "$val" =~ "<HTML" ]]; then
     eval "$var=\"\""
   fi
 done
+
+# Template repo to clone as the app skeleton (default: this repo). The
+# destination repo (github_repo) is usually created BY the VM below, so the
+# clone must come from the template, not from the not-yet-existing target.
+: "${TEMPLATE_REPO:=kallhoffa/SecureAgentBase}"
+if [[ "$TEMPLATE_REPO" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+  TEMPLATE_OWNER=$(echo "$TEMPLATE_REPO" | cut -d'/' -f1)
+  TEMPLATE_NAME=$(echo "$TEMPLATE_REPO" | cut -d'/' -f2)
+else
+  echo "WARNING: Invalid template_repo metadata, using kallhoffa/SecureAgentBase"
+  TEMPLATE_OWNER="kallhoffa"
+  TEMPLATE_NAME="SecureAgentBase"
+fi
+
+# Model written into the project opencode.json (validated charset so it can be
+# interpolated into JSON safely; the wizard or operator may override via metadata).
+: "${OPENCODE_MODEL:=opencode/big-pickle}"
+if [[ ! "$OPENCODE_MODEL" =~ ^[A-Za-z0-9._/-]{1,128}$ ]]; then
+  OPENCODE_MODEL="opencode/big-pickle"
+fi
 
 # Idempotency guard — GCP re-runs the startup script on EVERY boot, not just first boot.
 # Skip all provisioning steps if this VM was already set up, so reboots are harmless.
@@ -179,16 +202,23 @@ if [ -d "$REPO_NAME/.git" ]; then
   REPO_CLONED=true
 else
   REPO_CLONED=false
+  # Clone the SecureAgentBase TEMPLATE repo (the app skeleton), NOT the
+  # destination repo. A fresh app's destination usually does not exist yet —
+  # the VM creates it below via the GitHub API, gh-independent. Cloning the
+  # destination used to 404, silently fall back to a 3-file placeholder repo,
+  # and then fail to push (no repo, no gh) on EVERY fresh VM.
   for i in 1 2 3; do
-    if git clone --depth 1 "https://github.com/$REPO_OWNER/$REPO_NAME.git" "$REPO_NAME" > /dev/null 2>&1; then
+    if git clone --depth 1 "https://github.com/${TEMPLATE_OWNER}/${TEMPLATE_NAME}.git" "$REPO_NAME" > /dev/null 2>&1; then
       REPO_CLONED=true
       break
     fi
     sleep 5
   done
 
-  # If clone failed, fall back to creating directory manually
+  # If the template clone failed (e.g. GitHub unreachable), fall back to an
+  # empty placeolder repo so provisioning still completes.
   if [ "$REPO_CLONED" != "true" ]; then
+    echo "TEMPLATE_CLONE=FALLBACK" > /dev/ttyS0 2>/dev/null || true
     mkdir -p "$REPO_NAME"
     cd "$REPO_NAME"
     git init
@@ -201,6 +231,7 @@ build/
 *.log
 GITEOF
   else
+    echo "TEMPLATE_CLONE=OK" > /dev/ttyS0 2>/dev/null || true
     cd "$REPO_NAME"
     rm -rf .git
     git init
@@ -282,7 +313,8 @@ if [ -n "$GITHUB_PAT" ]; then
 
   # Probe PAT + transport health — verbose diagnostics to serial (no secrets).
   # curl tests the raw PAT value against the repo API (gh-independent); the
-  # gh probe reports whether the gh path is usable for repo-create/variables.
+  # gh probe is diagnostic only (gh is not required anymore — repo creation
+  # and variable setting run through curl below).
   # NOTE: no PAT type/token metadata is written to /dev/ttyS0 (serial console
   # must never carry secrets or metadata about credentials).
   # curl prints the HTTP status code, or 000 when the request itself fails
@@ -299,31 +331,71 @@ if [ -n "$GITHUB_PAT" ]; then
   fi
   echo "GH_PROBE: curl=$CURL_CODE gh=$GH_STATE" > /dev/ttyS0 2>/dev/null || true
 
-  # Push first — the repo usually already exists (the wizard creates it
-  # browser-side before VM creation). Fall back to gh repo create for the
-  # fresh-user path where it doesn't.
+  # Create the destination repo if it does not exist. The wizard does NOT
+  # create it browser-side — without this the push fails every time and the
+  # VM lands in ALL_PUSH_FAILED. No gh dependency (gh is not installed on the
+  # VM): repo creation needs only the PAT against the GitHub REST API.
+  REPO_CREATE="NOT_CHECKED"
+  if [ "$CURL_CODE" = "404" ]; then
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 -X POST \
+      "https://api.github.com/user/repos" \
+      -H "Authorization: Bearer $GITHUB_PAT" -H "Accept: application/vnd.github+json" \
+      -d "$(jq -n --arg n "$REPO_NAME" '{name:$n, private:false}' 2>/dev/null)")
+    if [ "$code" = "201" ] || [ "$code" = "200" ]; then
+      REPO_CREATE="CREATED"
+    else
+      REPO_CREATE="FAIL"
+    fi
+  elif [ "$CURL_CODE" = "200" ]; then
+    REPO_CREATE="EXISTS"
+  fi
+  echo "REPO_CREATE=$REPO_CREATE" > /dev/ttyS0 2>/dev/null || true
+
+  # Push the template-derived repo to the destination.
   git remote remove origin 2>/dev/null || true
   git remote add origin "https://github.com/${REPO_OWNER}/${REPO_NAME}.git" || true
   if git push -u origin main --force 2>&1; then
     PUSH_RESULT="PUSH_OK"
-  elif gh repo create "${REPO_OWNER}/${REPO_NAME}" --public --source=. --push 2>&1; then
-    PUSH_RESULT="CREATE_OK"
   else
     PUSH_RESULT="ALL_PUSH_FAILED"
   fi
   echo "PUSH_RESULT=$PUSH_RESULT" > /dev/ttyS0 2>/dev/null || true
 
+  # gh-independent Actions variable setter (create-or-update via the GitHub
+  # REST API). Values are JSON-escaped with jq; empty names/values are skipped.
+  set_gh_variable() {
+    local name="$1" value="$2" code payload url
+    if [ -z "$name" ] || [ -z "$value" ]; then
+      return 0
+    fi
+    url="https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/actions/variables/$name"
+    code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 \
+      -H "Authorization: Bearer $GITHUB_PAT" "$url" 2>/dev/null)
+    if [ "$code" = "200" ]; then
+      payload=$(jq -n --arg v "$value" '{value:$v}' 2>/dev/null)
+      curl -s -o /dev/null --max-time 20 -X PATCH "$url" \
+        -H "Authorization: Bearer $GITHUB_PAT" -H "Accept: application/vnd.github+json" \
+        -d "$payload" 2>/dev/null || return 1
+    else
+      payload=$(jq -n --arg n "$name" --arg v "$value" '{name:$n,value:$v}' 2>/dev/null)
+      curl -s -o /dev/null --max-time 20 -X POST \
+        "https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/actions/variables" \
+        -H "Authorization: Bearer $GITHUB_PAT" -H "Accept: application/vnd.github+json" \
+        -d "$payload" 2>/dev/null || return 1
+    fi
+  }
+
   # Set Firebase project IDs as VARIABLES (workflow reads vars.FIREBASE_PROJECT_ID_STAGING)
-  gh variable set FIREBASE_PROJECT_ID_STAGING --body "$FIREBASE_STAGING" -R "${REPO_OWNER}/${REPO_NAME}" 2>/dev/null || echo "WARN: Failed to set FIREBASE_PROJECT_ID_STAGING"
-  gh variable set FIREBASE_PROJECT_ID_PRODUCTION --body "$FIREBASE_PRODUCTION" -R "${REPO_OWNER}/${REPO_NAME}" 2>/dev/null || echo "WARN: Failed to set FIREBASE_PROJECT_ID_PRODUCTION"
+  set_gh_variable FIREBASE_PROJECT_ID_STAGING "$FIREBASE_STAGING" || echo "WARN: Failed to set FIREBASE_PROJECT_ID_STAGING"
+  set_gh_variable FIREBASE_PROJECT_ID_PRODUCTION "$FIREBASE_PRODUCTION" || echo "WARN: Failed to set FIREBASE_PROJECT_ID_PRODUCTION"
 
   # Set OIDC variables (required by google-github-actions/auth)
-  [ -n "$GCP_WIF_PROVIDER" ] && gh variable set GCP_WIF_PROVIDER --body "$GCP_WIF_PROVIDER" -R "${REPO_OWNER}/${REPO_NAME}" 2>/dev/null || true
-  [ -n "$GCP_SA_STAGING" ] && gh variable set GCP_SA_STAGING --body "$GCP_SA_STAGING" -R "${REPO_OWNER}/${REPO_NAME}" 2>/dev/null || true
-  [ -n "$GCP_SA_PRODUCTION" ] && gh variable set GCP_SA_PRODUCTION --body "$GCP_SA_PRODUCTION" -R "${REPO_OWNER}/${REPO_NAME}" 2>/dev/null || true
+  [ -n "$GCP_WIF_PROVIDER" ] && set_gh_variable GCP_WIF_PROVIDER "$GCP_WIF_PROVIDER" || true
+  [ -n "$GCP_SA_STAGING" ] && set_gh_variable GCP_SA_STAGING "$GCP_SA_STAGING" || true
+  [ -n "$GCP_SA_PRODUCTION" ] && set_gh_variable GCP_SA_PRODUCTION "$GCP_SA_PRODUCTION" || true
 
   # Set VITE app variables
-  [ -n "$VITE_APP_NAME" ] && gh variable set VITE_APP_NAME --body "$VITE_APP_NAME" -R "${REPO_OWNER}/${REPO_NAME}" 2>/dev/null || true
+  [ -n "$VITE_APP_NAME" ] && set_gh_variable VITE_APP_NAME "$VITE_APP_NAME" || true
 
   # Set Firebase config variables from JSON configs (parse with jq)
   # Convert camelCase field names to SCREAMING_SNAKE_CASE for GitHub variable names
@@ -332,7 +404,7 @@ if [ -n "$GITHUB_PAT" ]; then
       val=$(echo "$FIREBASE_STAGING_CONFIG" | jq -r ".${field} // empty" 2>/dev/null)
       if [ -n "$val" ]; then
         upper_field=$(echo "${field}" | sed 's/\([a-z]\)\([A-Z]\)/\1_\2/g' | tr '[:lower:]' '[:upper:]')
-        gh variable set "FIREBASE_${upper_field}_STAGING" --body "$val" -R "${REPO_OWNER}/${REPO_NAME}" 2>/dev/null || true
+        set_gh_variable "FIREBASE_${upper_field}_STAGING" "$val" || true
       fi
     done
   fi
@@ -342,7 +414,7 @@ if [ -n "$GITHUB_PAT" ]; then
       val=$(echo "$FIREBASE_PRODUCTION_CONFIG" | jq -r ".${field} // empty" 2>/dev/null)
       if [ -n "$val" ]; then
         upper_field=$(echo "${field}" | sed 's/\([a-z]\)\([A-Z]\)/\1_\2/g' | tr '[:lower:]' '[:upper:]')
-        gh variable set "FIREBASE_${upper_field}_PRODUCTION" --body "$val" -R "${REPO_OWNER}/${REPO_NAME}" 2>/dev/null || true
+        set_gh_variable "FIREBASE_${upper_field}_PRODUCTION" "$val" || true
       fi
     done
   fi
@@ -367,11 +439,13 @@ openai_api_key: ""
 github_token: ""
 KIMAKICONF
 
-# Write opencode.json with provider timeout settings (chatty upstream models)
+# Write opencode.json with provider timeout settings (chatty upstream models).
+# The quoted heredoc keeps the JSON literal exactly as written; the model
+# placeholder is swapped below via sed (OPENCODE_MODEL was charset-validated).
 cat > "/root/.kimaki/projects/$REPO_NAME/opencode.json" << 'OPENCODEEOF'
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "opencode-go/kimi-k2.6",
+  "model": "__OPENCODE_MODEL__",
   "provider": {
     "opencode-go": {
       "options": {
@@ -383,6 +457,20 @@ cat > "/root/.kimaki/projects/$REPO_NAME/opencode.json" << 'OPENCODEEOF'
   }
 }
 OPENCODEEOF
+sed -i "s|__OPENCODE_MODEL__|$OPENCODE_MODEL|" "/root/.kimaki/projects/$REPO_NAME/opencode.json"
+
+# Optional opencode provider credentials (free gateway tokens) passed as
+# validated JSON via opencode_auth_json metadata. never written to the serial
+# console — only a SET/UNSET marker. If absent, the operator provides them on
+# the VM (SSH `opencode auth login`, or copy auth.json from another machine).
+if [ -n "$OPENCODE_AUTH_JSON" ] && printf '%s' "$OPENCODE_AUTH_JSON" | jq -e . >/dev/null 2>&1; then
+  mkdir -p /root/.local/share/opencode
+  printf '%s' "$OPENCODE_AUTH_JSON" > /root/.local/share/opencode/auth.json
+  chmod 600 /root/.local/share/opencode/auth.json
+  echo "OPENCODE_AUTH=SET" > /dev/ttyS0 2>/dev/null || true
+else
+  echo "OPENCODE_AUTH=UNSET" > /dev/ttyS0 2>/dev/null || true
+fi
 
 # Install agent skills globally — opencode and Claude Code auto-discover these dirs.
 SKILLS_DIR=/root/.config/opencode/skills

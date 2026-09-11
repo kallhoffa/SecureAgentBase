@@ -2894,6 +2894,8 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       { key: 'firebase_staging_config', value: firebaseStagingData ? JSON.stringify(firebaseStagingData) : '' },
       { key: 'firebase_production_config', value: firebaseProductionData ? JSON.stringify(firebaseProductionData) : '' },
       { key: 'vite_app_name', value: projectName || 'MyApp' },
+      { key: 'template_repo', value: 'kallhoffa/SecureAgentBase' },
+      { key: 'opencode_model', value: 'opencode/big-pickle' },
       { key: 'serial-port-enable', value: 'TRUE' },
       { key: 'enable-oslogin', value: 'false' },
     ];

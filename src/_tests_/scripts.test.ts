@@ -236,23 +236,54 @@ describe('getStartupScript', () => {
       expect(script).toContain('api.github.com/repos/${REPO_OWNER}/${REPO_NAME}');
     });
 
-    it('creates a public repo with gh repo create', () => {
+    it('creates the destination repo via the GitHub REST API (no gh dependency)', () => {
       const script = getStartupScript(false);
-      expect(script).toContain('gh repo create');
-      expect(script).toContain('--public');
+      // The wizard does not create the repo browser-side; the VM creates it
+      // with the PAT alone — gh is not installed on the VM.
+      expect(script).toContain('api.github.com/user/repos');
+      expect(script).toContain('private:false');
+      expect(script).toContain('REPO_CREATE=');
+      expect(script).not.toContain('gh repo create');
     });
 
-    it('sets Firebase project ID variables', () => {
+    it('sets Firebase project ID variables (create-or-update, gh-independent)', () => {
       const script = getStartupScript(false);
-      expect(script).toContain('gh variable set FIREBASE_PROJECT_ID_STAGING');
-      expect(script).toContain('gh variable set FIREBASE_PROJECT_ID_PRODUCTION');
+      expect(script).toContain('set_gh_variable FIREBASE_PROJECT_ID_STAGING');
+      expect(script).toContain('set_gh_variable FIREBASE_PROJECT_ID_PRODUCTION');
     });
 
     it('sets OIDC variables (GCP_WIF_PROVIDER, GCP_SA_*)', () => {
       const script = getStartupScript(false);
-      expect(script).toContain('gh variable set GCP_WIF_PROVIDER');
-      expect(script).toContain('gh variable set GCP_SA_STAGING');
-      expect(script).toContain('gh variable set GCP_SA_PRODUCTION');
+      expect(script).toContain('set_gh_variable GCP_WIF_PROVIDER');
+      expect(script).toContain('set_gh_variable GCP_SA_STAGING');
+      expect(script).toContain('set_gh_variable GCP_SA_PRODUCTION');
+    });
+  });
+
+  describe('template clone + opencode model/auth provisioning', () => {
+    it('clones the SecureAgentBase template repo, not the destination', () => {
+      const script = getStartupScript(false);
+      // Fresh VMs 404 on the destination repo — the clone must come from the
+      // template so the VM ships the real app skeleton, not a placeholder.
+      expect(script).toContain('"https://github.com/${TEMPLATE_OWNER}/${TEMPLATE_NAME}.git"');
+      expect(script).toContain('TEMPLATE_CLONE=OK');
+      expect(script).not.toContain('git clone --depth 1 "https://github.com/$REPO_OWNER/$REPO_NAME.git"');
+    });
+
+    it('reads template_repo, opencode_model and opencode_auth_json metadata', () => {
+      const script = getStartupScript(false);
+      expect(script).toContain('attributes/template_repo');
+      expect(script).toContain('attributes/opencode_model');
+      expect(script).toContain('attributes/opencode_auth_json');
+    });
+
+    it('defaults the opencode model to opencode/big-pickle and writes auth.json from validated JSON', () => {
+      const script = getStartupScript(false);
+      expect(script).toContain('OPENCODE_MODEL="opencode/big-pickle"');
+      expect(script).toContain('"model": "__OPENCODE_MODEL__"');
+      expect(script).toContain('/root/.local/share/opencode/auth.json');
+      expect(script).toContain('chmod 600 /root/.local/share/opencode/auth.json');
+      expect(script).toContain('OPENCODE_AUTH=SET');
     });
   });
 
