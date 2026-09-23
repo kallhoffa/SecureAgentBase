@@ -2581,7 +2581,15 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     
     // Auto-refresh VM logs to detect Kimaki OAuth URL
     const pollVmLogs = async () => {
-      if (!serviceAccountJson || !projectId) return;
+      // Identity-only (map #36): the SA key (serviceAccountJson) is often
+      // absent — the serial-port token comes from impersonating the agent SA
+      // (godSaEmail) with the operator's OAuth token, and the key is never
+      // restored after a page reload. Requiring the key here silently killed
+      // the ENTIRE poll in identity-only flows: no serial tail in the modal,
+      // no SCRIPT_COMPLETE detection, the wizard stuck on "VM is
+      // initializing..." forever while the VM was healthy. Require only
+      // projectId — getServiceAccountToken() returning null short-circuits.
+      if (!projectId) return;
       
       try {
         const token = await getServiceAccountToken();
@@ -2639,9 +2647,9 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     
     const interval = setInterval(pollVmLogs, 10000);
     pollVmLogs();
-    
+
     return () => clearInterval(interval);
-  }, [vmIp, projectId, vmZone, serviceAccountJson]);
+  }, [vmIp, projectId, vmZone, serviceAccountJson, gcpAccessToken, godSaEmail]);
 
   // Clean up God SA long-lived key once VM initialization is complete
   useEffect(() => {
