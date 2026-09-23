@@ -240,38 +240,15 @@ fi
 
 git checkout -b main
 
-# Clean up wizard-specific files — users don't need the infra setup wizard
-rm -rf src/infra-setup.tsx src/create-app.tsx
-rm -rf src/framework/infra-setup/
-rm -rf src/admin/
-rm -rf cli/
-rm -rf tests/e2e/wizard.spec.js
-rm -rf src/_tests_/WizardSteps.test.jsx src/_tests_/create-app.test.tsx src/_tests_/StepHeader.test.jsx src/_tests_/api.test.ts src/_tests_/crypto.test.ts src/_tests_/scripts.test.ts
-rm -f WIZARD_DEV_NOTES.md
-
-# Fix App.tsx: remove wizard/admin imports and routes
-if [ -f src/App.tsx ]; then
-  # Remove import lines for InfraSetup, CreateApp, AdminPanel
-  sed -i "/import InfraSetup from '.\\/infra-setup';/d" src/App.tsx
-  sed -i "/import CreateApp from '.\\/create-app';/d" src/App.tsx
-  sed -i "/import AdminPanel from '.\\/admin\\/AdminPanel';/d" src/App.tsx
-  # Remove Route elements for /infra-setup, /create-app, /admin/*
-  sed -i '/<Route path="\\/infra-setup".*\\/>/d' src/App.tsx
-  sed -i '/<Route path="\\/create-app".*\\/>/d' src/App.tsx
-  sed -i '/<Route path="\\/admin/d' src/App.tsx
-  # Clean up orphaned {isAppMode && ()} blocks left behind after Route deletion
-  perl -i -0pe 's/\\{isAppMode && \\(\\s*\\n\\s*\\)\\}//gs' src/App.tsx
-  echo "App.tsx cleaned of wizard/admin references"
-fi
-
-# Fix navigation-bar.tsx: remove admin link and useIsAdmin import
-if [ -f src/navigation-bar.tsx ]; then
-  sed -i "/import { useIsAdmin } from '.\\/admin\\/useIsAdmin';/d" src/navigation-bar.tsx
-  sed -i "/const { isAdmin } = useIsAdmin(db);/d" src/navigation-bar.tsx
-  # Delete from {isAdmin && to the next closing )} on its own line
-  sed -i '/{isAdmin &&/,/^[[:space:]]*)}/d' src/navigation-bar.tsx
-  echo "navigation-bar.tsx cleaned of admin references"
-fi
+# NOTE: We deliberately do NOT strip wizard/admin/cli files from the
+# destination repo. The template's own CI workflows (ci.yml, security-scan.yml,
+# firebase-deploy-staging.yml) build the cli/ and run the full test suite, and
+# src/App.tsx imports the wizard/admin modules. Stripping produced a repo whose
+# every workflow run failed: `cd cli && npm ci` had no cli/, and line-based sed
+# cleanup of App.tsx left half-deleted multiline JSX (ReferenceError:
+# InfraSetup/CreateApp is not defined). A byte-identical copy of the template
+# is CI-green by construction — main is gated by the exact same CI — and the
+# wizard/admin routes are inert in template mode (VITE_APP_MODE unset).
 
 # Write a CONTEXT.md scaffold for the domain-modeling/setup-project skills
 if [ ! -f CONTEXT.md ]; then

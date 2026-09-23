@@ -204,6 +204,10 @@ jobs:
           exit 1
 
       - name: Enable Firebase Auth and create test user
+        # Skipped on user-app repos created from this template: the e2e test
+        # user/password rig (E2E_TEST_PASSWORD secret, E2E_GCP_PROJECT_ID var)
+        # only exists where the e2e harness is configured.
+        if: vars.E2E_GCP_PROJECT_ID != ''
         env:
           E2E_TEST_PASSWORD: ${{ secrets.E2E_TEST_PASSWORD }}
         run: |
@@ -241,6 +245,9 @@ jobs:
           fi
 
       - name: Run Smoke Tests on Staging
+        # Skipped on user-app repos: smoke tests sign in with the e2e test
+        # user, which only exists where the e2e harness is configured.
+        if: vars.E2E_GCP_PROJECT_ID != ''
         run: npx playwright test e2e/smoke.spec.js --retries=2
         env:
           TEST_URL: https://${{ vars.FIREBASE_PROJECT_ID_STAGING }}.web.app
@@ -264,10 +271,14 @@ jobs:
           fi
 
       - name: Run Full E2E Tests on Staging
+        # Skipped on user-app repos: the full e2e suite needs the e2e rig
+        # (test user, GCP e2e token, E2E_FULL). Template copies only get the
+        # deploy + reachability check above.
         if: >-
-          github.event_name != 'workflow_dispatch' ||
+          vars.E2E_GCP_PROJECT_ID != '' &&
+          (github.event_name != 'workflow_dispatch' ||
           github.event.inputs.e2e_type == 'wizard' ||
-          github.event.inputs.e2e_type == 'all'
+          github.event.inputs.e2e_type == 'all')
         run: |
           npx playwright test --retries=2
         env:
@@ -300,9 +311,12 @@ jobs:
           ls -la *.tgz
 
       - name: Run CLI E2E Tests
+        # Skipped on user-app repos: CLI e2e provisions real GCP/GitHub
+        # resources with the e2e rig (PAT, Discord token, e2e project).
         if: >-
-          (github.event_name == 'push' && steps.cli-filter.outputs.cli == 'true') ||
-          (github.event_name == 'workflow_dispatch' && (github.event.inputs.e2e_type == 'cli' || github.event.inputs.e2e_type == 'all'))
+          vars.E2E_GCP_PROJECT_ID != '' &&
+          ((github.event_name == 'push' && steps.cli-filter.outputs.cli == 'true') ||
+          (github.event_name == 'workflow_dispatch' && (github.event.inputs.e2e_type == 'cli' || github.event.inputs.e2e_type == 'all')))
         run: |
           CLI_PKG=$(ls cli/secureagentbase-*.tgz)
           echo "CLI package: $CLI_PKG"

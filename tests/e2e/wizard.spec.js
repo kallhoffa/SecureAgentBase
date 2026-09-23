@@ -287,11 +287,12 @@ test.describe('Wizard E2E Regression', () => {
       test.skip(process.env.E2E_FULL !== 'true',
         'E2E_FULL=true required — creates real GCP VM, GitHub repo, and Discord bot');
 
-      // 10 minutes total: up to 90s billing link wait + up to 90s GitHub
+      // 15 minutes total: up to 90s billing link wait + up to 90s GitHub
       // variables wait (both BEFORE the click), plus VM creation (API
       // enablement polls up to 30s per API across ~5 APIs, zone-capacity
-      // fallbacks, instance provisioning) with a 6-minute race budget.
-      test.setTimeout(600000);
+      // fallbacks, instance provisioning) with a 6-minute race budget, plus
+      // the init modal must ADVANCE (~2-3 min startup script to SCRIPT_COMPLETE).
+      test.setTimeout(900000);
 
       // Capture browser console logs for debugging
       const consoleLogs = [];
@@ -484,6 +485,15 @@ test.describe('Wizard E2E Regression', () => {
       // Init modal appeared — VM was created successfully and startup script is running
       await expect(initModal).toBeVisible();
       console.log('VM creation e2e test passed: VM created, init modal visible, startup script running');
+
+      // Regression guard: the wizard's completion detection must actually
+      // fire — the modal has to ADVANCE past "VM is initializing...". The
+      // wizard reads the SCRIPT_COMPLETE serial marker; a stale marker match
+      // (the old '=== Kimaki installation complete! ===' string) leaves the
+      // UI stuck here forever while the VM is perfectly healthy.
+      const advancedHeader = page.getByText(/Waiting for Kimaki|Waiting for staging deploy|All done!/);
+      await expect(advancedHeader).toBeVisible({ timeout: 300000 });
+      console.log('Wizard UI advanced past VM initialization — completion marker detected');
 
       // Capture serial port logs from the init modal DOM (the dark terminal-style div)
       await page.waitForTimeout(5000); // wait for some serial port output to appear

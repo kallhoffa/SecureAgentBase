@@ -2609,8 +2609,15 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
             setKimakiInstallUrl(oauthUrlMatch[1]);
           }
           
-          // Detect completion marker emitted by the startup script
-          if (logs.includes('=== Kimaki installation complete! ===')) {
+          // Detect completion marker emitted by the startup script. The
+          // current script's final serial line is the compact
+          // SCRIPT_COMPLETE|PUSH=... marker (emitted just before
+          // kimaki-register starts). The legacy '=== Kimaki installation
+          // complete! ===' marker predates the systemd/KIMAKI_BOT_TOKEN flow
+          // and is kept only for older, already-running VMs. Matching ONLY
+          // the legacy marker left the wizard stuck on "VM is initializing..."
+          // forever while the VM was healthy.
+          if (logs.includes('SCRIPT_COMPLETE') || logs.includes('=== Kimaki installation complete! ===')) {
             setVmInitComplete(true);
           }
           

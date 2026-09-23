@@ -285,6 +285,22 @@ describe('getStartupScript', () => {
       expect(script).toContain('chmod 600 /root/.local/share/opencode/auth.json');
       expect(script).toContain('OPENCODE_AUTH=SET');
     });
+
+    it('does not strip wizard/admin/cli files from the destination repo', () => {
+      const script = getStartupScript(false);
+      // The template's CI workflows build cli/ and run the full test suite,
+      // and src/App.tsx imports the wizard/admin modules. Stripping files the
+      // repo itself references produced a permanently red CI on every user
+      // repo: `cd cli && npm ci` had no cli/, and line-based sed cleanup left
+      // half-deleted multiline JSX in App.tsx (ReferenceError). The
+      // destination must be a byte-identical template copy — CI-green by
+      // construction.
+      expect(script).not.toContain('rm -rf cli/');
+      expect(script).not.toContain('rm -rf src/infra-setup.tsx');
+      expect(script).not.toContain('rm -rf src/admin/');
+      expect(script).not.toContain('rm -rf src/framework/infra-setup/');
+      expect(script).not.toContain("sed -i \"/import InfraSetup");
+    });
   });
 
   describe('agent skills installation', () => {
