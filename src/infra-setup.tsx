@@ -6,7 +6,7 @@ import { doc, getDoc, Firestore } from 'firebase/firestore';
 import { safeSet, safeDelete } from './guardrails/safe-firestore';
 import { validate } from './guardrails/validate';
 import { useRateLimit } from './guardrails/useRateLimit';
-import { Check, AlertTriangle, Trash2, Server, Bot } from 'lucide-react';
+import { Check, AlertTriangle, Trash2, Server, Bot, ExternalLink } from 'lucide-react';
 import { CloudShellScript, getStartupScript } from './framework/infra-setup/scripts';
 import {
   gcpApiFetch, githubApiFetch, setGitHubVariable, ensureGitHubRepo,
@@ -916,39 +916,51 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     const saEmail = godSaEmail || serviceAccountJson?.client_email;
 
     // Identity-only (map #36): the operator's Google OAuth token impersonates
-    // the agent SA — no SA key is ever held or signed with. Returns null when
-    // there is no operator token (legacy SA-key-only flows must reconnect via
-    // "Connect Google Cloud Account").
-    if (gcpAccessToken && saEmail) {
-      try {
-        const resp = await fetch(
-          `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${encodeURIComponent(saEmail)}:generateAccessToken`,
-          {
-            method: 'POST',
-            headers: {
-              'Authorization': `Bearer ${gcpAccessToken}`,
-              'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-              scope: ['https://www.googleapis.com/auth/cloud-platform', 'https://www.googleapis.com/auth/compute', 'https://www.googleapis.com/auth/devstorage.read_write', 'https://www.googleapis.com/auth/cloud-billing.readonly'],
-              lifetime: '3600s'
-            })
+    // the agent SA — no SA key is ever held or signed with. When there is no
+    // agent SA to impersonate (e2e flow: auto-OIDC creates deploy SAs but
+    // never an agent SA; also legacy key-less sessions), fall back to the
+    // operator's own token — it already holds cloud-platform scope (it was
+    // used to create the VM), so it can read serial port output too. Without
+    // this fallback the serial-port POLL silently returned null here and the
+    // init modal stuck on "VM is initializing..." forever while the VM was
+    // healthy (confirmed in e2e runs 35842707147 + 35873864902).
+    if (gcpAccessToken) {
+      if (saEmail) {
+        try {
+          const resp = await fetch(
+            `https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${encodeURIComponent(saEmail)}:generateAccessToken`,
+            {
+              method: 'POST',
+              headers: {
+                'Authorization': `Bearer ${gcpAccessToken}`,
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                scope: ['https://www.googleapis.com/auth/cloud-platform', 'https://www.googleapis.com/auth/compute', 'https://www.googleapis.com/auth/devstorage.read_write', 'https://www.googleapis.com/auth/cloud-billing.readonly'],
+                lifetime: '3600s'
+              })
+            }
+          );
+          if (resp.ok) {
+            const data = await resp.json();
+            return data.accessToken;
           }
-        );
-        if (resp.ok) {
-          const data = await resp.json();
-          return data.accessToken;
+        } catch (e) {
+          console.warn('generateAccessToken failed:', e);
         }
-      } catch (e) {
-        console.warn('generateAccessToken failed:', e);
       }
+      // No agent SA email available — use the operator's own token.
+      return gcpAccessToken;
     }
-
     return null;
   };
 
   const fetchVmLogs = async () => {
-    if (!serviceAccountJson || !projectId || !vmIp) return;
+    // Identity-only (map #36): no SA key OR agent SA required — the operator
+    // token now falls back inside getServiceAccountToken(). Requiring
+    // serviceAccountJson here broke manual log refresh for identity-only
+    // flows (same silent no-op as the init-modal poll).
+    if (!projectId || !vmIp) return;
     
     setLoadingVmLogs(true);
     try {
@@ -981,8 +993,10 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
   };
 
   const deleteVm = async () => {
-    if (!serviceAccountJson || !projectId) {
-      setError('Service account and project ID required');
+    // Identity-only (map #36): the operator token falls back inside
+    // getServiceAccountToken(), so no SA key is required.
+    if (!projectId) {
+      setError('Project ID required');
       return;
     }
 
@@ -4726,16 +4740,26 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
                         : 'All done!'
                   }
                 </h2>
-                <p className="text-gray-500 text-xs">
-                  {!vmInitComplete
-                    ? 'Cloning SecureAgentBase, installing Kimaki, and connecting to Discord. Usually 2-3 minutes.'
-                    : !botOnline
-                      ? 'VM is ready. Kimaki is installing dependencies and connecting to Discord.'
-                      : !stagingDeployed
-                        ? 'Bot is online. Waiting for first deploy to complete.'
-                        : 'Your Kimaki agent is online and staging is live.'
-                  }
-                </p>
+<p className="text-gray-500 text-xs">
+                   {!vmInitComplete
+                     ? 'Cloning SecureAgentBase, installing Kimaki, and connecting to Discord. Usually 2-3 minutes.'
+                     : !botOnline
+                       ? 'VM is ready. Kimaki is installing dependencies and connecting to Discord.'
+                       : !stagingDeployed
+                         ? 'Bot is online. Waiting for first deploy to complete.'
+                         : 'Your Kimaki agent is online and staging is live.'}
+                 </p>
+                 {stagingDeployed && firebaseStagingData?.projectId && (
+                   <a
+                     href={`https://${firebaseStagingData.projectId}.web.app`}
+                     target="_blank"
+                     rel="noopener noreferrer"
+                     className="inline-flex items-center gap-1 text-indigo-600 hover:text-indigo-800 text-sm font-medium mt-1"
+                   >
+                     Open staging site ({firebaseStagingData.projectId}.web.app)
+                     <ExternalLink size={14} />
+                   </a>
+                 )}
               </div>
             </div>
 
