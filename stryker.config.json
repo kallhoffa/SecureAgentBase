@@ -5,6 +5,7 @@
   "testRunner": "vitest",
   "plugins": ["@stryker-mutator/vitest-runner"],
   "coverageAnalysis": "perTest",
+  "ignoreStatic": true,
   "mutate": [
     "src/**/*.{ts,tsx,js,jsx}",
     "!src/_tests_/**",

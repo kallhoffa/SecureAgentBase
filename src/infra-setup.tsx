@@ -2673,26 +2673,47 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     );
   }, [vmInitComplete, gcpAccessToken, projectId, godSaEmail]);
 
-  // Poll staging URL after VM init completes
+  // Poll the GitHub Actions staging deploy run after VM init completes.
+  // NOTE: this used to HEAD-probe the staging URL, but Firebase serves a
+  // placeholder at {projectId}.web.app as soon as the web app exists — so
+  // the "All done!" state fired when the deploy job *started* (or even
+  // before), not when it *succeeded*. Polling the workflow run's conclusion
+  // is the only accurate "deploy finished" signal.
   useEffect(() => {
     if (!vmInitComplete) return;
     const stagingProjectId = firebaseStagingData?.projectId;
     if (!stagingProjectId) return;
+    if (!githubPat || !githubRepoName) return;
 
+    let cancelled = false;
     const checkStagingDeploy = async () => {
       try {
-        const res = await fetch(`https://${stagingProjectId}.web.app`, { method: 'HEAD', mode: 'no-cors' });
-        // no-cors HEAD returns opaque (status 0) on success — that's fine
-        setStagingDeployed(true);
-      } catch {
-        // Site not reachable yet
+        const data = await githubApiFetch(
+          githubPat,
+          `/repos/${githubRepoName}/actions/workflows/firebase-deploy-staging.yml/runs?per_page=3`
+        );
+        const runs = data?.workflow_runs || [];
+        const latest = runs[0];
+        if (!latest) return; // no run yet — keep polling
+        if (latest.status === 'completed' && latest.conclusion === 'success') {
+          if (!cancelled) setStagingDeployed(true);
+        } else if (latest.status === 'completed' && latest.conclusion !== 'success') {
+          // Deploy failed — never flip the "All done!" flag on a failure.
+          console.error(`Staging deploy run ${latest.id} concluded ${latest.conclusion} — not marking deployed`);
+        }
+        // in_progress / queued → keep polling
+      } catch (e) {
+        console.error('Failed to check staging deploy status:', e);
       }
     };
 
     checkStagingDeploy();
     const interval = setInterval(checkStagingDeploy, 30000);
-    return () => clearInterval(interval);
-  }, [vmInitComplete, firebaseStagingData?.projectId]);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
+  }, [vmInitComplete, firebaseStagingData?.projectId, githubPat, githubRepoName]);
 
   // Auto-generate Discord invite URL when token is loaded from storage
   useEffect(() => {
