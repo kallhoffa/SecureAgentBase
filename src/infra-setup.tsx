@@ -2690,16 +2690,27 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       try {
         const data = await githubApiFetch(
           githubPat,
-          `/repos/${githubRepoName}/actions/workflows/firebase-deploy-staging.yml/runs?per_page=3`
+          `/repos/${githubRepoName}/actions/workflows/firebase-deploy-staging.yml/runs?per_page=1`
         );
-        const runs = data?.workflow_runs || [];
-        const latest = runs[0];
-        if (!latest) return; // no run yet — keep polling
-        if (latest.status === 'completed' && latest.conclusion === 'success') {
+        const run = data?.workflow_runs?.[0];
+        if (!run) return; // no run yet — keep polling
+        // The deploy step runs BEFORE the e2e steps in the same workflow, so
+        // the overall run may still be in_progress (or later fail on an
+        // unrelated e2e step) while the staging site is already live. Poll
+        // the job steps for the deploy step's own conclusion instead of the
+        // run-level conclusion.
+        const jobs = await githubApiFetch(
+          githubPat,
+          `/repos/${githubRepoName}/actions/runs/${run.id}/jobs?per_page=10`
+        );
+        const deployStep = (jobs?.jobs || [])
+          .flatMap(j => j.steps || [])
+          .find(s => s.name === 'Deploy to Firebase Staging');
+        if (deployStep?.conclusion === 'success') {
           if (!cancelled) setStagingDeployed(true);
-        } else if (latest.status === 'completed' && latest.conclusion !== 'success') {
-          // Deploy failed — never flip the "All done!" flag on a failure.
-          console.error(`Staging deploy run ${latest.id} concluded ${latest.conclusion} — not marking deployed`);
+        } else if (run.status === 'completed' && run.conclusion !== 'success' && deployStep?.conclusion !== 'success') {
+          // The deploy step itself failed or never ran — never flip the flag.
+          console.error(`Staging deploy step for run ${run.id} did not succeed (${deployStep?.conclusion || 'no step'}) — not marking deployed`);
         }
         // in_progress / queued → keep polling
       } catch (e) {
