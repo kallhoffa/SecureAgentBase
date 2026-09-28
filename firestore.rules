@@ -43,10 +43,6 @@ service cloud.firestore {
       allow write: if isAuthenticated() && userId == request.auth.uid;
     }
     
-    match /infra_configs/{userId} {
-      allow read, write: if isAuthenticated() && userId == request.auth.uid;
-    }
-    
     match /admins/{userId} {
       allow read: if isAuthenticated();
       allow write: if false;

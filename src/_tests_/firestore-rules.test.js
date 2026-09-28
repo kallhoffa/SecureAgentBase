@@ -278,25 +278,6 @@ describe('firestore.rules', () => {
     });
   });
 
-  describe('infra_configs collection', () => {
-    it('denies unauthenticated read', async () => {
-      if (!isReady()) return;
-      await assertFails(getDb().collection('infra_configs').get());
-    });
-
-    it('allows user to read their own doc', async () => {
-      if (!isReady()) return;
-      const aliceDb = getDb(UID_ALICE);
-      await aliceDb.collection('infra_configs').doc(UID_ALICE).set({ foo: 'bar' });
-      await assertSucceeds(aliceDb.collection('infra_configs').doc(UID_ALICE).get());
-    });
-
-    it('denies user from reading another users doc', async () => {
-      if (!isReady()) return;
-      await assertFails(getDb(UID_BOB).collection('infra_configs').doc(UID_ALICE).get());
-    });
-  });
-
   describe('admins collection', () => {
     it('allows authenticated read', async () => {
       if (!isReady()) return;

@@ -103,7 +103,7 @@ const App: React.FC<AppProps> = ({ db }) => {
         <Routes>
           <Route path="/login" element={<RedirectIfAuthed><Login /></RedirectIfAuthed>} />
           <Route path="/signup" element={<RedirectIfAuthed><Signup /></RedirectIfAuthed>} />
-          <Route element={<StagingGate db={db}><RootLayout db={db} /></StagingGate>}>
+          <Route element={<StagingGate><RootLayout db={db} /></StagingGate>}>
             <Route path="/" element={<HomePage />} />
             {isAppMode ? (
               <>
@@ -139,13 +139,13 @@ const App: React.FC<AppProps> = ({ db }) => {
           {isAppMode && (
             <Route path="/infra-setup" element={
               <StandaloneLayout db={db}>
-                <InfraSetup db={db} />
+                <InfraSetup />
               </StandaloneLayout>
             } />
           )}
-          <Route path="/admin" element={<StagingGate db={db}><AdminPanel db={db} /></StagingGate>} />
-          <Route path="/admin/feature-flags" element={<StagingGate db={db}><AdminPanel db={db} /></StagingGate>} />
-          <Route path="/admin/limits" element={<StagingGate db={db}><AdminPanel db={db} /></StagingGate>} />
+          <Route path="/admin" element={<StagingGate><AdminPanel db={db} /></StagingGate>} />
+          <Route path="/admin/feature-flags" element={<StagingGate><AdminPanel db={db} /></StagingGate>} />
+          <Route path="/admin/limits" element={<StagingGate><AdminPanel db={db} /></StagingGate>} />
         </Routes>
       </BrowserRouter>
     </NotificationProvider>

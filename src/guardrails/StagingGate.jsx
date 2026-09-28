@@ -1,36 +1,16 @@
-import { useState, useEffect } from 'react';
 import { useAuth } from '../firestore-utils/auth-context';
-import { doc, getDoc } from 'firebase/firestore';
 import { Link } from 'react-router';
 
 const isStaging = import.meta.env.VITE_APP_ENV === 'staging';
 const isE2E = import.meta.env.VITE_E2E === 'true';
+const LOCALSTORAGE_KEY = 'infra_config_pending';
 
-export const StagingGate = ({ db, children }) => {
+export const StagingGate = ({ children }) => {
   const { user, loading } = useAuth();
-  const [checking, setChecking] = useState(true);
-  const [authorized, setAuthorized] = useState(false);
-
-  useEffect(() => {
-    if (!isStaging || loading || !user) return;
-    let mounted = true;
-    const checkWizard = async () => {
-      try {
-        const infraDoc = await getDoc(doc(db, 'infra_configs', user.uid));
-        if (mounted) setAuthorized(infraDoc.exists());
-      } catch {
-        if (mounted) setAuthorized(false);
-      }
-      if (mounted) setChecking(false);
-    };
-    checkWizard();
-    return () => { mounted = false; };
-  }, [user, loading, db]);
 
   if (!isStaging || isE2E) return children;
 
-  const authPending = loading || (!!user && checking);
-  if (authPending) {
+  if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-950">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600" />
@@ -55,6 +35,12 @@ export const StagingGate = ({ db, children }) => {
       </div>
     );
   }
+
+  // infra_configs was removed from Firestore — the wizard now persists a
+  // localStorage marker (infra_config_pending) instead. Access is granted
+  // when that marker exists. (Deployed staging builds run with VITE_E2E=true
+  // and bypass this gate entirely; this only gates local staging dev.)
+  const authorized = !!localStorage.getItem(LOCALSTORAGE_KEY);
 
   if (!authorized) {
     return (

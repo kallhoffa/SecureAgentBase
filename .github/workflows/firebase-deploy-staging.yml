@@ -272,18 +272,6 @@ jobs:
           USER_ID=$(echo "$RESP" | jq -r '.localId // empty')
           echo "Test user UID: ${USER_ID:-unknown}"
 
-          echo "=== Creating infra_configs document for test user ==="
-          if [ -n "$USER_ID" ] && [ "$USER_ID" != "null" ]; then
-            curl -s -X PATCH \
-              "https://firestore.googleapis.com/v1/projects/${PROJECT}/databases/(default)/documents/infra_configs/${USER_ID}" \
-              -H "Authorization: Bearer ${TOKEN}" \
-              -H "Content-Type: application/json" \
-              -d "{\"fields\":{\"e2eTest\":{\"booleanValue\":true},\"createdAt\":{\"timestampValue\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}}}"
-            echo "infra_configs created for test user"
-          else
-            echo "WARNING: Could not get test user ID, infra_configs not created"
-          fi
-
       - name: Run Smoke Tests on Staging
         # Skipped on user-app repos: smoke tests sign in with the e2e test
         # user, which only exists where the e2e harness is configured.
