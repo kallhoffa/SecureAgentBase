@@ -2,8 +2,6 @@ import { useState, useEffect, useRef } from 'react';
 import { useAuth } from './firestore-utils/auth-context';
 import { useNavigate } from 'react-router';
 import { useNotification } from './firestore-utils/notification-context';
-import { doc, getDoc, Firestore } from 'firebase/firestore';
-import { safeSet, safeDelete } from './guardrails/safe-firestore';
 import { validate } from './guardrails/validate';
 import { useRateLimit } from './guardrails/useRateLimit';
 import { Check, AlertTriangle, Trash2, Server, Bot, ExternalLink } from 'lucide-react';
@@ -59,11 +57,6 @@ interface Window {
   };
 }
 
-interface InfraSetupProps {
-  db: Firestore;
-}
-
-const INFRA_COLLECTION = 'infra_configs';
 const LOCALSTORAGE_KEY = 'infra_config_pending';
 const FORM_PROGRESS_KEY = 'infra_form_progress';
 // Operator-entered secrets: never written to Firestore (GHSA-x49w). Discord
@@ -126,7 +119,7 @@ const extractClientIdFromToken = (token) => {
   return '';
 };
 
-const InfraSetup: React.FC<InfraSetupProps> = ({ db }) => {
+const InfraSetup = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const { addNotification } = useNotification();
@@ -168,8 +161,6 @@ const [loading, setLoading] = useState(true);
   const [serviceAccountJson, setServiceAccountJson] = useState(null);
   const [serviceAccountError, setServiceAccountError] = useState(null);
   const [godSaEmail, setGodSaEmail] = useState(null);
-
-  const [gcpConfigLost, setGcpConfigLost] = useState(false);
   const [gcpConsentEmail, setGcpConsentEmail] = useState('');
   const [gcpEmailMismatch, setGcpEmailMismatch] = useState(false);
   const [checkingCompletion, setCheckingCompletion] = useState(true);
@@ -1977,24 +1968,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     setGcpAccessToken(response.access_token);
     setGcpTokenExpiry(Date.now() + (((response as any).expires_in || 3600) - 60) * 1000);
     setGcpConnected(true);
-    setGcpConfigLost(false);
 
     const projects = await fetchGcpProjects(response.access_token);
     // NOTE: expandNextStep(3) was removed — it dispatched EXPAND_NEXT which
     // removed step 3 from expandedSteps (trying to add step 4 which > 3),
     // collapsing the accordion after GCP connected.
-
-    if (user) {
-      try {
-        await safeSet(db, INFRA_COLLECTION, user.uid, {
-          gcp_connected: true,
-          gcp_token_expiry: new Date(Date.now() + 3600 * 1000).toISOString(),
-          updated_at: new Date().toISOString(),
-        }, user.uid, { allowFields: ['gcp_connected', 'gcp_token_expiry', 'updated_at'], merge: true });
-      } catch (err) {
-        console.error('Error auto-saving GCP connection state:', err);
-      }
-    }
   };
 
   const getGoogleOAuthClient = (prompt) => {
@@ -2488,30 +2466,13 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
 
   useEffect(() => {
     const loadInfraConfig = async () => {
-      let configData = null;
-
-      if (user) {
-        try {
-          const infraRef = doc(db, INFRA_COLLECTION, user.uid);
-          const infraSnap = await getDoc(infraRef);
-
-          if (infraSnap.exists()) {
-            configData = infraSnap.data();
-          }
-        } catch (err) {
-          console.error('Error loading infra config from Firestore:', err);
-        }
-      }
-
-      if (!configData) {
-        configData = loadFromLocalStorage();
-      }
+      const configData = loadFromLocalStorage();
 
       if (configData) {
-        // projectId intentionally NOT restored from Firestore. The wizard
+        // projectId intentionally NOT restored. The wizard
         // re-runs setup each session — a stale projectId causes Firebase
         // setup to target the wrong project. E2E injection still sets it.
-        // setProjectId is skipped for both Firestore and localStorage.
+        // setProjectId is skipped.
         // GCP access token is NOT restored — it's short-lived (~1h) and
         // gcpTokenExpiry can't be restored either, so getAccessToken() can't
         // tell if it's valid. The user clicks "Connect Google Cloud Account"
@@ -2519,49 +2480,49 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         setGithubAppInstalled(configData.github_app_installed || false);
         // vm_ip is NOT restored when real e2e credentials are injected: it
         // marks step 3 complete and replaces the "Create VM" button with the
-        // VM-management view. The shared e2e user's Firestore doc carries a
-        // stale vm_ip from earlier runs, which would hide the Create button
-        // and fail the wizard test. E2E mode always creates a fresh VM, so the
-        // IP is never needed on load.
+        // VM-management view. A stale vm_ip from earlier runs would hide the
+        // Create button and fail the wizard test. E2E mode always creates a
+        // fresh VM, so the IP is never needed on load.
         if (!e2eInjectedRef.current) setVmIp(configData.vm_ip || '');
-        // discord_bot_token intentionally NOT restored from Firestore (GHSA-x49w).
-        // Restored from browser storage in the dedicated mount effect below.
+        // discord_bot_token intentionally NOT restored from browser storage
+        // via this path without a wrapper — restored in the dedicated mount
+        // effect below.
         setDiscordGuildId(configData.discord_guild_id || configData.discordGuildId || '');
-        // discord_bot_added intentionally NOT restored from Firestore — the
-        // wizard should start with step 1 incomplete each time. The user
-        // re-enters their bot token and clicks "Create Bot" to complete it.
+        // discord_bot_added intentionally NOT restored — the wizard should
+        // start with step 1 incomplete each time. The user re-enters their
+        // bot token and clicks "Create Bot" to complete it.
         // E2E injection still sets it via URL params.
-        // Firebase configs intentionally NOT restored from Firestore.
+        // Firebase configs intentionally NOT restored.
         // The wizard re-runs Firebase setup on each session — pre-populating
         // with stale data from a prior run causes confusion and 400 errors.
         // E2E injection still sets them via URL params.
-        // github_pat intentionally NOT restored from Firestore (GHSA-x49w).
+        // github_pat intentionally NOT restored (GHSA-x49w).
         // Restored from browser storage in the dedicated mount effect below.
-        
-        // OIDC values intentionally NOT restored from Firestore — they mark
+
+        // OIDC values intentionally NOT restored — they mark
         // subtask 4 as complete before the user has run OIDC setup.
         if (configData.github_repo) setGithubRepoName(configData.github_repo);
         
         // Restore operator-entered secrets (Discord token, GitHub PAT, SA key)
         // happens in a dedicated mount effect (below) that reads browser
-        // storage directly — deliberately NOT gated on this Firestore fetch,
-        // so a slow/unreachable Firestore backend can't delay the restore.
-        // Not Firestore (GHSA-x49w).
+        // storage directly — deliberately NOT gated on localStorage so the
+        // restore can't be delayed by a slow read.
 
-        // Note: service_account_key is NOT restored from Firestore (private_key
-        // sensitive) — browser-storage restore covers the same-tab/fresh-tab
-        // cases (see the dedicated mount effect).
+        // Note: service_account_key is NOT restored from localStorage
+        // (private_key sensitive) — browser-storage restore covers the
+        // same-tab/fresh-tab cases (see the dedicated mount effect).
 
-        if (!e2eInjectedRef.current && configData.god_sa_email) setGodSaEmail(configData.god_sa_email);
+        // god_sa_email intentionally NOT restored: the 3.1 green checkmark
+        // ("Connect Google Cloud & Service Account") must only appear when the
+        // service account is actually created THIS session — restoring a stale
+        // marker would light up 3.1 as complete before the user does any work
+        // (the silent GCP token refresh reconnects automatically, so
+        // gcpConnected alone must not imply the SA was configured).
 
         // Stale vm_ip must not expand step 3 when e2e credentials are injected
         // (see above).
         if (!e2eInjectedRef.current && configData.vm_ip && !expandedSteps.includes(3)) {
           wizard.dispatch({ type: 'EXPAND_STEP', step: 3 });
-        }
-
-        if (configData.gcp_project_id && !configData.gcp_access_token) {
-          setGcpConfigLost(true);
         }
       }
 
@@ -2570,7 +2531,7 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     };
 
     loadInfraConfig();
-  }, [db, user]);
+  }, []);
 
   // NOTE: Auto-collapse of completed steps was removed — it collapsed step 3
   // on sign-in when vm_ip was restored from Firestore, confusing the operator.
@@ -2785,24 +2746,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       updated_at: new Date().toISOString(),
     };
 
-    if (user) {
-      await safeSet(db, INFRA_COLLECTION, user.uid, finalData, user.uid, {
-        allowFields: [
-          'gcp_project_id', 'gcp_connected', 'gcp_token_expiry',
-          'service_account_email', 'service_account_project_id',
-          'github_app_installed', 'god_sa_email', 'vm_ip', 'github_repo',
-          'firebase_staging', 'firebase_production',
-          'firebase_staging_project_id', 'firebase_production_project_id',
-          'gcp_wif_provider', 'gcp_sa_staging', 'gcp_sa_production',
-          'sm_secrets', 'discord_client_id', 'discord_guild_id',
-          'discord_bot_added', 'updated_at'
-        ],
-        merge: true
-      });
-      localStorage.removeItem(LOCALSTORAGE_KEY);
-    } else {
-      saveToLocalStorage(finalData);
-    }
+    // No Firestore persistence — infra_configs was removed. The wizard
+    // persists its current session to localStorage only, restoring it on
+    // reload while the deliverable wiring (create-app, StagingGate) can still
+    // read `infra_config_pending`.
+    saveToLocalStorage(finalData);
   };
 
   // When the operator switches to a different GCP project, clear the
@@ -2827,9 +2775,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
     }
 
     try {
-      if (user) {
-        await safeDelete(db, INFRA_COLLECTION, user.uid, user.uid);
-      }
       localStorage.removeItem(LOCALSTORAGE_KEY);
       localStorage.removeItem(FORM_PROGRESS_KEY);
       
@@ -2854,7 +2799,6 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
       
       setProjectName('');
       
-      setGcpConfigLost(false);
       setGcpConsentEmail('');
       setGcpEmailMismatch(false);
       

@@ -1,7 +1,7 @@
 import { useState, useEffect, Fragment } from 'react';
 import { useAuth } from './firestore-utils/auth-context';
 import { useNavigate } from 'react-router';
-import { doc, getDoc, Firestore } from 'firebase/firestore';
+import { Firestore } from 'firebase/firestore';
 import { safeSet, safeUpdate } from './guardrails/safe-firestore';
 import { validate } from './guardrails/validate';
 import { useRateLimit } from './guardrails/useRateLimit';
@@ -16,6 +16,20 @@ interface CreateAppProps {
 
 const APPS_COLLECTION = 'user_apps';
 const ALLOW_FIELDS = ['user_id', 'app_name', 'app_description', 'github_repo', 'github_repo_url', 'gcp_project_id', 'discord_webhook', 'discord_channel_id', 'status', 'vm_ip', 'vm_name', 'error'];
+
+// infra_configs was removed from Firestore — the wizard persists its config to
+// localStorage under this key instead (see infra-setup.tsx).
+const INFRA_LOCAL_KEY = 'infra_config_pending';
+
+const loadInfraFromLocalStorage = () => {
+  try {
+    const data = localStorage.getItem(INFRA_LOCAL_KEY);
+    return data ? JSON.parse(data) : null;
+  } catch (e) {
+    console.error('Error loading infra config from localStorage:', e);
+    return null;
+  }
+};
 
 const STEPS = [
   { id: 1, title: 'App Details', icon: '1' },
@@ -47,16 +61,14 @@ const CreateApp: React.FC<CreateAppProps> = ({ db }) => {
         setLoading(false);
         return;
       }
-      
+
       try {
-        const infraRef = doc(db, 'infra_configs', user.uid);
-        const infraSnap = await getDoc(infraRef);
-        
-        if (infraSnap.exists()) {
-          const data = infraSnap.data();
+        const data = loadInfraFromLocalStorage();
+
+        if (data) {
           setGithubConnected(data.github_app_installed || false);
           // Legacy service_account_configured fallback kept for old data.
-          setGcpConnected(!!(data.gcp_connected || data.service_account_configured));
+          setGcpConnected(!!(data.gcp_connected || data.service_account_configured || data.god_sa_email));
           setGcpProjectId(data.gcp_project_id || '');
         }
       } catch (err) {
@@ -67,7 +79,7 @@ const CreateApp: React.FC<CreateAppProps> = ({ db }) => {
     };
     
     loadInfraConfig();
-  }, [db, user]);
+  }, [user]);
 
   const validateAppName = (name: string): boolean => {
     const regex = /^[a-z0-9-]+$/;
@@ -102,17 +114,15 @@ const CreateApp: React.FC<CreateAppProps> = ({ db }) => {
     if (!user) {
       throw new Error('User not authenticated');
     }
-    
-    const infraRef = doc(db, 'infra_configs', user.uid);
-    const infraSnap = await getDoc(infraRef);
-    
-    if (!infraSnap.exists()) {
+
+    const infraData = loadInfraFromLocalStorage();
+
+    if (!infraData) {
       throw new Error('GCP not configured. Please set up infrastructure first.');
     }
 
-    const infraData = infraSnap.data();
-    const gcpAccessToken = infraData.gcp_access_token as string | undefined;
-    const serviceAccountKey = infraData.service_account_key as string | undefined;
+    const gcpAccessToken = (infraData as any).gcp_access_token as string | undefined;
+    const serviceAccountKey = (infraData as any).service_account_key as string | undefined;
 
     if (!gcpAccessToken && !serviceAccountKey) {
       throw new Error('GCP not configured. Please connect your Google account or upload a service account key.');

@@ -6,6 +6,8 @@
   "plugins": ["@stryker-mutator/vitest-runner"],
   "coverageAnalysis": "perTest",
   "ignoreStatic": true,
+  "incremental": true,
+  "incrementalFile": "reports/stryker-incremental.json",
   "mutate": [
     "src/**/*.{ts,tsx,js,jsx}",
     "!src/_tests_/**",
@@ -22,6 +24,5 @@
     "low": 30,
     "break": null
   },
-  "timeoutMS": 60000,
-  "concurrency": 2
+  "timeoutMS": 60000
 }

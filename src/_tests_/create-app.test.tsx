@@ -9,6 +9,13 @@ const mockGetDoc = vi.fn();
 const mockSetDoc = vi.fn();
 const mockUpdateDoc = vi.fn();
 
+// infra_configs was removed from Firestore — create-app reads the wizard's
+// localStorage marker (infra_config_pending) instead. Tests seed it directly.
+const INFRA_LOCAL_KEY = 'infra_config_pending';
+const SEED_INFRA = (data: Record<string, unknown>) => {
+  localStorage.setItem(INFRA_LOCAL_KEY, JSON.stringify(data));
+};
+
 vi.mock('../firestore-utils/auth-context', () => ({
   useAuth: () => mockUseAuth(),
 }));
@@ -39,8 +46,9 @@ const renderCreateApp = () =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  localStorage.clear();
   mockUseAuth.mockReturnValue({ user: { uid: 'u1', email: 'test@example.com' }, loading: false });
-  mockGetDoc.mockResolvedValue({ exists: () => true, data: () => ({ github_app_installed: true, service_account_configured: true, gcp_project_id: 'proj-1' }) });
+  SEED_INFRA({ github_app_installed: true, service_account_configured: true, gcp_project_id: 'proj-1' });
 });
 
 describe('CreateApp', () => {
@@ -50,10 +58,13 @@ describe('CreateApp', () => {
     expect(document.querySelector('.animate-spin')).toBeInTheDocument();
   });
 
-  it('shows loading spinner while loading infra config', () => {
-    mockGetDoc.mockReturnValue(new Promise(() => {}));
+  it('completes loading without stored infra config', async () => {
+    localStorage.clear();
     renderCreateApp();
-    expect(document.querySelector('.animate-spin')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('my-awesome-app')).toBeInTheDocument();
+    });
+    expect(document.querySelector('.animate-spin')).not.toBeInTheDocument();
   });
 
   it('renders step 1 (app details) by default', async () => {
@@ -130,7 +141,7 @@ describe('CreateApp', () => {
   });
 
   it('shows GitHub disconnected state on step 2', async () => {
-    mockGetDoc.mockResolvedValue({ exists: () => true, data: () => ({ github_app_installed: false }) });
+    SEED_INFRA({ github_app_installed: false });
     renderCreateApp();
     await waitFor(() => {
       expect(screen.getByPlaceholderText('my-awesome-app')).toBeInTheDocument();
@@ -173,7 +184,7 @@ describe('CreateApp', () => {
   });
 
   it('shows GCP disconnected state on step 3', async () => {
-    mockGetDoc.mockResolvedValue({ exists: () => true, data: () => ({ github_app_installed: true, service_account_configured: false }) });
+    SEED_INFRA({ github_app_installed: true, service_account_configured: false });
     renderCreateApp();
     await waitFor(() => {
       expect(screen.getByPlaceholderText('my-awesome-app')).toBeInTheDocument();
@@ -203,7 +214,7 @@ describe('CreateApp', () => {
 
   it('shows success screen after full app creation', async () => {
     vi.stubGlobal('fetch', vi.fn());
-    mockGetDoc.mockResolvedValue({ exists: () => true, data: () => ({ github_app_installed: true, service_account_configured: true, gcp_project_id: 'proj-1', gcp_access_token: 'tok' }) });
+    SEED_INFRA({ github_app_installed: true, service_account_configured: true, gcp_project_id: 'proj-1', gcp_access_token: 'tok' });
     const fetchMock = vi.mocked(fetch);
     fetchMock
       .mockResolvedValueOnce(new Response(JSON.stringify({ full_name: 'u1/my-app', html_url: 'https://github.com/u1/my-app' }), { status: 201, headers: { 'Content-Type': 'application/json' } }))
@@ -231,7 +242,7 @@ describe('CreateApp', () => {
 
   it('shows error on create app failure', async () => {
     vi.stubGlobal('fetch', vi.fn());
-    mockGetDoc.mockResolvedValue({ exists: () => true, data: () => ({ github_app_installed: true, service_account_configured: true, gcp_project_id: 'proj-1', gcp_access_token: 'tok' }) });
+    SEED_INFRA({ github_app_installed: true, service_account_configured: true, gcp_project_id: 'proj-1', gcp_access_token: 'tok' });
     const fetchMock = vi.mocked(fetch);
     fetchMock.mockRejectedValue(new Error('API error'));
 
