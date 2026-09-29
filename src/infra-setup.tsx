@@ -3229,6 +3229,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           const statusMsg = err.status?.message || '';
 
           log(`VM response not ok: ${errMsg || statusMsg || errStr}`);
+          // Raw per-zone GCP response to the browser console so e2e/CI logs
+          // capture the verbatim error (distinguishes ZONE_RESOURCE_POOL_EXHAUSTED
+          // capacity refusals from RESOURCE_EXHAUSTED quota errors like
+          // "Quota 'CPUS_ALL_REGIONS' exceeded").
+          console.log(`VM response not ok [${tryZone}]: ${errStr}`);
 
           if (errStr.toLowerCase().includes('zone') &&
               (errStr.toLowerCase().includes('exhausted') ||
