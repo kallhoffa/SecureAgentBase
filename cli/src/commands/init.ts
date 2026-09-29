@@ -242,6 +242,14 @@ async function stepBilling(auth: AuthClient, config: any, args: InitArgs): Promi
 
   const accounts = await fetchBillingAccounts(auth, projectId);
   if (accounts.length === 0) {
+    // -y means "skip all prompts (non-interactive mode)". Without this the
+    // inquirer prompt blocks forever in CI (no TTY to answer it), which
+    // deadlocks `init` until the caller's timeout kills it.
+    if (args.yes) {
+      warn('No billing accounts found — skipping billing link (-y mode).');
+      warn('Pass --billing-account <id> to link one, or grant the caller roles/billing.user on the billing account.');
+      return;
+    }
     warn('No billing accounts found');
     const { billingAccountId } = await inquirer.prompt([
       {
@@ -253,6 +261,15 @@ async function stepBilling(auth: AuthClient, config: any, args: InitArgs): Promi
     await linkBillingAccount(auth, projectId, billingAccountId);
     success(`Linked billing account: ${billingAccountId}`);
   } else {
+    if (args.yes) {
+      // Deterministic in -y mode: take the first account rather than
+      // prompting (prompts are what break non-interactive runs).
+      const accountId = accounts[0].name?.replace('billingAccounts/', '');
+      info(`Linking billing account: ${accountId} (-y mode)`);
+      await linkBillingAccount(auth, projectId, accountId);
+      success(`Linked billing account: ${accountId}`);
+      return;
+    }
     const { selectedAccount } = await inquirer.prompt([
       {
         type: 'list',

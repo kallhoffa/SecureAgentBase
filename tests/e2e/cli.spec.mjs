@@ -187,7 +187,14 @@ async function main() {
     if (discordToken) {
       initArgs.push('--discord-token', discordToken);
     }
-    console.log(`Test 2: init — full (repo: ${githubOwner}/${repoName}, vm: yes, discord: ${discordToken ? 'yes' : 'no'})`);
+    // The wizard e2e teardown unlinks billing, so this run usually starts on an
+    // unlinked project. If we know the billing account, pass it so init links it
+    // deterministically instead of listing accounts / prompting.
+    const billingAccount = process.env.BILLING_ACCOUNT;
+    if (billingAccount) {
+      initArgs.push('--billing-account', billingAccount);
+    }
+    console.log(`Test 2: init — full (repo: ${githubOwner}/${repoName}, vm: yes, discord: ${discordToken ? 'yes' : 'no'}, billing: ${billingAccount ? 'explicit' : 'auto/-y'})`);
     {
       r = run(cliBin, initArgs, { env: envBase, timeout: 900_000 });
 

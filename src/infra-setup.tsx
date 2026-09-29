@@ -3235,6 +3235,18 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
           // "Quota 'CPUS_ALL_REGIONS' exceeded").
           console.log(`VM response not ok [${tryZone}]: ${errStr}`);
 
+          // A leftover VM from a previous run fails every zone with 409
+          // alreadyExists. That message contains both "zone" and "resource",
+          // so the capacity heuristics below used to match it and mask the
+          // real cause as "All zones are out of capacity". Check it first.
+          if (err.error?.code === 409 ||
+              err.error?.errors?.some((e: { reason?: string }) => e?.reason === 'alreadyExists')) {
+            log(`A VM named ${instanceName} already exists in ${tryZone} from a previous run.`);
+            setError(`A VM named "${instanceName}" already exists in ${tryZone}. Delete it (gcloud compute instances delete ${instanceName} --zone ${tryZone} --project ${projectId}) or wait for it to finish deleting, then try again.`);
+            setStep4Status('error');
+            break;
+          }
+
           if (errStr.toLowerCase().includes('zone') &&
               (errStr.toLowerCase().includes('exhausted') ||
                errStr.toLowerCase().includes('unavailable') ||
