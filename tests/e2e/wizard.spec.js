@@ -246,6 +246,37 @@ test.describe('Wizard E2E Regression', () => {
         'Wizard route only available in app mode');
     });
 
+    // A VM left over from a crashed/aborted previous run makes the wizard's
+    // create call fail with 409 alreadyExists in every zone. Clean it up before
+    // the run so the flow starts from a known state.
+    test.beforeAll(async () => {
+      test.skip(!E2E_GCP_TOKEN, 'E2E_GCP_TOKEN required for pre-flight VM cleanup');
+      const projectId = E2E_GCP_PROJECT_ID;
+      const instanceName = 'secureagent-manager';
+      const zones = ['us-east1-b', 'us-central1-b', 'us-central1-c', 'us-west1-a', 'us-west1-b', 'us-east1-c', 'us-east1-d', 'europe-west1-d', 'asia-east1-a'];
+      console.log(`Pre-flight: checking for leftover VM "${instanceName}" in ${projectId}...`);
+      for (const zone of zones) {
+        try {
+          const checkResp = await fetch(
+            `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances/${instanceName}`,
+            { headers: { Authorization: `Bearer ${E2E_GCP_TOKEN}` } }
+          );
+          if (checkResp.ok) {
+            console.log(`Pre-flight: leftover VM in ${zone}, deleting...`);
+            const delResp = await fetch(
+              `https://compute.googleapis.com/compute/v1/projects/${projectId}/zones/${zone}/instances/${instanceName}`,
+              { method: 'DELETE', headers: { Authorization: `Bearer ${E2E_GCP_TOKEN}` } }
+            );
+            console.log(`Pre-flight: delete in ${zone} returned ${delResp.status}`);
+          } else if (checkResp.status !== 404) {
+            console.warn(`Pre-flight: lookup in ${zone} returned ${checkResp.status} (e2e SA may lack roles/compute.admin)`);
+          }
+        } catch (e) {
+          console.warn(`Pre-flight: lookup error in ${zone}: ${e.message}`);
+        }
+      }
+    });
+
     test('completes all wizard steps via e2e injection', async ({ page }) => {
       test.skip(!E2E_GCP_TOKEN || !process.env.E2E_FIREBASE_API_KEY,
         'E2E_GCP_TOKEN and E2E_FIREBASE_API_KEY required');
@@ -973,6 +1004,7 @@ test.describe('Wizard E2E Regression', () => {
       console.log(`Teardown: searching for VM "${instanceName}" across ${zones.length} zones...`);
 
       let deletedCount = 0;
+      let lookupFailures = 0;
       for (const zone of zones) {
         try {
           const checkResp = await fetch(
@@ -991,14 +1023,23 @@ test.describe('Wizard E2E Regression', () => {
             } else {
               console.warn(`Teardown: DELETE returned ${deleteResp.status} in ${zone}`);
             }
+          } else if (checkResp.status !== 404) {
+            // A 403 here means the e2e SA lacks compute.instances.get. That is
+            // NOT "no VM" — reporting it as such hides a real leftover VM that
+            // makes every later run fail with 409 alreadyExists.
+            lookupFailures++;
+            console.warn(`Teardown: lookup returned ${checkResp.status} in ${zone} (e2e SA may lack roles/compute.admin)`);
           }
         } catch (e) {
-          // Instance not found in this zone, continue
+          lookupFailures++;
+          console.warn(`Teardown: lookup error in ${zone}: ${e.message}`);
         }
       }
 
-      if (deletedCount === 0) {
+      if (deletedCount === 0 && lookupFailures === 0) {
         console.log('Teardown: no VM found to delete (may have been cleaned up already)');
+      } else if (deletedCount === 0 && lookupFailures > 0) {
+        console.warn(`Teardown: ${lookupFailures} zone lookup(s) failed — VM state is UNKNOWN, a leftover VM will break the next run's VM creation.`);
       } else {
         console.log(`Teardown: initiated deletion of ${deletedCount} VM instance(s)`);
       }

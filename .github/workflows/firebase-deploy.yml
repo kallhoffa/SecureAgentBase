@@ -73,7 +73,11 @@ jobs:
             # resolve the default compute SA (projectNumber-compute@...), which is
             # the identity the e2e VM runs as and MUST be granted SM secretAccessor
             # at write time or the VM can never fetch github-pat/discord-bot-token.
-            for role in roles/iam.workloadIdentityPoolAdmin roles/iam.securityAdmin roles/serviceusage.serviceUsageAdmin roles/iam.serviceAccountUser roles/iam.serviceAccountTokenCreator roles/billing.projectManager roles/secretmanager.admin roles/cloudresourcemanager.projectViewer; do
+            # compute.admin: the teardown test lists + deletes the e2e VM with the
+            # e2e SA's own token. Without it the GET returns 403, the teardown
+            # treats it as "no VM found", and a leftover VM makes every later run
+            # fail VM creation with 409 alreadyExists.
+            for role in roles/iam.workloadIdentityPoolAdmin roles/iam.securityAdmin roles/serviceusage.serviceUsageAdmin roles/iam.serviceAccountUser roles/iam.serviceAccountTokenCreator roles/billing.projectManager roles/secretmanager.admin roles/cloudresourcemanager.projectViewer roles/compute.admin; do
               gcloud projects add-iam-policy-binding "$PROJECT" \
                 --member="serviceAccount:${sa}" \
                 --role="${role}" 2>/dev/null || true

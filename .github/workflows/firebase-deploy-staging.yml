@@ -173,6 +173,14 @@ jobs:
           gcloud projects add-iam-policy-binding ${{ vars.E2E_GCP_PROJECT_ID }} \
             --member="serviceAccount:${{ vars.GCP_SA_STAGING }}" \
             --role="roles/iam.serviceAccountUser"
+          # The e2e SA runs the teardown test, which lists + deletes the e2e VM
+          # with its own token. Without compute.admin the GET returns 403, the
+          # teardown silently reports "no VM found", and a leftover VM makes
+          # every later run fail VM creation with 409 alreadyExists.
+          gcloud projects add-iam-policy-binding ${{ vars.E2E_GCP_PROJECT_ID }} \
+            --member="serviceAccount:e2e-test-runner@${{ vars.E2E_GCP_PROJECT_ID }}.iam.gserviceaccount.com" \
+            --role="roles/compute.admin" 2>/dev/null || \
+            echo "WARNING: could not grant roles/compute.admin to the e2e SA — VM teardown will not clean up leftovers"
 
       - name: Ensure e2e SA can link billing (best-effort)
         # Only runs where the e2e rig is configured (template repo): the e2e
