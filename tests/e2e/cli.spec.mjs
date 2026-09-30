@@ -187,9 +187,9 @@ async function main() {
     if (discordToken) {
       initArgs.push('--discord-token', discordToken);
     }
-    // The wizard e2e teardown unlinks billing, so this run usually starts on an
-    // unlinked project. If we know the billing account, pass it so init links it
-    // deterministically instead of listing accounts / prompting.
+    // The e2e project normally has billing already attached, so init
+    // short-circuits on isBillingEnabled and never lists or prompts. BILLING_ACCOUNT
+    // is only needed as an override for a project that is NOT already linked.
     const billingAccount = process.env.BILLING_ACCOUNT;
     if (billingAccount) {
       initArgs.push('--billing-account', billingAccount);

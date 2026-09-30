@@ -176,44 +176,6 @@ jobs:
           USER_ID=$(echo "$RESP" | jq -r '.localId // empty')
           echo "Test user UID: ${USER_ID:-unknown}"
 
-      - name: Ensure e2e SA can link billing (best-effort)
-        # The wizard e2e performs a REAL billing link (its teardown unlinks
-        # billing), and the CLI e2e runs right after in this same job. Linking
-        # requires roles/billing.user on the BILLING ACCOUNT (account-level, not
-        # the project-level billing.projectManager CI already grants). Without
-        # it the CLI init sees zero billing accounts and, since this e2e passes
-        # -y, would skip the link (VM creation then fails on an unlinked
-        # project). Best-effort — CI may lack billing admin on the account. If it
-        # fails, run once manually as the billing account owner:
-        #   gcloud billing accounts add-iam-policy-binding <BILLING_ACCOUNT> \
-        #     --member="serviceAccount:e2e-test-runner@agentbase-test-staging.iam.gserviceaccount.com" \
-        #     --role="roles/billing.user"
-        if: vars.E2E_GCP_PROJECT_ID != ''
-        continue-on-error: true
-        run: |
-          E2E_SA="e2e-test-runner@agentbase-test-staging.iam.gserviceaccount.com"
-          BILLING_ACCT="${{ vars.BILLING_ACCOUNT }}"
-          if [ -z "$BILLING_ACCT" ]; then
-            for proj in agentbase-test-production agentbase-staging; do
-              BILLING_ACCT=$(gcloud billing projects describe "$proj" --format="value(billingAccountName)" 2>/dev/null || true)
-              [ -n "$BILLING_ACCT" ] && break
-            done
-          fi
-          if [ -z "$BILLING_ACCT" ]; then
-            echo "WARNING: could not discover billing account — CLI e2e billing link may be skipped until the one-time manual grant above is applied."
-            exit 0
-          fi
-          echo "Discovered billing account: $BILLING_ACCT"
-          if gcloud billing accounts get-iam-policy "$BILLING_ACCT" --format="value(bindings.members)" 2>/dev/null | grep -q "$E2E_SA"; then
-            echo "e2e SA already has a role on the billing account — skipping grant."
-            exit 0
-          fi
-          gcloud billing accounts add-iam-policy-binding "$BILLING_ACCT" \
-            --member="serviceAccount:${E2E_SA}" \
-            --role="roles/billing.user" && \
-            echo "Granted roles/billing.user on $BILLING_ACCT to $E2E_SA" || \
-            echo "WARNING: grant failed (CI credentials lack billing admin on the account). Apply the one-time manual grant above."
-
       - name: Run Smoke Tests on Staging
         run: npx playwright test e2e/smoke.spec.js --retries=2
         env:
@@ -274,9 +236,9 @@ jobs:
           E2E_GITHUB_REPO: 'agentbase-testing'
           E2E_DISCORD_TOKEN: ${{ secrets.E2E_DISCORD_BOT_TOKEN }}
           E2E_FULL: 'true'
-          # Lets cli.spec.mjs pass --billing-account so init links billing
-          # deterministically (the wizard e2e teardown unlinked it). Empty is
-          # fine — init then runs in -y mode and skips the link.
+          # Optional override so init can link a specific billing account. Only
+          # needed for a project whose billing is NOT already attached; normally
+          # it is, and init short-circuits on isBillingEnabled.
           BILLING_ACCOUNT: ${{ vars.BILLING_ACCOUNT }}
 
   production-promote:

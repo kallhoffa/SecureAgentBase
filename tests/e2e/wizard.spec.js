@@ -117,9 +117,9 @@ const navigateWithE2E = async (page, extraParams = {}) => {
   if (process.env.E2E_DISCORD_BOT_ADDED === 'true') {
     params.set('__e2e_discord_bot_added', Buffer.from('true').toString('base64'));
   }
-  // NOTE: __e2e_billing_enabled is intentionally NOT injected anymore. The
-  // wizard now performs a REAL billing check + link in e2e mode (the previous
-  // run's teardown unlinks billing), so the full billing flow gets tested.
+  // NOTE: __e2e_billing_enabled is intentionally NOT injected. The wizard
+  // performs a REAL billing check + link in e2e mode, so the full flow gets
+  // tested against the genuinely-attached billing account.
 
   for (const [key, val] of Object.entries(restParams)) {
     if (val) params.set(key, val);
@@ -975,30 +975,18 @@ test.describe('Wizard E2E Regression', () => {
       const instanceName = 'secureagent-manager';
       const zones = ['us-east1-b', 'us-central1-b', 'us-central1-c', 'us-west1-a', 'us-west1-b', 'us-east1-c', 'us-east1-d', 'europe-west1-d', 'asia-east1-a'];
 
-      // --- Unlink billing so the next run can test the full billing link flow ---
-      console.log(`Teardown: unlinking billing from project ${projectId}...`);
-      try {
-        const billingResp = await fetch(
-          `https://cloudbilling.googleapis.com/v1/projects/${projectId}/billingInfo`,
-          {
-            method: 'PUT',
-            headers: {
-              'Authorization': `Bearer ${E2E_GCP_TOKEN}`,
-              'Content-Type': 'application/json',
-              'x-goog-user-project': projectId,
-            },
-            body: JSON.stringify({ billingAccountName: '' }),
-          }
-        );
-        if (billingResp.ok) {
-          console.log('Teardown: billing unlinked successfully');
-        } else {
-          const body = await billingResp.text().catch(() => '');
-          console.warn(`Teardown: billing unlink returned ${billingResp.status}: ${body.slice(0, 300)}`);
-        }
-      } catch (e) {
-        console.warn(`Teardown: billing unlink error: ${e.message}`);
-      }
+      // NOTE: billing is deliberately NOT unlinked here.
+      //
+      // Unlinking used to be a cost optimisation, but the running VM is the
+      // only thing that actually bills, and deleting it below already stops
+      // all spend. Unlinking instead left the project in a state the CLI e2e
+      // (which runs immediately after this suite) cannot recover from: with
+      // billing detached, Secret Manager rejects every call with
+      // BILLING_DISABLED, so init silently failed at the GitHub/OIDC step.
+      // Re-linking needs account-level roles/billing.user, and the workflow's
+      // billing-account discovery is best-effort, so it silently did not happen.
+      // Leaving billing attached makes the link step a no-op and keeps both
+      // suites working against one shared project.
 
       // --- Delete VM instances ---
       console.log(`Teardown: searching for VM "${instanceName}" across ${zones.length} zones...`);
