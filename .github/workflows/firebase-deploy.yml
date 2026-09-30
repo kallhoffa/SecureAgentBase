@@ -199,6 +199,18 @@ jobs:
             echo "token=" >> $GITHUB_OUTPUT
           fi
 
+      - name: Remove leftover e2e Discord channels (pre-flight)
+        # kimaki's `project add` on the e2e VM creates #<project> channels in
+        # the guild; crashed runs leave them behind. Best-effort: only removes
+        # text channels named exactly E2E_PROJECT_NAME.
+        if: vars.E2E_GCP_PROJECT_ID != ''
+        continue-on-error: true
+        run: bash scripts/e2e-discord-cleanup.sh
+        env:
+          E2E_DISCORD_BOT_TOKEN: ${{ secrets.E2E_DISCORD_BOT_TOKEN }}
+          E2E_DISCORD_GUILD_ID: ${{ vars.E2E_DISCORD_GUILD_ID }}
+          E2E_PROJECT_NAME: 'agentbase-testing'
+
       - name: Run Full E2E Tests on Staging
         run: npx playwright test --retries=2
         env:
@@ -240,6 +252,17 @@ jobs:
           # needed for a project whose billing is NOT already attached; normally
           # it is, and init short-circuits on isBillingEnabled.
           BILLING_ACCOUNT: ${{ vars.BILLING_ACCOUNT }}
+
+      - name: Remove e2e Discord channels (teardown)
+        # Runs even when a test failed (always()) so channels created by a
+        # partial run are still cleaned up.
+        if: always() && vars.E2E_GCP_PROJECT_ID != ''
+        continue-on-error: true
+        run: bash scripts/e2e-discord-cleanup.sh
+        env:
+          E2E_DISCORD_BOT_TOKEN: ${{ secrets.E2E_DISCORD_BOT_TOKEN }}
+          E2E_DISCORD_GUILD_ID: ${{ vars.E2E_DISCORD_GUILD_ID }}
+          E2E_PROJECT_NAME: 'agentbase-testing'
 
   production-promote:
     name: Deploy to Production

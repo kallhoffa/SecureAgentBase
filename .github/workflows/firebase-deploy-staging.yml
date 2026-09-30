@@ -290,6 +290,18 @@ jobs:
             echo "token=" >> $GITHUB_OUTPUT
           fi
 
+      - name: Remove leftover e2e Discord channels (pre-flight)
+        # kimaki's `project add` on the e2e VM creates #<project> channels in
+        # the guild; crashed runs leave them behind. Best-effort: only removes
+        # text channels named exactly E2E_PROJECT_NAME.
+        if: vars.E2E_GCP_PROJECT_ID != ''
+        continue-on-error: true
+        run: bash scripts/e2e-discord-cleanup.sh
+        env:
+          E2E_DISCORD_BOT_TOKEN: ${{ secrets.E2E_DISCORD_BOT_TOKEN }}
+          E2E_DISCORD_GUILD_ID: ${{ vars.E2E_DISCORD_GUILD_ID }}
+          E2E_PROJECT_NAME: 'agentbase-testing'
+
       - name: Run Full E2E Tests on Staging
         # Skipped on user-app repos: the full e2e suite needs the e2e rig
         # (test user, GCP e2e token, E2E_FULL). Template copies only get the
@@ -348,6 +360,17 @@ jobs:
           E2E_GITHUB_REPO: 'agentbase-testing'
           E2E_DISCORD_TOKEN: ${{ secrets.E2E_DISCORD_BOT_TOKEN }}
           E2E_FULL: 'true'
+
+      - name: Remove e2e Discord channels (teardown)
+        # Runs even when a test failed (always()) so channels created by a
+        # partial run are still cleaned up.
+        if: always() && vars.E2E_GCP_PROJECT_ID != ''
+        continue-on-error: true
+        run: bash scripts/e2e-discord-cleanup.sh
+        env:
+          E2E_DISCORD_BOT_TOKEN: ${{ secrets.E2E_DISCORD_BOT_TOKEN }}
+          E2E_DISCORD_GUILD_ID: ${{ vars.E2E_DISCORD_GUILD_ID }}
+          E2E_PROJECT_NAME: 'agentbase-testing'
 
       - name: Upload logs on failure
         if: failure()
