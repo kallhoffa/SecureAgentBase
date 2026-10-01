@@ -30,7 +30,13 @@ const ROOT = resolve(process.argv[2] ?? '.');
 const REL = (abs) => abs.slice(ROOT.length + 1).split('\\').join('/');
 
 const DOC_DIRS = ['docs', '.opencode/skills'];
-const TOP_LEVEL_DOCS = ['README.md', 'AGENTS.md', 'CONTEXT.md', 'LIFECYCLE.md'];
+const TOP_LEVEL_DOCS = [
+  'README.md',
+  'AGENTS.md',
+  'CONTEXT.md',
+  'LIFECYCLE.md',
+  'WIZARD_DEV_NOTES.md',
+];
 
 // Only refs starting with one of these are treated as repo paths when they
 // appear in backticks. Everything else in backticks is prose, a command, a

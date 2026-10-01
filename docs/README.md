@@ -25,6 +25,8 @@ for and when to reach for it instead of something else.
 | Understand why something is the way it is | [adr/](./adr/) — architecture decision records |
 | Find out what changed recently | [CHANGELOG.md](./CHANGELOG.md) |
 
+| Internal to this repo, not a user project | [../WIZARD_DEV_NOTES.md](../WIZARD_DEV_NOTES.md) — wizard-only debugging notes |
+
 ## Reading order for a new contributor
 
 1. [../CONTEXT.md](../CONTEXT.md) — vocabulary
@@ -32,6 +34,12 @@ for and when to reach for it instead of something else.
 3. [../README.md](../README.md) — repo layout and commands
 4. [../AGENTS.md](../AGENTS.md) — the rules you must follow
 5. [../LIFECYCLE.md](../LIFECYCLE.md) — why the pipeline is shaped this way
+
+Wizard maintainers should also read
+[WIZARD_DEV_NOTES.md](../WIZARD_DEV_NOTES.md) — GCP propagation quirks and
+debugging detail. Nothing strips it from the build, so it stays
+wizard-specific: if a note there is needed to run the product, it belongs in
+[cli.md](./cli.md) or the infra-setup skill instead.
 
 ## Which doc wins
 
