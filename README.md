@@ -257,8 +257,15 @@ Pre-downloaded `.deb` packages: `nodejs`, `npm`, `git`, `curl`, `wget`, `gnupg`,
 
 ## Documentation
 
+Start at **[docs/README.md](./docs/README.md)** — it indexes everything.
+
+- [docs/README.md](./docs/README.md) — documentation index (start here)
+- [docs/cli.md](./docs/cli.md) — the `secureagentbase` CLI: install, auth, commands
 - [AGENTS.md](./AGENTS.md) — developer guide for agents
-- [LIFECYCLE.md](./LIFECYCLE.md) — engineering philosophy
+- [LIFECYCLE.md](./LIFECYCLE.md) — engineering philosophy, CI/CD, rollback
+- [CONTEXT.md](./CONTEXT.md) — domain glossary
+- [docs/adr/](./docs/adr/) — why decisions were made
+- [docs/CHANGELOG.md](./docs/CHANGELOG.md) — what changed recently
 
 ## License
 
