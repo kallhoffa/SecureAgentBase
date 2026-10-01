@@ -17,8 +17,14 @@ on:
           - all
           - none
 
+# Shared with firebase-deploy.yml on purpose: both workflows run the staging e2e
+# rig against the same staging Firebase project, e2e GCP project, fixed VM name
+# `secureagent-manager`, and the shared `kallhoffa/agentbase-testing` repo. Queue
+# rather than run in parallel so the two suites never fight over those resources.
+# cancel-in-progress stays false because the tag gate shares this group and must
+# never be aborted mid production-promote.
 concurrency:
-  group: staging-deploy
+  group: secureagentbase-e2e
   cancel-in-progress: false
 
 jobs:

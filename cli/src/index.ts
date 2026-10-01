@@ -6,14 +6,21 @@ import { runStatus } from './commands/status.js';
 import { runDestroy } from './commands/destroy.js';
 import { handleError } from './utils/errors.js';
 
-const pkg = { version: '0.1.0', name: 'secureagentbase' };
+import { createRequire } from 'node:module';
+
+// Read the real version from package.json so `--version` can never drift from
+// the published artifact. Works from src/ (tsx dev) and dist/ (published) since
+// both sit one level below the package root.
+const require = createRequire(import.meta.url);
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const pkgJson = require('../package.json') as { version: string; name: string };
 
 const program = new Command();
 
 program
   .name('secureagentbase')
-  .description('CLI to deploy and manage SecureAgentBase on GCP')
-  .version(pkg.version);
+  .description('SecureAgentBase CLI')
+  .version(pkgJson.version);
 
 program
   .command('init')

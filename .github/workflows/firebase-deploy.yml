@@ -10,8 +10,16 @@ on:
     types: [published]
   workflow_dispatch:
 
+# Shared with firebase-deploy-staging.yml on purpose: BOTH workflows run the
+# staging e2e rig, which uses one mutable staging Firebase project, one e2e GCP
+# project, the fixed VM name `secureagent-manager`, and the shared GitHub repo
+# `kallhoffa/agentbase-testing`. Two runs in parallel make them fight over those
+# resources (duplicate-deploy 409s, VM deleted mid-run, repo re-initialized).
+# Queue instead of cancelling: cancel-in-progress must stay false here because
+# this group also guards the production promote job — a newer push must never
+# abort a production deploy.
 concurrency:
-  group: production-deploy
+  group: secureagentbase-e2e
   cancel-in-progress: false
 
 jobs:
@@ -370,3 +378,30 @@ jobs:
 
       - name: Publish to npm (Trusted Publishing via OIDC, no token)
         run: cd cli && npm publish --provenance
+
+      # The gate e2e tests the LOCAL `npm pack` tarball, so the artifact that
+      # actually reaches users is never executed. Fetch the published version
+      # and run it to prove the package installs and its bin resolves.
+      - name: Verify published npm package
+        run: |
+          set -euo pipefail
+          VERSION="${{ github.ref_name }}"
+          echo "Verifying secureagentbase@${VERSION} on the npm registry..."
+          # npm can take a few minutes to serve a just-published version, so
+          # retry rather than failing the release on registry propagation.
+          for attempt in $(seq 1 20); do
+            OUT=$(npx --yes "secureagentbase@${VERSION}" --version 2>/dev/null || true)
+            if [ -n "$OUT" ]; then
+              echo "secureagentbase@${VERSION} reports version: ${OUT}"
+              if [ "$OUT" != "$VERSION" ]; then
+                echo "::error::published --version is ${OUT} but the tag is ${VERSION}"
+                exit 1
+              fi
+              echo "Published package verified."
+              exit 0
+            fi
+            echo "attempt ${attempt}: not yet available on the registry, waiting 30s..."
+            sleep 30
+          done
+          echo "::error::secureagentbase@${VERSION} never became available on npm"
+          exit 1
