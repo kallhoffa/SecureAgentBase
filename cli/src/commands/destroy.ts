@@ -1,4 +1,4 @@
-import { createAuth } from '../lib/auth.js';
+import { createAuth, ensureAdc } from '../lib/auth.js';
 import { deleteVm } from '../lib/gcp.js';
 import { loadConfig, clearConfig } from '../utils/config.js';
 import { heading, info, success, warn } from '../utils/output.js';
@@ -11,6 +11,10 @@ export async function runDestroy(args: { yes?: boolean }): Promise<void> {
     warn('No deployment found.');
     return;
   }
+
+  // Deleting the VM needs Google credentials just like init did; guide the user
+  // through the same ADC login instead of failing on a raw ADC error.
+  await ensureAdc({ auto: args.yes });
 
   if (!args.yes) {
     const { confirm } = await (await import('inquirer')).default.prompt([

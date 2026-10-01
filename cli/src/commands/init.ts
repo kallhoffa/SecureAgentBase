@@ -1,6 +1,6 @@
 import * as crypto from 'node:crypto';
 import inquirer from 'inquirer';
-import { AuthClient, createAuth } from '../lib/auth.js';
+import { AuthClient, createAuth, ensureAdc } from '../lib/auth.js';
 import {
   listProjects,
   createProject,
@@ -42,9 +42,12 @@ export interface InitArgs {
 export async function runInit(args: InitArgs): Promise<void> {
   heading('SecureAgentBase Init');
 
-  // Auth (ADC-only — map #36 decision #6: no service account key support)
+  // Auth (ADC-only — map #36 decision #6: no service account key support).
+  // Ensure ADC up front and guide the user through `gcloud auth
+  // application-default login` when it is missing, so no later step ever dies
+  // on the bare google-auth-library "Could not load the default credentials".
+  const saEmail = await ensureAdc({ auto: args.yes });
   const auth = createAuth();
-  const saEmail = await auth.getClientEmail();
   info(`Authenticated as ${saEmail || 'unknown (ADC)'}`);
 
   const config = loadConfig();
