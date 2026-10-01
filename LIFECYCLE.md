@@ -176,7 +176,7 @@ Individual deployments may take longer, but we reduce babysitting. Every failure
 | **Pre-commit hook** | `.husky/pre-commit` | Lints and runs unit tests before commit |
 | **Smoke tests** | `tests/e2e/smoke.spec.js` | Fast validation of critical paths |
 | **E2E retries** | CI workflows | Auto-retry flaky tests |
-| **Sentry integration** | `src/index.jsx` | Captures production errors automatically |
+| **Sentry integration** | `src/index.tsx` | Captures production errors automatically |
 
 ---
 

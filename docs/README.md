@@ -55,3 +55,7 @@ There is overlap by design. The precedence rule:
   update the owning skill in the same commit.
 - When you make a decision that a future reader would reasonably question,
   write an ADR. `docs/adr/README.md` has the format.
+- Doc links are enforced: `scripts/check-doc-links.js` runs in the
+  `grep-guard` job of `security-scan.yml` and fails if a referenced file is
+  missing. Run it locally with `node scripts/check-doc-links.js .` before you
+  push.

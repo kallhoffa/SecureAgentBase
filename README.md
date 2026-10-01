@@ -50,7 +50,7 @@ src/
 ├── create-app.tsx
 ├── github-callback.tsx
 ├── template/                   # Template mode pages
-│   ├── index.jsx
+│   ├── index.tsx
 │   └── pages/
 │       ├── Dashboard.jsx       # Generic landing
 │       └── Tasks.jsx           # Firestore CRUD demo

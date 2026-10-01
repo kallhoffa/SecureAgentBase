@@ -74,6 +74,11 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
+      # Docs rot silently: a renamed file leaves every reference to it pointing
+      # at nothing. Run before the other guards so the cheapest check fails first.
+      - name: Check documentation references resolve
+        run: node scripts/check-doc-links.js .
+
       - name: Check for raw Firestore writes outside guardrails
         run: |
           BAD_FILES=$(grep -rn '\bsetDoc\|updateDoc\|addDoc\|deleteDoc\b' src/ \
