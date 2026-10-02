@@ -40,13 +40,38 @@ npx trivy fs . --scanners config,secret
 
 ## Cutting a release
 
+`firebase-deploy.yml` triggers on **`release: published`**, not on a tag push.
+Pushing a tag on its own starts nothing — create the release.
+
 ```bash
+# 1. Tag (must match the version in cli/package.json or --allow-same-version)
 git tag vX.Y.Z
 git push origin vX.Y.Z
-gh release create vX.Y.Z --title "vX.Y.Z" --notes "..."
+
+# 2. Publish the release — this is what triggers the workflow
+gh release create vX.Y.Z --title "vX.Y.Z" --generate-notes --verify-tag
 ```
 
-Watch the `firebase-deploy.yml` run: the Staging E2E Gate takes ~15 minutes (wizard ~7.3m + CLI), then Deploy to Production runs. Confirm both jobs end `success` before announcing.
+Do NOT add a `released` trigger alongside `published` — both fire on one event and
+produce two gate runs, causing a duplicate prod deploy + npm publish ~35 min later.
+
+Watch the `Deploy to Production` run (`gh run list --workflow=firebase-deploy.yml`):
+the Staging E2E Gate takes ~15 minutes (wizard ~7.3m + CLI), then Deploy to
+Production, then Publish CLI to npm. Confirm every job ends `success` before
+announcing.
+
+Two things to expect in the logs:
+
+- **Production deploy succeeds even if a later job fails.** Each job is
+  independent, so a failed npm publish does not roll back hosting. Check job
+  conclusions individually rather than trusting the run's overall status.
+- **The post-publish verify step retries for ~10 minutes** while npm propagates
+  the new version. `attempt N: not yet available` lines are normal, not a
+  problem. It compares `npx secureagentbase@<semver> --version` against the tag
+  **with the `v` stripped** — `github.ref_name` is the tag, not the semver.
+
+To re-run a failed or cancelled release workflow, use `workflow_dispatch`
+rather than re-publishing, to avoid a duplicate npm version error.
 
 ## Environment variables (GitHub repo variables, not secrets)
 
