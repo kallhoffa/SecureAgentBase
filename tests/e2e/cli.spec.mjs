@@ -139,12 +139,19 @@ async function main() {
   // Derive the repo root from this file's own location, NOT process.cwd() —
   // CI runs this suite from the workspace root while `npm pack` runs inside
   // cli/, so cwd is not a dependable anchor.
+  //
+  // Guard against running from a non-checkout copy. `npx stryker run` runs
+  // earlier in this same job and leaves a full repo clone in
+  // .stryker-tmp/sandbox-*/, snapshot at checkout time. When the suite runs
+  // from there it reads that stale snapshot, so a source assertion silently
+  // judges an old file instead of the current source. Only assert when we are
+  // in the real checkout; the tarball e2e below still proves runtime behaviour.
   const repoRoot = resolve(fileURLToPath(import.meta.url), '../../..');
-  const repoCli = join(repoRoot, 'cli/src');
-  const cliSrcPath = join(repoCli, 'lib/auth.ts');
-  const cliIndexSrc = join(repoCli, 'index.ts');
+  const inGitCheckout = existsSync(join(repoRoot, '.git'));
+  const cliSrcPath = join(repoRoot, 'cli/src/lib/auth.ts');
+  const cliIndexSrc = join(repoRoot, 'cli/src/index.ts');
   if (!existsSync(cliSrcPath) || !existsSync(cliIndexSrc)) {
-    console.log(`${FAIL} Could not locate CLI sources at ${repoCli} — cannot run Test 1b`);
+    console.log(`${FAIL} Could not locate CLI sources at ${repoRoot}/cli/src — cannot run Test 1b`);
     failed++;
     process.exit(1);
   }
@@ -196,23 +203,29 @@ async function main() {
   // `spawnSync gcloud ENOENT` (v1.4.8). The failure is Windows-only and this
   // suite runs on Linux, so assert on the source instead.
   console.log('\nTest 1b: Windows spawn safety');
-  const authSrc = readFileSync(cliSrcPath, 'utf8');
-  const spawnCalls = [...authSrc.matchAll(/spawnSync\([^)]*\{[^}]*\}/g)].map((m) => m[0]);
-  // Every spawnSync must carry `shell:`. The login call is the one that broke:
-  // it invokes a resolved external binary (`gcloud`) with no shell, so on
-  // Windows it throws ENOENT against gcloud.cmd. Note the probe is also a
-  // spawnSync and must keep its shell flag — do not exempt either call.
-  const unsafe = spawnCalls.filter((c) => !/shell\s*:/.test(c));
-  assert(
-    spawnCalls.length > 0 && unsafe.length === 0,
-    `all ${spawnCalls.length} spawnSync call(s) in auth.ts pass shell: for Windows` +
-      (unsafe.length ? ` — unsafe: ${unsafe.map((c) => c.slice(0, 40)).join(' | ')}` : '')
-  );
-  assert(/function needsShell/.test(authSrc), 'needsShell() helper exists in auth.ts');
-  assert(/shell:\s*needsShell\(\)/.test(authSrc), 'auth.ts uses the shared needsShell() helper');
-  // --version must come from package.json, not a hardcoded literal.
-  assert(/createRequire/.test(cliIndexSrc), 'CLI --version reads package.json (createRequire)');
-  assert(!/VERSION\s*=\s*['"]0\./.test(cliIndexSrc), 'CLI --version is not a hardcoded literal');
+  if (!inGitCheckout) {
+    console.log(`  ${SKIP} source assertions (not a git checkout — likely a Stryker sandbox copy)`);
+    skipped++;
+  } else {
+    const authSrc = readFileSync(cliSrcPath, 'utf8');
+    const idxSrc = readFileSync(cliIndexSrc, 'utf8');
+    // Every spawnSync must carry `shell:`. The login call is the one that broke:
+    // it invokes a resolved external binary (`gcloud`) with no shell, so on
+    // Windows it throws ENOENT against gcloud.cmd. Note the probe is also a
+    // spawnSync and must keep its shell flag — do not exempt either call.
+    const spawnCalls = [...authSrc.matchAll(/spawnSync\([^)]*\{[^}]*\}/g)].map((m) => m[0]);
+    const unsafe = spawnCalls.filter((c) => !/shell\s*:/.test(c));
+    assert(
+      spawnCalls.length > 0 && unsafe.length === 0,
+      `all ${spawnCalls.length} spawnSync call(s) in auth.ts pass shell: for Windows` +
+        (unsafe.length ? ` — unsafe: ${unsafe.map((c) => c.slice(0, 40)).join(' | ')}` : '')
+    );
+    assert(/function needsShell/.test(authSrc), 'needsShell() helper exists in auth.ts');
+    assert(/shell:\s*needsShell\(\)/.test(authSrc), 'auth.ts uses the shared needsShell() helper');
+    // --version must come from package.json, not a hardcoded literal.
+    assert(/createRequire/.test(idxSrc), 'CLI --version reads package.json (createRequire)');
+    assert(!/VERSION\s*=\s*['"]0\./.test(idxSrc), 'CLI --version is not a hardcoded literal');
+  }
 
   // Test 2: Init
   if (fullMode) {
