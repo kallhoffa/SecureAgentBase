@@ -385,15 +385,18 @@ jobs:
       - name: Verify published npm package
         run: |
           set -euo pipefail
+          # github.ref_name is the tag, which carries a leading "v" that semver
+          # does not. Compare against the bare version or every release fails.
           VERSION="${{ github.ref_name }}"
-          echo "Verifying secureagentbase@${VERSION} on the npm registry..."
+          SEMVER="${VERSION#v}"
+          echo "Verifying secureagentbase@${SEMVER} on the npm registry..."
           # npm can take a few minutes to serve a just-published version, so
           # retry rather than failing the release on registry propagation.
           for attempt in $(seq 1 20); do
-            OUT=$(npx --yes "secureagentbase@${VERSION}" --version 2>/dev/null || true)
+            OUT=$(npx --yes "secureagentbase@${SEMVER}" --version 2>/dev/null || true)
             if [ -n "$OUT" ]; then
-              echo "secureagentbase@${VERSION} reports version: ${OUT}"
-              if [ "$OUT" != "$VERSION" ]; then
+              echo "secureagentbase@${SEMVER} reports version: ${OUT}"
+              if [ "$OUT" != "$SEMVER" ]; then
                 echo "::error::published --version is ${OUT} but the tag is ${VERSION}"
                 exit 1
               fi
@@ -403,5 +406,5 @@ jobs:
             echo "attempt ${attempt}: not yet available on the registry, waiting 30s..."
             sleep 30
           done
-          echo "::error::secureagentbase@${VERSION} never became available on npm"
+          echo "::error::secureagentbase@${SEMVER} never became available on npm"
           exit 1
