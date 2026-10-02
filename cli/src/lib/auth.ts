@@ -242,10 +242,18 @@ export async function ensureAdc(options: AdcOptions = {}): Promise<string | null
   }
 
   // `gcloud auth application-default login` is interactive (browser flow), so
-  // hand it the real stdio and let the user complete it.
-  const result = spawnSync(gcloud, ['auth', 'application-default', 'login'], { stdio: 'inherit' });
+  // hand it the real stdio and let the user complete it. `shell` must match
+  // what findGcloud probed with, or Windows resolves gcloud in one call and not
+  // the other (the probe passes, the login then dies with ENOENT).
+  const result = spawnSync(gcloud, ['auth', 'application-default', 'login'], {
+    stdio: 'inherit',
+    shell: needsShell(),
+  });
   if (result.error) {
-    throw new MissingAdcError(`Could not run gcloud: ${messageOf(result.error)}`);
+    throw new MissingAdcError(
+      `Could not run gcloud: ${messageOf(result.error)}`,
+      `Install the Google Cloud SDK and make sure \`gcloud\` runs in this shell (https://cloud.google.com/sdk/docs/install).`
+    );
   }
   if (result.status !== 0) {
     throw new MissingAdcError(
@@ -290,10 +298,20 @@ async function metadataServerAnswers(host: string): Promise<boolean> {
   }
 }
 
+/**
+ * On Windows, `gcloud` is installed as a batch wrapper (`gcloud.cmd`), which
+ * spawnSync cannot execute directly — it only resolves real executables. Node
+ * resolves the wrapper only when `shell: true`. `git` and `npm` have the same
+ * shape on Windows. Everywhere we invoke a CLI, pass this flag.
+ */
+function needsShell(): boolean {
+  return process.platform === 'win32';
+}
+
 function findGcloud(): string | null {
   const probe = spawnSync('gcloud', ['version', '--format=json'], {
     stdio: 'ignore',
-    shell: process.platform === 'win32',
+    shell: needsShell(),
   });
   return probe.error || probe.status !== 0 ? null : 'gcloud';
 }

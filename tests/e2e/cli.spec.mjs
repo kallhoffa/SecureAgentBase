@@ -16,7 +16,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -134,6 +134,12 @@ async function main() {
     process.exit(1);
   }
 
+  // Repo sources, for the static assertions in Test 1b (Windows spawn safety).
+  // These read the repo, not the installed tarball, so point them at cli/src.
+  const repoCli = resolve(process.cwd(), 'cli/src');
+  const cliSrcPath = join(repoCli, 'lib/auth.ts');
+  const cliIndexSrc = join(repoCli, 'index.ts');
+
   // Install
   console.log(`  Installing ${pkgPath}...`);
   const install = run('npm', ['install', '-g', pkgPath], {
@@ -172,6 +178,32 @@ async function main() {
   let r = run(cliBin, ['status'], { env: envBase });
   assert(r.exitCode === 0, 'status exits with 0');
   assert(r.stdout.includes('No deployment found') || r.stdout.includes('SecureAgentBase Status'), 'status shows no deployment');
+
+  // Test 1b: every spawn of an external CLI must pass `shell` on Windows.
+  //
+  // gcloud ships as gcloud.cmd there, which spawnSync cannot execute without
+  // `shell: true`. This shipped broken on Windows: the probe used shell, so
+  // findGcloud() succeeded, then the login call omitted it and died with
+  // `spawnSync gcloud ENOENT` (v1.4.8). The failure is Windows-only and this
+  // suite runs on Linux, so assert on the source instead.
+  console.log('\nTest 1b: Windows spawn safety');
+  const authSrc = readFileSync(cliSrcPath, 'utf8');
+  const spawnCalls = [...authSrc.matchAll(/spawnSync\([^)]*\{[^}]*\}/g)].map((m) => m[0]);
+  // Every spawnSync must carry `shell:`. The login call is the one that broke:
+  // it invokes a resolved external binary (`gcloud`) with no shell, so on
+  // Windows it throws ENOENT against gcloud.cmd. Note the probe is also a
+  // spawnSync and must keep its shell flag — do not exempt either call.
+  const unsafe = spawnCalls.filter((c) => !/shell\s*:/.test(c));
+  assert(
+    spawnCalls.length > 0 && unsafe.length === 0,
+    `all ${spawnCalls.length} spawnSync call(s) in auth.ts pass shell: for Windows` +
+      (unsafe.length ? ` — unsafe: ${unsafe.map((c) => c.slice(0, 40)).join(' | ')}` : '')
+  );
+  assert(/function needsShell/.test(authSrc), 'needsShell() helper exists in auth.ts');
+  assert(/shell:\s*needsShell\(\)/.test(authSrc), 'auth.ts uses the shared needsShell() helper');
+  // --version must come from package.json, not a hardcoded literal.
+  assert(/createRequire/.test(cliIndexSrc), 'CLI --version reads package.json (createRequire)');
+  assert(!/VERSION\s*=\s*['"]0\./.test(cliIndexSrc), 'CLI --version is not a hardcoded literal');
 
   // Test 2: Init
   if (fullMode) {

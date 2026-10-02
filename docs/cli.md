@@ -56,6 +56,12 @@ because that would overwrite the VM's metadata identity.
 `gcloud auth application-default login`, run it from PowerShell or CMD instead.
 Credentials are stored in the same location either way.
 
+**On Windows (all shells):** the Cloud SDK installs `gcloud` as a batch wrapper
+(`gcloud.cmd`), which Node cannot execute directly. The CLI handles this, but
+if you ever see `spawnSync gcloud ENOENT`, the CLI is an older build — upgrade
+with `npm install -g secureagentbase@latest`. Run `secureagentbase --version` to
+confirm which build you have.
+
 ## `secureagentbase init`
 
 Runs the seven-step setup. Each step can be skipped by passing its flag.
