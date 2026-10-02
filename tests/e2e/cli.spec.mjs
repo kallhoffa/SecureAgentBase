@@ -19,6 +19,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const PASS = '\x1b[32m✓\x1b[0m';
 const FAIL = '\x1b[31m✗\x1b[0m';
@@ -135,10 +136,18 @@ async function main() {
   }
 
   // Repo sources, for the static assertions in Test 1b (Windows spawn safety).
-  // These read the repo, not the installed tarball, so point them at cli/src.
-  const repoCli = resolve(process.cwd(), 'cli/src');
+  // Derive the repo root from this file's own location, NOT process.cwd() —
+  // CI runs this suite from the workspace root while `npm pack` runs inside
+  // cli/, so cwd is not a dependable anchor.
+  const repoRoot = resolve(fileURLToPath(import.meta.url), '../../..');
+  const repoCli = join(repoRoot, 'cli/src');
   const cliSrcPath = join(repoCli, 'lib/auth.ts');
   const cliIndexSrc = join(repoCli, 'index.ts');
+  if (!existsSync(cliSrcPath) || !existsSync(cliIndexSrc)) {
+    console.log(`${FAIL} Could not locate CLI sources at ${repoCli} — cannot run Test 1b`);
+    failed++;
+    process.exit(1);
+  }
 
   // Install
   console.log(`  Installing ${pkgPath}...`);
