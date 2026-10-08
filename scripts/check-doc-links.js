@@ -35,6 +35,8 @@ const TOP_LEVEL_DOCS = [
   'AGENTS.md',
   'CONTEXT.md',
   'LIFECYCLE.md',
+  'SECURITY.md',
+  'CONTRIBUTING.md',
   'WIZARD_DEV_NOTES.md',
 ];
 

@@ -22,10 +22,12 @@ for and when to reach for it instead of something else.
 | Write Firestore code | `.opencode/skills/secure-firestore/SKILL.md` |
 | Debug a failing e2e | `.opencode/skills/diagnosing-bugs/SKILL.md` |
 | Debug the CI pipeline | `../LIFECYCLE.md` → CI/CD Pipeline; otherwise `.opencode/skills/release-gate/SKILL.md` |
+| Get the code ready for an external reviewer | `.opencode/skills/external-readiness/SKILL.md` — hygiene bar, audit commands, how to defend the approach |
 | Understand why something is the way it is | [adr/](./adr/) — architecture decision records |
 | Find out what changed recently | [CHANGELOG.md](./CHANGELOG.md) |
-
-| Internal to this repo, not a user project | [../WIZARD_DEV_NOTES.md](../WIZARD_DEV_NOTES.md) — wizard-only debugging notes |
+| Report or fix a security issue | [../SECURITY.md](../SECURITY.md) — reporting channel, scope, known caveats |
+| Contribute a change | [../CONTRIBUTING.md](../CONTRIBUTING.md) — commands, gates, non-negotiable rules |
+| Read the wizard-only debugging notes | [../WIZARD_DEV_NOTES.md](../WIZARD_DEV_NOTES.md) — internal, not user-project docs |
 
 ## Reading order for a new contributor
 
