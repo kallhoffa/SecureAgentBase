@@ -12,7 +12,6 @@ export const frameworkManifest = {
     files: [
       'vitest.config.js',
       'eslint.config.js',
-      'tailwind.config.js',
       'vite.config.js',
       'postcss.config.js',
       'playwright.config.js',
