@@ -92,6 +92,27 @@ Step 7: Create VM         --no-vm  --vm-zone <zone>
 | `--no-vm` | Stop after Step 6; no VM is created. |
 | `-y, --yes` | Skip confirmations. Non-interactive. |
 
+### Environment variables (preferred for secrets)
+
+Passing secrets as flags exposes them to `ps`, shell history, and any CI log
+that echoes the command. Supply them through the environment instead — GitHub
+Actions masks values injected as secrets.
+
+| Variable | Equivalent flag |
+|---|---|
+| `SECUREAGENTBASE_GITHUB_PAT` | `--github-pat` |
+| `SECUREAGENTBASE_DISCORD_TOKEN` | `--discord-token` |
+
+An explicit flag still wins over the environment variable, so existing
+automation is unaffected. The CLI prints a warning to **stderr** whenever a
+secret is passed as a flag (the value itself is never echoed).
+
+```bash
+export SECUREAGENTBASE_GITHUB_PAT="$(gh auth token)"
+export SECUREAGENTBASE_DISCORD_TOKEN="$DISCORD_BOT_TOKEN"
+secureagentbase init --project-id my-project --repo-name my-repo -y
+```
+
 Secrets are stored in **Secret Manager**, never in local config. Local config
 holds only secret *references*.
 

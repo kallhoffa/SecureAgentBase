@@ -59,10 +59,14 @@ interface Window {
 
 const LOCALSTORAGE_KEY = 'infra_config_pending';
 const FORM_PROGRESS_KEY = 'infra_form_progress';
-// Operator-entered secrets: never written to Firestore (GHSA-x49w). Discord
-// bot token + GitHub PAT persist to sessionStorage AND localStorage so a fresh
-// tab restores steps 1-2 without a GCP token; the SA key is
-// sessionStorage-only. See secret-storage.js.
+// Operator-entered secrets (Discord bot token, GitHub PAT, service account
+// JSON) are held in component state ONLY and are never written to
+// localStorage, sessionStorage, or Firestore (GHSA-x49w) — they go straight
+// to GCP Secret Manager, and only the resulting secret *reference* is
+// persisted as `sm_secrets`. What is persisted below is non-secret
+// infrastructure config: vm_ip, project ids, repo name, Firebase config.
+// The dev-only form progress stores the literal string 'saved' as a
+// presence marker, never the value itself.
 
 
 
@@ -3368,9 +3372,11 @@ const [discordBotAdded, setDiscordBotAdded] = useState(false);
         invite_url_generated: !!inviteUrl
       });
 
-      // Discord bot token intentionally NOT saved to Firestore (GHSA-x49w).
-      // Persisted to sessionStorage (same-tab reload restores it; cleared on
-      // tab close) — same pattern as SA key. GCP token is never persisted.
+      // Discord bot token intentionally NOT saved to Firestore (GHSA-x49w) and
+      // NOT written to sessionStorage/localStorage either — it lives only in
+      // component state for this session. It is delivered to the VM as GCP
+      // instance metadata (see buildVmMetadata / writeSecretsToSecretManager).
+      // GCP token is never persisted.
 
       console.log('Discord config saved');
     } catch (err) {

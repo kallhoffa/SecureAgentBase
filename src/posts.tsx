@@ -32,7 +32,7 @@ const LandingPage: React.FC = () => {
               </code>
             </div>
             <p className="text-gray-500 text-xs">
-              Supports <code className="bg-gray-100 px-1 rounded">--sa-key</code>, <code className="bg-gray-100 px-1 rounded">--project-id</code>, <code className="bg-gray-100 px-1 rounded">--github-pat</code>, and more. Run <code className="bg-gray-100 px-1 rounded">secureagentbase --help</code> for the full list.
+              Supports <code className="bg-gray-100 px-1 rounded">--project-id</code>, <code className="bg-gray-100 px-1 rounded">--billing-account</code>, and <code className="bg-gray-100 px-1 rounded">--auto-sa</code>. Run <code className="bg-gray-100 px-1 rounded">secureagentbase --help</code> for the full list.
             </p>
           </div>
 

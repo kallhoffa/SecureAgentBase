@@ -29,23 +29,41 @@ program
   .option('--auto-sa', 'Create service account automatically (skips SA prompt)')
   .option('--no-firebase', 'Skip Firebase setup')
   .option('--billing-account <id>', 'Billing account ID (skips billing prompt)')
-  .option('--github-pat <token>', 'GitHub PAT (skips PAT prompt)')
+  .option('--github-pat <token>', 'GitHub PAT (skips PAT prompt) — prefer env SECUREAGENTBASE_GITHUB_PAT')
   .option('--repo-name <name>', 'GitHub repo name (requires --github-pat)')
-  .option('--discord-token <token>', 'Discord bot token')
+  .option('--discord-token <token>', 'Discord bot token — prefer env SECUREAGENTBASE_DISCORD_TOKEN')
   .option('--discord-guild <id>', 'Discord guild ID')
   .option('--vm-zone <zone>', 'VM zone (default: us-central1-a, falls back across regions)')
   .option('--no-vm', 'Skip VM creation')
   .option('-y, --yes', 'Skip all confirmations (non-interactive mode)')
   .action(async (opts) => {
     try {
+      // Secrets may be supplied through the environment instead of argv.
+      // argv is exposed to `ps`, shell history, and any CI log that echoes
+      // the command; environment variables are not, and GitHub Actions masks
+      // values it injects as secrets. Explicit flags still win so existing
+      // automation is unaffected.
+      const githubPat = opts.githubPat || process.env.SECUREAGENTBASE_GITHUB_PAT;
+      const discordToken = opts.discordToken || process.env.SECUREAGENTBASE_DISCORD_TOKEN;
+      if (opts.githubPat) {
+        process.stderr.write(
+          'warning: --github-pat is visible in `ps` and shell history; prefer the SECUREAGENTBASE_GITHUB_PAT environment variable.\n',
+        );
+      }
+      if (opts.discordToken) {
+        process.stderr.write(
+          'warning: --discord-token is visible in `ps` and shell history; prefer the SECUREAGENTBASE_DISCORD_TOKEN environment variable.\n',
+        );
+      }
+
       await runInit({
         projectId: opts.projectId,
         autoSa: opts.autoSa,
         firebase: opts.firebase !== false,
         billingAccount: opts.billingAccount,
-        githubPat: opts.githubPat,
+        githubPat,
         repoName: opts.repoName,
-        discordToken: opts.discordToken,
+        discordToken,
         discordGuild: opts.discordGuild,
         vmZone: opts.vmZone,
         yes: opts.yes,

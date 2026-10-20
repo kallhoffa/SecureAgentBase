@@ -1,0 +1,32 @@
+# CODEOWNERS — SecureAgentBase
+#
+# These paths require review from the repository owner before merge.
+# NOTE: CODEOWNERS only has teeth when branch protection requires
+# "Require review from Code Owners" — see LIFECYCLE.md.
+#
+# Default: whole repo
+* @kallhoffa
+
+# CI/CD — a merged change here runs with repository write/id-token scope
+.github/workflows/ @kallhoffa
+.github/dependabot.yml @kallhoffa
+
+# Firestore security rules + deploy config
+firestore.rules @kallhoffa
+firestore.indexes.json @kallhoffa
+firebase.json @kallhoffa
+.firebaserc @kallhoffa
+
+# Supply chain — lockfiles, npm config, publish provenance
+package.json @kallhoffa
+package-lock.json @kallhoffa
+.npmrc @kallhoffa
+cli/package.json @kallhoffa
+cli/package-lock.json @kallhoffa
+
+# VM startup script — receives GitHub PAT / Discord token as instance metadata
+shared/startup-script.sh @kallhoffa
+
+# Security policy + SAST rule source
+SECURITY.md @kallhoffa
+.semgrep/ @kallhoffa
