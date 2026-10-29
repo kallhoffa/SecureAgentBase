@@ -25,7 +25,9 @@ concurrency:
 jobs:
   staging-gate:
     name: Staging E2E Gate
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04, where Playwright cannot install
+    # Chromium ("Playwright does not support chromium on ubuntu26.04-x64").
+    runs-on: ubuntu-24.04
     environment: staging
     permissions:
       id-token: write
@@ -275,7 +277,9 @@ jobs:
   production-promote:
     name: Deploy to Production
     needs: staging-gate
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04, where Playwright cannot install
+    # Chromium ("Playwright does not support chromium on ubuntu26.04-x64").
+    runs-on: ubuntu-24.04
     environment: production
     permissions:
       id-token: write
