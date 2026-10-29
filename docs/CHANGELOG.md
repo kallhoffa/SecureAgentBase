@@ -3,6 +3,11 @@
 Chronological record of changes. Durable rules stay in `AGENTS.md`; this file
 captures outcomes, fixes and releases.
 
+## 2026-10-29 (v1.5.1 release, 9a7a316)
+
+- **Release**: `v1.5.1` shipped the apt-key fingerprint verification added after `v1.5.0`. Staging E2E gate, production deploy and npm publish all green; the published tarball confirmed to contain `key_fprs_allowlisted()` and both pinned fingerprints. Production live.
+- **VM hardening**: The git-core PPA key (keyserver.ubuntu.com) and the GitHub CLI keyring (cli.github.com) were previously installed into `/usr/share/keyrings` unverified. Both are now checked against fingerprints pinned in the startup script, and the apt repository is skipped entirely on mismatch — a missing PPA downgrades git to the distro version, a substituted signing key is root code execution. The check rejects *every* primary key not in the allowlist, so a key appended to a genuine keyring is refused.
+
 ## 2026-10-29 (bbaceb6, 047dd70, bb8e962, 7515fbb, c358da3, 4962f0a, v1.5.0 release)
 
 - **Release**: `v1.5.0` shipped. Staging E2E gate (full wizard + CLI e2e), production deploy and npm publish all green; `secureagentbase@1.5.0` verified on the registry and its bundled startup script confirmed to contain the pinned kimaki. `patched_versions: 1.5.0` recorded on `GHSA-jr35-vrjh-x8m8` / `GHSA-8v3r-8672-22m5` (published advisories cannot be closed through the API).
