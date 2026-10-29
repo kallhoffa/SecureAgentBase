@@ -3,6 +3,14 @@
 Chronological record of changes. Durable rules stay in `AGENTS.md`; this file
 captures outcomes, fixes and releases.
 
+## 2026-10-29 (bbaceb6, 047dd70, bb8e962, 7515fbb, c358da3)
+
+- **Supply chain**: The bundle pipeline no longer runs `curl … | bash` and no longer pulls any floating version. Every input is pinned to an exact version *and* SHA256, verified with `sha256sum -c`: opencode `1.18.9`, gh `2.63.2`, Node `20.18.0`, Bun `1.1.42`. `kimaki@latest` became `kimaki@1.4.0` in the bundle build, the VM startup script, the `npx -y` registration fallback, and `scripts/build-bundle.sh`. Docker image `node:20-bullseye` became `node:20.18.0-bullseye`. Fixes `GHSA-jr35-vrjh-x8m8` / `GHSA-8v3r-8672-22m5`.
+- **Security (pre-review)**: Dropped the `--sa-key` flag from the landing-page copy, deleted the undeployed `functions/create-secret/` function (took a raw service-account key in `req.body`), deleted the dead `secret-storage.js`, and added `.github/CODEOWNERS`.
+- **CI**: Pinned the three Playwright jobs to `ubuntu-24.04`. GitHub moved `ubuntu-latest` to 26.04, where Playwright cannot install Chromium (`Playwright does not support chromium on ubuntu26.04-x64`).
+- **Dependencies**: Cleared 7 newly published advisories (vite, vitest/@vitest/mocker, zod, qs, fast-uri) with same-major bumps; `npm audit` back to 0. Kept `typed-rest-client` at 2.3.1 because Stryker requires `~2.3.0`.
+- **CLI**: `SECUREAGENTBASE_GITHUB_PAT` / `SECUREAGENTBASE_DISCORD_TOKEN` env fallbacks so tokens stay out of argv; explicit flags still win.
+
 ## 2026-10-01 (e1361a9, fcf8b1b, 81cbfca)
 
 - **CLI**: Added `ensureAdc()` to guide users through `gcloud auth application-default login` instead of dying on raw Google Auth errors; `init` and `destroy` now surface copy-pasteable "Fix/Then/Docs" guidance. Handles common cases (no credential source, expired/revoked, gcloud missing, scope-less VM, GCE metadata) without spawning the interactive login on a GCE VM.
