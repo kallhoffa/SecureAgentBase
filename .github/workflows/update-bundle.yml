@@ -56,8 +56,13 @@ jobs:
           curl -fsSL "$url" -o /tmp/opencode.tar.gz
           echo "${OPENCODE_SHA256}  /tmp/opencode.tar.gz" | sha256sum -c -
           mkdir -p "$HOME/.opencode/bin"
-          tar -xzf /tmp/opencode.tar.gz -C /tmp
-          install -m 755 /tmp/opencode "$HOME/.opencode/bin/opencode"
+          # Extract into its own dir: the opencode binary is a Bun standalone
+          # executable that self-extracts to /tmp/opencode at runtime, so
+          # unpacking the tarball into /tmp makes the --version probe below
+          # fail with EEXIST: mkdir '/tmp/opencode'.
+          rm -rf /tmp/oc-dist && mkdir -p /tmp/oc-dist
+          tar -xzf /tmp/opencode.tar.gz -C /tmp/oc-dist
+          install -m 755 /tmp/oc-dist/opencode "$HOME/.opencode/bin/opencode"
           "$HOME/.opencode/bin/opencode" --version
           cp -r ~/.opencode opencode/
 
