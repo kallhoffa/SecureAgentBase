@@ -114,14 +114,59 @@ grep -q '^/swapfile' /proc/swaps 2>/dev/null && echo "Swap enabled: $(grep '^/sw
 # repos ship git <= 2.30, which lacks `git add --sparse` — the opencode/kimaki
 # agent snapshot flow fails every session with exit 129: "unknown option 'sparse'".
 # Hardened keyring + sources.list.d pattern, same as the GitHub CLI install below.
-# If the PPA fetch fails, everything is `|| true` and the default-repo git stays.
+# If the PPA key fails verification the repo is never added and default git stays.
+#
+# Pinned key fingerprints. A keyring fetched over HTTPS is unauthenticated at
+# fetch time: whoever controls the endpoint (or the TLS chain to it) could serve
+# a different signing key, and apt would then trust packages signed by it. So
+# every key installed here must match this list, and the whole repository is
+# skipped when it does not — a missing PPA is a harmless downgrade to the
+# distro git, a substituted signing key is root code execution on the VM.
+GITCORE_PPA_FPRS="E1DD270288B4E6030699E45FA1715D88E1DF1F24"
+GITHUB_CLI_FPRS="2C6106201985B60E6C7AC87323F3D4EA75716059 7F38BBB59D064DBCB3D84D725612B36462313325"
+
+# Print the fingerprints of the primary keys inside a key or keyring file.
+key_primary_fprs() {
+  gpg --show-keys --with-colons "$1" 2>/dev/null | awk -F: '
+    /^pub:/ { want = 1; next }
+    /^fpr:/ && want { print $10; want = 0 }
+  '
+}
+
+# Succeed only if the file holds at least one primary key and *every* primary
+# key fingerprint is in the allowlist. Extra keys are rejected rather than
+# ignored: appending a valid-looking key to a genuine keyring would otherwise
+# pass, and apt trusts every key in the signed-by keyring.
+key_fprs_allowlisted() {
+  local file="$1"; shift
+  local allowed=" $* " f count=0
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    count=$((count + 1))
+    case "$allowed" in
+      *" $f "*) ;;
+      *) return 1 ;;
+    esac
+  done <<< "$(key_primary_fprs "$file")"
+  [ "$count" -gt 0 ]
+}
+
 sudo mkdir -p /usr/share/keyrings
-curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xE1DD270288B4E6030699E45FA1715D88E1DF1F24" | sudo gpg --dearmor -o /usr/share/keyrings/git-core-ppa.gpg > /dev/null 2>&1 || true
-UBUNTU_CODENAME=$(. /etc/os-release && echo "${VERSION_CODENAME:-focal}")
-echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/git-core-ppa.gpg] https://ppa.launchpadcontent.net/git-core/ppa/ubuntu ${UBUNTU_CODENAME} main" | sudo tee /etc/apt/sources.list.d/git-core-ppa.list > /dev/null 2>&1 || true
-sudo apt-get update -y > /dev/null 2>&1 || true
-# Re-install so apt picks the higher PPA version (upgrades the git from above).
-sudo apt-get install -y git > /dev/null 2>&1 || true
+GIT_PPA_KEY_TMP=$(mktemp)
+if curl -fsSL "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x${GITCORE_PPA_FPRS}" -o "$GIT_PPA_KEY_TMP" 2>/dev/null \
+   && key_fprs_allowlisted "$GIT_PPA_KEY_TMP" $GITCORE_PPA_FPRS; then
+  sudo gpg --dearmor -o /usr/share/keyrings/git-core-ppa.gpg < "$GIT_PPA_KEY_TMP" > /dev/null 2>&1 && GIT_PPA_KEY_OK=true
+else
+  echo "WARNING: git-core PPA key failed fingerprint verification; skipping PPA"
+fi
+rm -f "$GIT_PPA_KEY_TMP"
+if [ "$GIT_PPA_KEY_OK" = "true" ]; then
+  UBUNTU_CODENAME=$(. /etc/os-release && echo "${VERSION_CODENAME:-focal}")
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/git-core-ppa.gpg] https://ppa.launchpadcontent.net/git-core/ppa/ubuntu ${UBUNTU_CODENAME} main" | sudo tee /etc/apt/sources.list.d/git-core-ppa.list > /dev/null 2>&1 || true
+  sudo apt-get update -y > /dev/null 2>&1 || true
+  # Re-install so apt picks the higher PPA version (upgrades the git from above).
+  sudo apt-get install -y git > /dev/null 2>&1 || true
+fi
 
 # Fetch secrets from Secret Manager via the metadata-server identity (map #36).
 # No secret values ride in VM metadata; the VM's attached service account holds
@@ -176,8 +221,20 @@ else
   apt-get install -y nodejs > /dev/null 2>&1 || true
 fi
 
-# Install GitHub CLI
-type gh >/dev/null 2>&1 || (curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null && sudo apt-get update -y > /dev/null 2>&1 && sudo apt-get install -y gh > /dev/null 2>&1) || true
+# Install GitHub CLI — keyring fingerprint-checked against GITHUB_CLI_FPRS above
+type gh >/dev/null 2>&1 || {
+  GH_KEY_TMP=$(mktemp)
+  if curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o "$GH_KEY_TMP" 2>/dev/null \
+     && key_fprs_allowlisted "$GH_KEY_TMP" $GITHUB_CLI_FPRS; then
+    sudo install -m 0644 "$GH_KEY_TMP" /usr/share/keyrings/githubcli-archive-keyring.gpg
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null 2>&1 || true
+    sudo apt-get update -y > /dev/null 2>&1 || true
+    sudo apt-get install -y gh > /dev/null 2>&1 || true
+  else
+    echo "WARNING: GitHub CLI keyring failed fingerprint verification; skipping apt repo"
+  fi
+  rm -f "$GH_KEY_TMP"
+}
 
 # Install Kimaki (skip if already installed — re-running npm -g installs crashes with ENOTEMPTY)
 # Pinned, not @latest: a floating tag meant two VMs provisioned days apart could run
