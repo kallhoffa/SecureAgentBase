@@ -14,7 +14,8 @@ docker run --rm \
     curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/SHASUMS256.txt" -o /tmp/SHASUMS256.txt
     (cd /tmp && sha256sum -c SHASUMS256.txt --ignore-missing --status) || { echo "Node.js checksum verification failed"; exit 1; }
     tar -xzf "/tmp/${NODE_TARBALL}" -C /usr/local --strip-components=1
-    npm install -g kimaki@latest
+    KIMAKI_VERSION="1.4.0"
+    npm install -g "kimaki@${KIMAKI_VERSION}"
     cp -r $(npm root -g)/kimaki /output/kimaki/
     chmod +x /output/kimaki/bin.js 2>/dev/null || true
     mkdir -p /output/kimaki/bin

@@ -13,6 +13,22 @@ jobs:
   build-and-sign:
     if: github.repository == 'kallhoffa/SecureAgentBase'
     runs-on: ubuntu-latest
+    # Every bundle input is pinned to an exact version AND an exact SHA256.
+    # Nothing here downloads a script and pipes it into a shell, and no
+    # floating tags (kimaki@latest, node:20-bullseye) are allowed: the bundle
+    # is GPG-signed, but a signature only attests to the inputs, so the inputs
+    # themselves must be reproducible (GHSA-jr35-vrjh-x8m8).
+    env:
+      OPENCODE_VERSION: '1.18.9'
+      OPENCODE_ASSET: 'opencode-linux-x64.tar.gz'
+      OPENCODE_SHA256: 'a0fa4b7b8bdacbd013e79a5f69d4220d36b545cd3ea296ba765f3016fa501b5b'
+      KIMAKI_VERSION: '1.4.0'
+      GH_VERSION: '2.63.2'
+      GH_SHA256: '912fdb1ca29cb005fb746fc5d2b787a289078923a29d0f9ec19a0b00272ded00'
+      NODE_VERSION: '20.18.0'
+      NODE_SHA256: '24a5d58a1d4c2903478f4b7c3cfd2eeb5cea2cae3baee11a4dc6a1fed25fec6c'
+      BUN_VERSION: '1.1.42'
+      BUN_SHA256: '368206c3038d8faabc63e3059eeea64c2af9c50ed0dfbfb86f64984ba69db1af'
     
     steps:
       - name: Checkout
@@ -32,36 +48,55 @@ jobs:
           printf '%s' "$GCP_SA_KEY" | base64 -d > /tmp/gcs-sa.json
           gcloud auth activate-service-account --key-file=/tmp/gcs-sa.json
 
-      - name: Build bundle
+      - name: Install opencode (pinned, checksum-verified)
         run: |
+          set -euo pipefail
           mkdir -p kimaki gh nodejs bun opencode
-          # Install opencode binary via official installer, pinned to specific version
-          curl -fsSL https://opencode.ai/install | bash -s -- --version 1.18.9
-          # Copy opencode to bundle directory
+          url="https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/${OPENCODE_ASSET}"
+          curl -fsSL "$url" -o /tmp/opencode.tar.gz
+          echo "${OPENCODE_SHA256}  /tmp/opencode.tar.gz" | sha256sum -c -
+          mkdir -p "$HOME/.opencode/bin"
+          tar -xzf /tmp/opencode.tar.gz -C /tmp
+          install -m 755 /tmp/opencode "$HOME/.opencode/bin/opencode"
+          "$HOME/.opencode/bin/opencode" --version
           cp -r ~/.opencode opencode/
+
+      - name: Build kimaki bundle (pinned)
+        run: |
+          set -euo pipefail
           
           # Install kimaki via npm and copy with node_modules
           docker run --rm \
             -v $(pwd):/output \
-            node:20-bullseye bash -c "
+            node:20.18.0-bullseye bash -c "
               NPM_GLOBAL=\$(npm root -g)
-              npm install -g kimaki@latest
+              npm install -g kimaki@${KIMAKI_VERSION}
               cp -r \$NPM_GLOBAL/kimaki /output/kimaki/
               echo 'Kimaki node_modules:'
               ls /output/kimaki/kimaki/node_modules/ | head -10
             "
 
-      - name: Download gh CLI
+      - name: Download gh CLI (pinned, checksum-verified)
         run: |
-          curl -fsSL https://github.com/cli/cli/releases/download/v2.63.2/gh_2.63.2_linux_amd64.tar.gz | tar -xz -C gh --strip-components=2
+          set -euo pipefail
+          asset="gh_${GH_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL "https://github.com/cli/cli/releases/download/v${GH_VERSION}/${asset}" -o /tmp/gh.tgz
+          echo "${GH_SHA256}  /tmp/gh.tgz" | sha256sum -c -
+          tar -xzf /tmp/gh.tgz -C gh --strip-components=2
 
-      - name: Download Node.js 20
+      - name: Download Node.js (pinned, checksum-verified)
         run: |
-          curl -fsSL https://nodejs.org/dist/v20.18.0/node-v20.18.0-linux-x64.tar.gz | tar -xz -C nodejs --strip-components=1
+          set -euo pipefail
+          asset="node-v${NODE_VERSION}-linux-x64.tar.gz"
+          curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/${asset}" -o /tmp/node.tgz
+          echo "${NODE_SHA256}  /tmp/node.tgz" | sha256sum -c -
+          tar -xzf /tmp/node.tgz -C nodejs --strip-components=1
 
-      - name: Download Bun
+      - name: Download Bun (pinned, checksum-verified)
         run: |
-          curl -fsSL https://github.com/oven-sh/bun/releases/download/bun-v1.1.42/bun-linux-x64.zip -o bun.zip
+          set -euo pipefail
+          curl -fsSL "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip" -o bun.zip
+          echo "${BUN_SHA256}  bun.zip" | sha256sum -c -
           unzip -o bun.zip
           mv bun-linux-x64/* bun/
           rm -rf bun-linux-x64 bun.zip

@@ -180,10 +180,13 @@ fi
 type gh >/dev/null 2>&1 || (curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg 2>/dev/null && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null && sudo apt-get update -y > /dev/null 2>&1 && sudo apt-get install -y gh > /dev/null 2>&1) || true
 
 # Install Kimaki (skip if already installed — re-running npm -g installs crashes with ENOTEMPTY)
+# Pinned, not @latest: a floating tag meant two VMs provisioned days apart could run
+# different code with no record of which version each got. Bump this deliberately.
+KIMAKI_VERSION="1.4.0"
 if command -v kimaki >/dev/null 2>&1; then
   echo "kimaki already installed, skipping global install"
 else
-  npm install -g kimaki@latest > /dev/null 2>&1 || true
+  npm install -g "kimaki@${KIMAKI_VERSION}" > /dev/null 2>&1 || true
 fi
 
 # Clone the SecureAgentBase template repository into Kimaki's projects dir
@@ -550,7 +553,7 @@ done
 if command -v kimaki &> /dev/null; then
   KIMAKI_CMD="kimaki"
 else
-  KIMAKI_CMD="npx -y kimaki@latest"
+  KIMAKI_CMD="npx -y kimaki@__KIMAKI_VERSION__"
 fi
 
 echo "$(date): Using KIMAKI_CMD: $KIMAKI_CMD" >> /var/log/kimaki-register.log
@@ -578,6 +581,10 @@ done
 echo "$(date): Registration failed after 30 attempts" >> /var/log/kimaki-register.log
 exit 1
 REGISTER_SCRIPT
+
+# Resolve the pinned kimaki version into the register script (the heredoc above is
+# single-quoted so it does not expand variables; same pattern as __OPENCODE_MODEL__).
+sed -i "s|__KIMAKI_VERSION__|$KIMAKI_VERSION|" /usr/local/bin/kimaki-register.sh
 
 chmod +x /usr/local/bin/kimaki-register.sh
 
