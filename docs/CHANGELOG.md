@@ -3,6 +3,12 @@
 Chronological record of changes. Durable rules stay in `AGENTS.md`; this file
 captures outcomes, fixes and releases.
 
+## 2026-10-29 (v1.5.2 release, 5c40fa6)
+
+- **Release**: `v1.5.2` — staging gate, production deploy and npm publish all green. Production bundle verified to serve `LEGAL_URLS` from `secureagentbase.com`; npm registry at `1.5.2`.
+- **Legal URLs**: `LEGAL_URLS` now points at `secureagentbase.com/privacy` and `/terms` instead of `agentbase.web.app` (Google rejects production consent screens on Public Suffix List subdomains). Recorded as ADR-0007. Merged as PR #70 — the first change through the newly enabled branch protection (10 required checks, PRs mandatory, force pushes blocked).
+- **Branch protection**: `main` now requires a PR with all 10 PR-context checks green; direct pushes (admin included) are rejected, force pushes and deletions blocked. Verified by attempting and being rejected. `CODEOWNERS` stays advisory while the repo is single-maintainer (self-approval deadlock).
+
 ## 2026-10-29 (v1.5.1 release, 9a7a316)
 
 - **Release**: `v1.5.1` shipped the apt-key fingerprint verification added after `v1.5.0`. Staging E2E gate, production deploy and npm publish all green; the published tarball confirmed to contain `key_fprs_allowlisted()` and both pinned fingerprints. Production live.
