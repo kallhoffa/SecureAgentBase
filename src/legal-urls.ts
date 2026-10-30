@@ -14,11 +14,14 @@
  *     GCP console (project agentbase-8c022) → APIs & Services → OAuth consent
  *     screen → set both URLs → save.
  *
- * These point at the currently hosted pages. Once the custom domain lands
- * (issue #26), update the values once here and in both consoles — the hosting
- * redirect keeps the *.web.app URLs working in the meantime.
+ * These must stay on the custom domain: Google rejects production consent
+ * screens whose legal pages live on a shared-platform subdomain, and
+ * `agentbase.web.app` is on the Public Suffix List. The `*.web.app` URLs keep
+ * working through the hosting redirect, but reviewers read the URL on the
+ * consent screen, so a stale value fails review even when the redirect
+ * resolves. See docs/adr/0007-custom-domain-secureagentbase-com.md.
  */
 export const LEGAL_URLS = {
-  privacyPolicy: 'https://agentbase.web.app/privacy',
-  termsOfService: 'https://agentbase.web.app/terms',
+  privacyPolicy: 'https://secureagentbase.com/privacy',
+  termsOfService: 'https://secureagentbase.com/terms',
 } as const;
