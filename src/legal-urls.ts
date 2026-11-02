@@ -25,3 +25,6 @@ export const LEGAL_URLS = {
   privacyPolicy: 'https://secureagentbase.com/privacy',
   termsOfService: 'https://secureagentbase.com/terms',
 } as const;
+
+/** Source repository — the single source of truth for links to the project. */
+export const GITHUB_REPO_URL = 'https://github.com/kallhoffa/SecureAgentBase';

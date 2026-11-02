@@ -22,6 +22,7 @@ import AdminPanel from './admin/AdminPanel';
 import { NotificationProvider } from './firestore-utils/notification-context';
 import { RequireAuth, RedirectIfAuthed } from './components/ProtectedRoute';
 import { StagingGate } from './guardrails/StagingGate';
+import { GITHUB_REPO_URL } from './legal-urls';
 
 const isAppMode = import.meta.env.VITE_APP_MODE === 'true';
 const appName = import.meta.env.VITE_APP_NAME || (isAppMode ? 'SecureAgentBase' : 'Your App');
@@ -44,6 +45,7 @@ const RootLayout: React.FC<RootLayoutProps> = ({ db }) => {
           <nav className="flex items-center space-x-4">
             <Link to="/privacy" className="hover:text-blue-600">Privacy Policy</Link>
             <Link to="/terms" className="hover:text-blue-600">Terms of Service</Link>
+            <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer" className="hover:text-blue-600">GitHub</a>
           </nav>
         </div>
       </footer>
@@ -67,6 +69,7 @@ const StandaloneLayout: React.FC<RootLayoutProps & { children: React.ReactNode }
           <nav className="flex items-center space-x-4">
             <Link to="/privacy" className="hover:text-blue-600">Privacy Policy</Link>
             <Link to="/terms" className="hover:text-blue-600">Terms of Service</Link>
+            <a href={GITHUB_REPO_URL} target="_blank" rel="noopener noreferrer" className="hover:text-blue-600">GitHub</a>
           </nav>
         </div>
       </footer>
