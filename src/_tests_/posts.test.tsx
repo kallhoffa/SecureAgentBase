@@ -25,9 +25,22 @@ describe('LandingPage', () => {
       </MemoryRouter>
     );
     expect(screen.getByText('SecureAgentBase')).toBeInTheDocument();
-    expect(screen.getByText(/build full-stack apps/i)).toBeInTheDocument();
-    expect(screen.getByText(/use the cli/i)).toBeInTheDocument();
-    expect(screen.getByText(/use the web wizard/i)).toBeInTheDocument();
+    expect(screen.getByText(/sovereign ai infrastructure/i)).toBeInTheDocument();
+    expect(screen.getByText(/we fix the architecture/i)).toBeInTheDocument();
+    expect(screen.getByText(/one-command bootstrap/i)).toBeInTheDocument();
+    expect(screen.getByText(/web wizard/i)).toBeInTheDocument();
+  });
+
+  it('shows the guardrail pipeline in the dispatch mock', () => {
+    render(
+      <MemoryRouter>
+        <LandingPage />
+      </MemoryRouter>
+    );
+    expect(screen.getByText(/@agent add stripe webhook handling/i)).toBeInTheDocument();
+    expect(screen.getByText(/spec drafted & validated/i)).toBeInTheDocument();
+    expect(screen.getByText(/0 vulnerabilities/i)).toBeInTheDocument();
+    expect(screen.getByText(/awaiting your approval/i)).toBeInTheDocument();
   });
 
   it('navigates to infra-setup on wizard click', () => {
@@ -40,15 +53,27 @@ describe('LandingPage', () => {
     expect(mockNavigate).toHaveBeenCalledWith('/infra-setup');
   });
 
-  it('renders three feature cards', () => {
+  it('renders the three positioning pillars', () => {
     render(
       <MemoryRouter>
         <LandingPage />
       </MemoryRouter>
     );
-    expect(screen.getByText('Discord-First')).toBeInTheDocument();
-    expect(screen.getByText('GitHub Powered')).toBeInTheDocument();
-    expect(screen.getByText('Cloud Deployed')).toBeInTheDocument();
+    expect(screen.getByText('Deterministic Guardrails')).toBeInTheDocument();
+    expect(screen.getByText('Sovereign BYO-Cloud')).toBeInTheDocument();
+    expect(screen.getByText('Asynchronous Mobile Command')).toBeInTheDocument();
+  });
+
+  it('links to the source repository', () => {
+    render(
+      <MemoryRouter>
+        <LandingPage />
+      </MemoryRouter>
+    );
+    expect(screen.getByText(/view the source/i).closest('a')).toHaveAttribute(
+      'href',
+      'https://github.com/kallhoffa/SecureAgentBase'
+    );
   });
 
   it('renders how it works section', () => {
@@ -60,7 +85,7 @@ describe('LandingPage', () => {
     expect(screen.getByText('How It Works')).toBeInTheDocument();
     expect(screen.getByText('Deploy SecureAgent')).toBeInTheDocument();
     expect(screen.getByText('Describe Your App')).toBeInTheDocument();
-    expect(screen.getByText('AI Builds It')).toBeInTheDocument();
-    expect(screen.getByText('Deploy')).toBeInTheDocument();
+    expect(screen.getByText(/AI Builds It/i)).toBeInTheDocument();
+    expect(screen.getByText('Deploy', { selector: 'h3' })).toBeInTheDocument();
   });
 });

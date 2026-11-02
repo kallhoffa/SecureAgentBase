@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router';
-import { Rocket, Bot, Github, Cloud, Terminal, Globe } from 'lucide-react';
+import { Rocket, Bot, Cloud, Terminal, ShieldCheck, Smartphone } from 'lucide-react';
 import { GITHUB_REPO_URL } from './legal-urls';
 
 const LandingPage: React.FC = () => {
@@ -8,23 +8,52 @@ const LandingPage: React.FC = () => {
   return (
     <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white">
       <div className="max-w-4xl mx-auto px-4 py-16">
-        <div className="text-center mb-8">
-          <h1 className="text-5xl font-bold text-gray-900 mb-4">
+        <div className="text-center mb-10">
+          <p className="text-xs font-semibold tracking-widest text-blue-600 uppercase mb-3">
+            Sovereign AI infrastructure • Zero lock-in
+          </p>
+          <h1 className="text-3xl sm:text-4xl font-bold text-gray-900 mb-4">
             SecureAgentBase
           </h1>
-          <p className="text-xl text-gray-600 mb-10">
-            Build full-stack apps entirely from Discord. No terminal required.
+          <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-6">
+            AI Agents Write Fast Code and Terrible Architecture.
+            <br className="hidden sm:block" /> We Fix the Architecture.
+          </h2>
+          <p className="text-lg text-gray-600 mb-10 max-w-3xl mx-auto">
+            Provision a locked-down GCP, Firebase, and GitHub Actions software factory in one command.
+            Run autonomous OpenCode agents through a spec-first workflow, automated security scans,
+            and strict PR gates—orchestrated from anywhere via Discord.
           </p>
+
+          {/* Example dispatch: a real engineering task, and the gates the agent passes through */}
+          <div className="bg-gray-900 rounded-xl p-5 text-left font-mono text-sm shadow-lg">
+            <p className="text-gray-500 text-xs mb-3 flex items-center gap-2">
+              <Smartphone size={14} /> from your phone, in Discord
+            </p>
+            <p className="text-blue-300 mb-4 break-words">
+              @agent Add Stripe webhook handling with idempotency keys, update the Firestore
+              security rules for tenant isolation, and run the security scans before opening a
+              staging PR.
+            </p>
+            <div className="space-y-1.5 text-green-400">
+              <p>✓ Architectural spec drafted &amp; validated</p>
+              <p>✓ Firestore rules &amp; webhook handler implemented — 40 rules tests pass</p>
+              <p>✓ Static security scan &amp; unit suite passed (0 vulnerabilities)</p>
+              <p>✓ PR opened against staging — awaiting your approval</p>
+            </div>
+          </div>
         </div>
 
         <div className="grid md:grid-cols-2 gap-6 mb-12">
-          <div className="bg-white rounded-xl shadow-sm p-8 flex flex-col">
+          <div className="bg-white rounded-xl shadow-sm p-8 flex flex-col border-2 border-emerald-200">
             <div className="w-12 h-12 bg-emerald-100 rounded-lg flex items-center justify-center mb-4">
               <Terminal className="text-emerald-600" size={24} />
             </div>
-            <h3 className="font-semibold text-xl mb-2">Use the CLI</h3>
+            <h3 className="font-semibold text-xl mb-2">One-Command Bootstrap</h3>
             <p className="text-gray-600 text-sm mb-4 flex-1">
-              Deploy from your terminal in one command. Best for automation, CI/CD, and developers who prefer the command line.
+              A self-assembling infrastructure layer: your own GCP project, Firebase backend, and
+              GitHub Actions CI/CD pipeline, provisioned from the terminal. Credentials stay in
+              your environment — never ours.
             </p>
             <div className="bg-gray-900 rounded-lg p-4 mb-4">
               <code className="text-green-400 text-sm font-mono">
@@ -39,11 +68,12 @@ const LandingPage: React.FC = () => {
 
           <div className="bg-white rounded-xl shadow-sm p-8 flex flex-col relative">
             <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mb-4">
-              <Globe className="text-blue-600" size={24} />
+              <Rocket className="text-blue-600" size={24} />
             </div>
-            <h3 className="font-semibold text-xl mb-2">Use the Web Wizard</h3>
+            <h3 className="font-semibold text-xl mb-2">Web Wizard</h3>
             <p className="text-gray-600 text-sm mb-4 flex-1">
-              Connect everything through your browser. A guided walkthrough for GCP, GitHub, Firebase, and Discord.
+              Prefer a browser? The same guided walkthrough connects your GCP project, GitHub,
+              Firebase, and Discord end-to-end.
             </p>
             <button
               onClick={() => navigate('/infra-setup')}
@@ -53,19 +83,21 @@ const LandingPage: React.FC = () => {
               Launch Setup Wizard
             </button>
             <span className="inline-block mt-3 text-xs text-amber-600 bg-amber-50 rounded-md px-2 py-1 self-start">
-              Pending Google OAuth approval
+              Works today — Google sign-in verification in progress
             </span>
           </div>
         </div>
 
         <div className="grid md:grid-cols-3 gap-6 mb-12">
           <div className="bg-white rounded-xl shadow-sm p-6 text-center">
-            <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mx-auto mb-4">
-              <Bot className="text-blue-600" size={24} />
+            <div className="w-12 h-12 bg-red-100 rounded-lg flex items-center justify-center mx-auto mb-4">
+              <ShieldCheck className="text-red-600" size={24} />
             </div>
-            <h3 className="font-semibold text-lg mb-2">Discord-First</h3>
+            <h3 className="font-semibold text-lg mb-2">Deterministic Guardrails</h3>
             <p className="text-gray-600 text-sm">
-              Describe what you want to build in Discord. AI agents handle the rest.
+              Agents don't cowboy-code into production. Every repo ships with spec-first agent
+              skills, validated Firestore writes, tested security rules, static security scans on
+              every PR, and a protected <code className="bg-gray-100 px-1 rounded">main</code>.
             </p>
           </div>
           <a
@@ -74,22 +106,24 @@ const LandingPage: React.FC = () => {
             rel="noopener noreferrer"
             className="bg-white rounded-xl shadow-sm p-6 text-center block hover:shadow-md transition-shadow"
           >
-            <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center mx-auto mb-4">
-              <Github className="text-green-600" size={24} />
-            </div>
-            <h3 className="font-semibold text-lg mb-2">GitHub Powered</h3>
-            <p className="text-gray-600 text-sm">
-              Your app lives in a GitHub repo with Actions, issues, and PRs.
-            </p>
-            <p className="text-green-600 text-sm mt-3 font-medium">View the source →</p>
-          </a>
-          <div className="bg-white rounded-xl shadow-sm p-6 text-center">
             <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center mx-auto mb-4">
               <Cloud className="text-purple-600" size={24} />
             </div>
-            <h3 className="font-semibold text-lg mb-2">Cloud Deployed</h3>
+            <h3 className="font-semibold text-lg mb-2">Sovereign BYO-Cloud</h3>
             <p className="text-gray-600 text-sm">
-              Automatic staging and production deployments to Firebase.
+              No proprietary sandboxes, no compute markups. One command provisions the stack in
+              your GCP account. Your cloud, your keys, your code.
+            </p>
+            <p className="text-purple-600 text-sm mt-3 font-medium">View the source →</p>
+          </a>
+          <div className="bg-white rounded-xl shadow-sm p-6 text-center">
+            <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center mx-auto mb-4">
+              <Bot className="text-blue-600" size={24} />
+            </div>
+            <h3 className="font-semibold text-lg mb-2">Asynchronous Mobile Command</h3>
+            <p className="text-gray-600 text-sm">
+              Bootstrap in the terminal once, then command the factory from Discord. Dispatch
+              specs, review PRs, and direct staging merges from your phone while away from the desk.
             </p>
           </div>
         </div>
@@ -101,28 +135,34 @@ const LandingPage: React.FC = () => {
               <div className="w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center font-semibold flex-shrink-0">1</div>
               <div>
                 <h3 className="font-semibold">Deploy SecureAgent</h3>
-                <p className="text-gray-600">Connect your GCP project, GitHub, and Discord accounts.</p>
+                <p className="text-gray-600">One command provisions your GCP project, Firebase apps, and GitHub Actions pipeline.</p>
               </div>
             </div>
             <div className="flex items-start gap-4">
               <div className="w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center font-semibold flex-shrink-0">2</div>
               <div>
                 <h3 className="font-semibold">Describe Your App</h3>
-                <p className="text-gray-600">Send a message to your Discord bot: &quot;Build a todo app with user auth&quot;</p>
+                <p className="text-gray-600">
+                  Dispatch a real task in Discord: &quot;Add Stripe webhook handling with idempotency
+                  keys and tighten the Firestore security rules.&quot;
+                </p>
               </div>
             </div>
             <div className="flex items-start gap-4">
               <div className="w-8 h-8 bg-blue-600 text-white rounded-full flex items-center justify-center font-semibold flex-shrink-0">3</div>
               <div>
-                <h3 className="font-semibold">AI Builds It</h3>
-                <p className="text-gray-600">OpenCode agents create specs, write code, run tests, and open a PR.</p>
+                <h3 className="font-semibold">AI Builds It — Inside the Cage</h3>
+                <p className="text-gray-600">
+                  OpenCode agents draft a spec, implement it behind guardrails, and open a PR that
+                  must pass unit tests, typecheck, and static security scans.
+                </p>
               </div>
             </div>
             <div className="flex items-start gap-4">
               <div className="w-8 h-8 bg-green-600 text-white rounded-full flex items-center justify-center font-semibold flex-shrink-0">4</div>
               <div>
                 <h3 className="font-semibold">Deploy</h3>
-                <p className="text-gray-600">Merge the PR to deploy to staging. Create a release for production.</p>
+                <p className="text-gray-600">Merge the PR to deploy to staging. Tag a release for production.</p>
               </div>
             </div>
           </div>
