@@ -1,5 +1,6 @@
 import { useNavigate } from 'react-router';
 import { Rocket, Bot, Github, Cloud, Terminal, Globe } from 'lucide-react';
+import { GITHUB_REPO_URL } from './legal-urls';
 
 const LandingPage: React.FC = () => {
   const navigate = useNavigate();
@@ -67,7 +68,12 @@ const LandingPage: React.FC = () => {
               Describe what you want to build in Discord. AI agents handle the rest.
             </p>
           </div>
-          <div className="bg-white rounded-xl shadow-sm p-6 text-center">
+          <a
+            href={GITHUB_REPO_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="bg-white rounded-xl shadow-sm p-6 text-center block hover:shadow-md transition-shadow"
+          >
             <div className="w-12 h-12 bg-green-100 rounded-lg flex items-center justify-center mx-auto mb-4">
               <Github className="text-green-600" size={24} />
             </div>
@@ -75,7 +81,8 @@ const LandingPage: React.FC = () => {
             <p className="text-gray-600 text-sm">
               Your app lives in a GitHub repo with Actions, issues, and PRs.
             </p>
-          </div>
+            <p className="text-green-600 text-sm mt-3 font-medium">View the source →</p>
+          </a>
           <div className="bg-white rounded-xl shadow-sm p-6 text-center">
             <div className="w-12 h-12 bg-purple-100 rounded-lg flex items-center justify-center mx-auto mb-4">
               <Cloud className="text-purple-600" size={24} />
