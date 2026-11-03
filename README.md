@@ -1,6 +1,40 @@
 # SecureAgentBase
 
-A React + Firebase application framework designed for autonomous agent deployment. Ships with authentication, Firestore CRUD, an automated GCP/GitHub infra-setup wizard, and a generic dashboard + Tasks demo so a fresh app boots with real content instead of a blank page.
+**The sovereign, guardrailed SDLC for autonomous coding agents.** One command bootstraps a
+locked-down GCP + Firebase + GitHub Actions software factory in *your* cloud account.
+OpenCode agents then build inside a deterministic cage — spec-first skills, validated
+Firestore writes, tested security rules, static security scans, and strict PR gates —
+commanded asynchronously from Discord.
+
+```bash
+npm install -g secureagentbase
+secureagentbase init
+```
+
+If you want AI velocity without AI spaghettiware — and without renting a proprietary
+sandbox to get it — this is the base. Your cloud, your keys, your code.
+
+## The cage, concretely
+
+- **Guardrails in code** — every Firestore write goes through `src/guardrails/`
+  (validation, field allowlists, ownership checks, audit stamps); CI fails on raw writes.
+- **Rules under test** — `firestore.rules` ships with 40 security-rules tests.
+- **Scans on every PR** — CodeQL, Semgrep, Trivy, secret/config scanning, npm audit.
+- **Protected `main`** — 10 required checks; merges deploy to staging, tags promote to
+  production.
+- **Spec-first agents** — every generated repo carries the `.opencode/skills/` set
+  (`to-spec`, `to-tickets`, `implement`, `code-review`), steering agents to design before
+  they code.
+
+Messaging rules and the full claim-to-evidence inventory live in
+[docs/branding.md](docs/branding.md).
+
+## What's Included
+
+A React + Firebase application framework designed for autonomous agent deployment. Ships
+with authentication, Firestore CRUD, an automated GCP/GitHub infra-setup wizard, and a
+generic dashboard + Tasks demo so a fresh app boots with real content instead of a blank
+page.
 
 ## Quick Start
 

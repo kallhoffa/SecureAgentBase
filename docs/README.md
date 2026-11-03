@@ -12,6 +12,7 @@ for and when to reach for it instead of something else.
 | Know what the pieces are called | [../CONTEXT.md](../CONTEXT.md) — domain glossary |
 | Understand the engineering approach | [../LIFECYCLE.md](../LIFECYCLE.md) — philosophy, CI/CD, rollback, feature flags |
 | Know the coding rules | [../AGENTS.md](../AGENTS.md) — conventions, guardrails, security rules |
+| Write or review public copy | [branding.md](./branding.md) — positioning, claim-to-evidence rules, banned phrases |
 
 ## By task
 
