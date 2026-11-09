@@ -7,38 +7,37 @@ const LandingPage: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-blue-50 to-white">
-      <div className="max-w-4xl mx-auto px-4 py-16">
-        <div className="text-center mb-10">
+      <div className="max-w-4xl mx-auto px-4 pt-10 pb-8 sm:py-16">
+        <div className="text-center mb-8 sm:mb-10">
           <p className="text-xs font-semibold tracking-widest text-blue-600 uppercase mb-3">
             Sovereign AI infrastructure • Zero lock-in
           </p>
           <h1 className="text-3xl sm:text-4xl font-bold text-gray-900 mb-4">
             SecureAgentBase
           </h1>
-          <h2 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-6">
+          <h2 className="text-xl sm:text-3xl font-bold text-gray-900 mb-5 sm:mb-6">
             AI Agents Write Fast Code and Terrible Architecture.
             <br className="hidden sm:block" /> We Fix the Architecture.
           </h2>
-          <p className="text-lg text-gray-600 mb-10 max-w-3xl mx-auto">
-            Provision a locked-down GCP, Firebase, and GitHub Actions software factory in one command.
-            Run autonomous OpenCode agents through a spec-first workflow, automated security scans,
-            and strict PR gates—orchestrated from anywhere via Discord.
+          <p className="text-base sm:text-lg text-gray-600 mb-8 sm:mb-10 max-w-3xl mx-auto">
+            Provision a locked-down GCP, Firebase, and GitHub Actions factory in one command.
+            Agents work through spec-first skills, security scans, and strict PR gates—commanded
+            from Discord.
           </p>
 
           {/* Example dispatch: a real engineering task, and the gates the agent passes through */}
-          <div className="bg-gray-900 rounded-xl p-5 text-left font-mono text-sm shadow-lg">
-            <p className="text-gray-500 text-xs mb-3 flex items-center gap-2">
+          <div className="bg-gray-900 rounded-xl p-4 sm:p-5 text-left font-mono text-xs sm:text-sm shadow-lg">
+            <p className="text-gray-500 text-xs mb-2 sm:mb-3 flex items-center gap-2">
               <Smartphone size={14} /> from your phone, in Discord
             </p>
-            <p className="text-blue-300 mb-4 break-words">
-              @agent Add Stripe webhook handling with idempotency keys, update the Firestore
-              security rules for tenant isolation, and run the security scans before opening a
-              staging PR.
+            <p className="text-blue-300 mb-3 sm:mb-4 break-words leading-relaxed">
+              @agent Add Stripe webhooks with idempotency keys, tighten the Firestore rules for
+              tenant isolation, and scan before opening a staging PR.
             </p>
-            <div className="space-y-1.5 text-green-400">
+            <div className="space-y-1.5 text-green-400 leading-relaxed">
               <p>✓ Architectural spec drafted &amp; validated</p>
-              <p>✓ Firestore rules &amp; webhook handler implemented — 40 rules tests pass</p>
-              <p>✓ Static security scan &amp; unit suite passed (0 vulnerabilities)</p>
+              <p>✓ Rules + webhook handler — 40 rules tests pass</p>
+              <p>✓ Security scan + unit suite: 0 vulnerabilities</p>
               <p>✓ PR opened against staging — awaiting your approval</p>
             </div>
           </div>

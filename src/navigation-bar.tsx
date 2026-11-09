@@ -32,16 +32,19 @@ const NavigationBar: React.FC<NavigationBarProps> = ({ navigate: navigationOverr
     <nav className="bg-white border-b border-gray-200 fixed w-full top-8 z-50">
       <div className="max-w-6xl mx-auto px-4">
         <div className="flex items-center justify-between h-16">
-          <Link to="/" className="flex items-center">
-            <h1 className="text-2xl font-bold text-blue-900">
+          <Link to="/" className="flex items-center min-w-0">
+            <h1 className="text-xl sm:text-2xl font-bold text-blue-900 truncate">
               {appName}
               {isAppMode && (
-                <span className="ml-2 text-xs font-medium text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{import.meta.env.VITE_APP_VERSION || 'v0.1.0'}</span>
+                <span className="ml-2 hidden sm:inline text-xs font-medium text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">{import.meta.env.VITE_APP_VERSION || 'v0.1.0'}</span>
               )}
             </h1>
           </Link>
 
-          <div className="flex items-center space-x-4 flex-wrap justify-end">
+          {/* No flex-wrap: wrapping inside the fixed h-16 bar pushed rows off-screen
+              on phones (Deploy at top:-12px, About under the env banner). Instead,
+              xs shows the essentials only; sm+ gets the full set. */}
+          <div className="flex items-center justify-end space-x-2 sm:space-x-4">
             {isAppMode ? (
               <Link to="/infra-setup" className="text-gray-600 hover:text-blue-600 text-sm font-medium">
                 Deploy
@@ -53,23 +56,23 @@ const NavigationBar: React.FC<NavigationBarProps> = ({ navigate: navigationOverr
               </Link>
             )}
             {isAdmin && (
-              <Link to="/admin" className="text-gray-600 hover:text-indigo-600 text-sm font-medium flex items-center gap-1">
+              <Link to="/admin" className="hidden sm:inline text-gray-600 hover:text-indigo-600 text-sm font-medium flex items-center gap-1">
                 Admin
               </Link>
             )}
-            <Link to="/about" className="text-gray-600 hover:text-blue-600 text-sm font-medium">
+            <Link to="/about" className="hidden sm:inline text-gray-600 hover:text-blue-600 text-sm font-medium">
               About
             </Link>
             {user ? (
               <>
-                <button 
+                <button
                   onClick={() => navigate('/profile')}
-                  className="flex items-center space-x-1 text-gray-600 hover:text-blue-600 text-sm font-medium"
+                  className="hidden sm:flex items-center space-x-1 text-gray-600 hover:text-blue-600 text-sm font-medium"
                 >
                   <User size={16} />
                   <span>Profile</span>
                 </button>
-                <button 
+                <button
                   onClick={handleLogout}
                   className="flex items-center space-x-1 text-gray-600 hover:text-blue-600 text-sm font-medium"
                 >
@@ -79,15 +82,15 @@ const NavigationBar: React.FC<NavigationBarProps> = ({ navigate: navigationOverr
               </>
             ) : (
               <>
-                <button 
+                <button
                   onClick={() => navigate(`/login?returnUrl=${encodeURIComponent(window.location.pathname)}`)}
-                  className="bg-blue-600 text-white px-4 py-2 rounded-full text-sm font-medium hover:bg-blue-700"
+                  className="bg-blue-600 text-white px-3 py-1.5 sm:px-4 sm:py-2 rounded-full text-sm font-medium hover:bg-blue-700"
                 >
                   Sign In
                 </button>
-                <button 
+                <button
                   onClick={() => navigate(`/signup?returnUrl=${encodeURIComponent(window.location.pathname)}`)}
-                  className="bg-blue-600 text-white px-4 py-2 rounded-full text-sm font-medium hover:bg-blue-700"
+                  className="hidden sm:inline-block bg-blue-600 text-white px-4 py-2 rounded-full text-sm font-medium hover:bg-blue-700"
                 >
                   Sign Up
                 </button>

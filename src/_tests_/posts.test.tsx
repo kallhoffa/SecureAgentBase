@@ -37,7 +37,7 @@ describe('LandingPage', () => {
         <LandingPage />
       </MemoryRouter>
     );
-    expect(screen.getByText(/@agent add stripe webhook handling/i)).toBeInTheDocument();
+    expect(screen.getByText(/@agent add stripe webhooks/i)).toBeInTheDocument();
     expect(screen.getByText(/spec drafted & validated/i)).toBeInTheDocument();
     expect(screen.getByText(/0 vulnerabilities/i)).toBeInTheDocument();
     expect(screen.getByText(/awaiting your approval/i)).toBeInTheDocument();
